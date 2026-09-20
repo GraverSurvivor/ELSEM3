@@ -2,9 +2,9 @@ from src.quant.hqq_quantizer import DEFAULT_GROUP_SIZE, DEFAULT_NBITS, build_3bi
 
 
 def _weight_params(config):
-    # HqqConfig doesn't expose nbits/group_size as top-level attributes; they live under
-    # quant_config["weight_quant_params"] (verified against the real object, not just docs).
-    return config.quant_config["weight_quant_params"]
+    # BaseQuantizeConfig is a plain dict subclass; nbits/group_size live under
+    # ["weight_quant_params"] (verified against the real object, not just docs).
+    return config["weight_quant_params"]
 
 
 def test_default_config_is_3bit():

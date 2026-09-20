@@ -3,16 +3,22 @@
 Week 1 scope: uniform 3-bit quantization end-to-end, no mixed precision yet (that's Week 2 —
 runtime module swap via `restore_modules`, to live in this module once built).
 
-Uses transformers' native HQQ integration (`HqqConfig` passed to `from_pretrained`) rather than
-the `hqq` library's own `AutoHQQHFModel` wrapper: it's the path HQQ's own README lists as
-preferred, and it reuses the same native `Phi3ForCausalLM` path `model_loader.py` already relies
-on (no `trust_remote_code`), instead of a separate model-patching code path with its own quirks.
+Uses the `hqq` library's own `AutoHQQHFModel.quantize_model` rather than transformers' native
+`HqqConfig` integration in `from_pretrained`: the native path was tried first (it's what HQQ's
+own README lists as preferred), but on the transformers version this project's floor pins
+resolve to, it fails with `NotImplementedError: QuantizationMethod.HQQ is not available yet and
+will be supported soon` — a stub inside transformers' own internal model-loading refactor
+(`core_model_loading.py`), not a bug in this code. `AutoHQQHFModel` is architecture-generic (it
+resolves the model class from `config.architectures`, no Phi-3-specific file needed in `hqq`
+itself) and doesn't go through that broken code path.
 """
 
 from __future__ import annotations
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, HqqConfig, PreTrainedModel, PreTrainedTokenizerBase
+from hqq.core.quantize import BaseQuantizeConfig
+from hqq.models.hf.base import AutoHQQHFModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
 from src.eval.model_loader import MODEL_ID
 
@@ -20,28 +26,25 @@ DEFAULT_NBITS = 3
 DEFAULT_GROUP_SIZE = 64
 
 
-def build_3bit_quant_config(nbits: int = DEFAULT_NBITS, group_size: int = DEFAULT_GROUP_SIZE) -> HqqConfig:
+def build_3bit_quant_config(nbits: int = DEFAULT_NBITS, group_size: int = DEFAULT_GROUP_SIZE) -> BaseQuantizeConfig:
     """Builds a uniform (non-mixed-precision) HQQ quant config applied to every linear layer."""
-    return HqqConfig(nbits=nbits, group_size=group_size)
+    return BaseQuantizeConfig(nbits=nbits, group_size=group_size)
 
 
 def load_hqq_3bit_model(
-    device_map: str = "cuda", nbits: int = DEFAULT_NBITS, group_size: int = DEFAULT_GROUP_SIZE
+    device: str = "cuda", nbits: int = DEFAULT_NBITS, group_size: int = DEFAULT_GROUP_SIZE
 ) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
     """Loads Phi-3.5-mini-Instruct quantized to `nbits` (default 3-bit) via HQQ.
 
-    Quantization happens during `from_pretrained` itself (HQQ quantizes each linear layer as its
-    weights are loaded), so there's no separate "load then quantize" step. `device_map="cuda"`
-    (not "auto") because HQQ's transformers integration quantizes on-device and does not support
-    CPU offloading the way plain BF16 loading does — this requires a GPU.
+    Loads the raw BF16 model on CPU first, then `AutoHQQHFModel.quantize_model` patches each
+    linear layer in place and moves it onto `device` as it goes — this keeps peak memory lower
+    than materializing the full BF16 model on GPU before quantizing.
     """
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16)
+
     quant_config = build_3bit_quant_config(nbits=nbits, group_size=group_size)
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID,
-        torch_dtype=torch.bfloat16,
-        device_map=device_map,
-        quantization_config=quant_config,
-    )
+    AutoHQQHFModel.quantize_model(model, quant_config=quant_config, compute_dtype=torch.bfloat16, device=device)
+
     model.eval()
     return model, tokenizer
