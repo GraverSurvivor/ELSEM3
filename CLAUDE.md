@@ -68,11 +68,13 @@ tests/           # pytest, mirrors src/ layout
 
 ## Environment
 
-Dependency versions are pinned in `requirements.txt` / `requirements-dev.txt`
-(`transformers==4.44.2`, `hqq==0.2.2`, `torch==2.4.0`, ...). HQQ hooks into transformer internals
-that shift across major `transformers` versions — always `pip install -r requirements.txt` in a
-fresh Colab/Kaggle runtime rather than relying on preinstalled package versions, or Stage 2+ can
-break in ways that look like HQQ bugs but are actually version drift.
+`requirements.txt` uses floor pins (`transformers>=4.44`, `hqq>=0.2.8`, `torch>=2.4`, ...), not
+exact pins — exact mid-2024 pins have no wheels on current Colab/Kaggle images (Python 3.13) and
+force slow/failing source builds. Always `pip install -r requirements.txt` in a fresh runtime
+rather than relying on whatever happens to be preinstalled, since HQQ hooks into transformer
+internals that shift across `transformers` versions and Stage 2+ can break in ways that look like
+HQQ bugs but are actually version drift. Once Person B's HQQ module-swap code is verified working
+end-to-end, freeze this file to exact versions for reproducibility of the final results.
 
 ## Conventions
 
