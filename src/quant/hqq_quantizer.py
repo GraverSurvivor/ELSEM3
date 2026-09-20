@@ -26,8 +26,13 @@ DEFAULT_NBITS = 3
 DEFAULT_GROUP_SIZE = 64
 
 
-def build_3bit_quant_config(nbits: int = DEFAULT_NBITS, group_size: int = DEFAULT_GROUP_SIZE) -> BaseQuantizeConfig:
-    """Builds a uniform (non-mixed-precision) HQQ quant config applied to every linear layer."""
+def build_quant_config(nbits: int, group_size: int = DEFAULT_GROUP_SIZE) -> BaseQuantizeConfig:
+    """Builds an HQQ quant config for one bit-width, applied uniformly to whatever it's given.
+
+    Not 3-bit-specific despite this module's name/original purpose: `src/quant/module_swap.py`
+    reuses this at a different `nbits` (e.g. 8) to build the promoted-precision replacement for
+    a single module, not the whole model.
+    """
     return BaseQuantizeConfig(nbits=nbits, group_size=group_size)
 
 
@@ -43,7 +48,7 @@ def load_hqq_3bit_model(
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
     model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16)
 
-    quant_config = build_3bit_quant_config(nbits=nbits, group_size=group_size)
+    quant_config = build_quant_config(nbits=nbits, group_size=group_size)
     AutoHQQHFModel.quantize_model(model, quant_config=quant_config, compute_dtype=torch.bfloat16, device=device)
 
     model.eval()

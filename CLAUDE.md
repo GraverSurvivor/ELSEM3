@@ -21,8 +21,13 @@ responsible using the actual failing examples as evidence, and restore precision
 1. **Baseline** — BF16 eval on BBQ ambiguous condition, all 5 categories. Build the safe set
    (question IDs answered "unknown" at BF16 — ground truth reference).
 2. **Compress** — HQQ 3-bit quantize Phi-3.5-mini. Must support runtime mixed-precision module
-   swaps (promote individual `q_proj`/`k_proj`/`v_proj`/`o_proj`/MLP modules to 8-bit without a
-   full reload).
+   swaps (promote individual attention/MLP modules to 8-bit without a full reload). Phi-3.5 does
+   NOT have separate `q_proj`/`k_proj`/`v_proj` like Llama-family models — checked directly
+   against `transformers`' own `modeling_phi3.py`: attention is a fused `qkv_proj` + `o_proj`,
+   MLP is a fused `gate_up_proj` + `down_proj`. Real per-layer candidate set is
+   `{qkv_proj, o_proj, gate_up_proj, down_proj}` — 4 modules × 32 layers = 128 candidates total
+   (not "4 attention projections" as earlier drafts assumed — build Stage 4's candidate list
+   around these actual names).
 3. **Detect** — Flipped-set = safe-set items that flip to a stereotyped answer post-compression.
    Statistical layer: chi-squared (stereotype vs non-stereotype, before/after) + bootstrap CIs +
    effect size.

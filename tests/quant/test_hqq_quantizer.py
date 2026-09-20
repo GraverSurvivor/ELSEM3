@@ -1,4 +1,4 @@
-from src.quant.hqq_quantizer import DEFAULT_GROUP_SIZE, DEFAULT_NBITS, build_3bit_quant_config
+from src.quant.hqq_quantizer import DEFAULT_GROUP_SIZE, DEFAULT_NBITS, build_quant_config
 
 
 def _weight_params(config):
@@ -7,13 +7,13 @@ def _weight_params(config):
     return config["weight_quant_params"]
 
 
-def test_default_config_is_3bit():
-    params = _weight_params(build_3bit_quant_config())
+def test_default_group_size_is_used_when_not_overridden():
+    params = _weight_params(build_quant_config(nbits=DEFAULT_NBITS))
     assert params["nbits"] == DEFAULT_NBITS
     assert params["group_size"] == DEFAULT_GROUP_SIZE
 
 
 def test_config_respects_overrides():
-    params = _weight_params(build_3bit_quant_config(nbits=4, group_size=32))
-    assert params["nbits"] == 4
+    params = _weight_params(build_quant_config(nbits=8, group_size=32))
+    assert params["nbits"] == 8
     assert params["group_size"] == 32
