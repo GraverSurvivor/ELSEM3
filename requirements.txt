@@ -1,12 +1,22 @@
-torch==2.4.0
-transformers==4.44.2
-accelerate==0.34.2
-datasets==3.0.0
-hqq==0.2.2
-bitsandbytes==0.43.3
-scipy==1.14.1
-numpy==1.26.4
-pandas==2.2.2
-matplotlib==3.9.2
-seaborn==0.13.2
-tqdm==4.66.5
+# Floor-pinned, not exact-pinned: exact pins from mid-2024 (torch==2.4.0,
+# transformers==4.44.2, tokenizers==0.19.x, numpy==1.26.4, ...) predate Python 3.13 and have
+# no matching wheels on current Colab/Kaggle images, forcing slow/failing source builds and
+# version conflicts (transformers<5 needs tokenizers<0.20, which has no cp313 wheel either).
+# These floors match what hqq and bitsandbytes themselves declare as their minimum supported
+# versions (checked against their PyPI metadata), so any environment satisfying these floors
+# is safe to run the pipeline on.
+#
+# Once Person B's HQQ mixed-precision module-swap code is working end-to-end, freeze this
+# file to the exact versions that were verified working, for reproducibility of final results.
+torch>=2.4
+transformers>=4.44
+accelerate>=0.34
+datasets>=3.0
+hqq>=0.2.8
+bitsandbytes>=0.43
+scipy>=1.14
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.9
+seaborn>=0.13
+tqdm>=4.66
