@@ -1,0 +1,4 @@
+streamlit==1.38.0
+pytest==8.3.3
+jupyter==1.1.1
+wandb==0.17.9
