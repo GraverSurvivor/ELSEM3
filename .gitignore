@@ -217,10 +217,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-  results/
-  *.pt
-  *.safetensors
-  .env
-  wandb/
-  __pycache__/
-  .ipynb_checkpoints/
+results/
+*.pt
+*.safetensors
+.env
+wandb/
+__pycache__/
+.ipynb_checkpoints/
