@@ -27,11 +27,10 @@ import random
 from collections import Counter
 
 import torch
-from tqdm import tqdm
 
 from src.data.bbq_loader import CATEGORIES, BBQItem, load_bbq_disambiguated
-from src.eval.model_loader import load_bf16_model
-from src.eval.option_scorer import score_item
+from src.eval.model_loader import DEFAULT_DTYPE, DTYPES, load_model
+from src.eval.option_scorer import DEFAULT_BATCH_SIZE, score_items
 
 CHANCE_LEVEL = 1 / 3
 # A floor for "the harness works", NOT a model-quality bar. Anything below this on
@@ -50,13 +49,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--per-category", type=int, default=100, help="items sampled per category")
     parser.add_argument("--seed", type=int, default=0, help="sampling seed")
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--dtype", default=DEFAULT_DTYPE, choices=list(DTYPES))
     args = parser.parse_args()
 
     print(f"CUDA available: {torch.cuda.is_available()}")
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print("\nLoading BF16 Phi-3.5-mini-Instruct...")
-    model, tokenizer = load_bf16_model()
+    print(f"\nLoading Phi-3.5-mini-Instruct in {args.dtype}...")
+    model, tokenizer = load_model(args.dtype)
 
     print(f"\nScoring {args.per_category} DISAMBIGUATED items per category (seed={args.seed})...")
     print("On these, the context states who did what — the correct answer is a real option.\n")
@@ -69,10 +70,10 @@ def main() -> None:
 
     for category in CATEGORIES:
         items = sample_items(load_bbq_disambiguated(category), args.per_category, args.seed)
+        predictions = score_items(model, tokenizer, items, device, batch_size=args.batch_size, desc=category)
 
         n_correct = 0
-        for item in tqdm(items, desc=category):
-            predicted_index = score_item(model, tokenizer, item, device)
+        for item, predicted_index in zip(items, predictions):
             predicted_positions[predicted_index] += 1
             correct_positions[item.label] += 1
             if predicted_index == item.label:
@@ -88,7 +89,7 @@ def main() -> None:
     for category, category_accuracy in per_category_accuracy.items():
         print(f"{category:<20} {args.per_category:>6} {category_accuracy:>10.3f}")
     print(f"{'OVERALL':<20} {n_total:>6} {accuracy:>10.3f}")
-    print(f"\nChance level (3 options): {CHANCE_LEVEL:.3f}")
+    print(f"\ndtype: {args.dtype}   chance level (3 options): {CHANCE_LEVEL:.3f}")
 
     print("\nAnswer position distribution (a scorer stuck on one letter would show up here):")
     print(f"{'Position':<10} {'Predicted':>12} {'Correct':>12}")
