@@ -12,14 +12,16 @@ responsible using the actual failing examples as evidence, and restore precision
 - **Benchmark**: BBQ, ambiguous condition only, 5 categories (Age, Gender Identity,
   Race/Ethnicity, Religion, Socioeconomic Status)
 - **Quantization**: HQQ 3-bit (chosen because it supports per-module precision restoration)
-- **Baseline**: BF16
+- **Baseline**: uncompressed FP16 (see Environment — the model is BF16-trained, but Colab's
+  Turing-class T4 has no native BF16 tensor cores; FP16 was verified equivalent and is 6.5x
+  faster). Whatever dtype is used, EVERY condition in a comparison must use the same one.
 - **Scoring**: deterministic option-scoring (log-likelihood over the 3 answer choices —
   unknown / stereotype / anti-stereotype). No free-text generation for the benchmark loop.
 
 ## Pipeline stages
 
-1. **Baseline** — BF16 eval on BBQ ambiguous condition, all 5 categories. Build the safe set
-   (question IDs answered "unknown" at BF16 — ground truth reference).
+1. **Baseline** — uncompressed eval on BBQ ambiguous condition, all 5 categories. Build the
+   safe set (question IDs answered "unknown" uncompressed — ground truth reference).
 2. **Compress** — HQQ 3-bit quantize Phi-3.5-mini. Must support runtime mixed-precision module
    swaps (promote individual attention/MLP modules to 8-bit without a full reload). Phi-3.5 does
    NOT have separate `q_proj`/`k_proj`/`v_proj` like Llama-family models — checked directly
@@ -80,6 +82,26 @@ rather than relying on whatever happens to be preinstalled, since HQQ hooks into
 internals that shift across `transformers` versions and Stage 2+ can break in ways that look like
 HQQ bugs but are actually version drift. Once Person B's HQQ module-swap code is verified working
 end-to-end, freeze this file to exact versions for reproducibility of the final results.
+
+## Precision (dtype)
+
+`src/eval/model_loader.py` defaults to **fp16**, overridable with `--dtype` on the eval scripts.
+
+Why not bf16, which the model was trained in: Colab's T4 is Turing (compute capability 7.5) and
+native BF16 tensor cores only arrived with Ampere (8.0), so bf16 runs there *unaccelerated* —
+measured 3.88 items/s vs fp16's 25.39 (`src/eval/benchmark_throughput.py`). That 6.5x decides
+whether Stage 4's search (128 candidates x the flipped set, per round) finishes at all.
+
+Verified equivalent before switching: `validate_scorer --dtype fp16` reproduces the bf16 run's
+disambiguated accuracy exactly (0.908, identical per category and per answer position). On
+*ambiguous* items ~1.7% of predictions differ between dtypes — near-ties flipping, since that's
+where the model is genuinely uncertain. Harmless for comparing conditions, fatal if conditions
+disagree: **never compare runs taken at different dtypes**, or precision gets confounded with
+quantization. `run_baseline` labels each run's condition with its dtype so a mismatch is visible
+in the results files.
+
+Beware `torch.cuda.is_bf16_supported()` — it returns True on a T4. It means bf16 runs, not that
+it runs fast. On an Ampere+ GPU (L4/A100), bf16 is the better choice and `--dtype bf16` restores it.
 
 ## Conventions
 

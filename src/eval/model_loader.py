@@ -24,7 +24,7 @@ MODEL_ID = "microsoft/Phi-3.5-mini-instruct"
 
 # Named dtypes for CLI flags, so scripts can expose --dtype without importing torch types.
 DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16}
-DEFAULT_DTYPE = "bf16"
+DEFAULT_DTYPE = "fp16"
 
 
 def load_model(
