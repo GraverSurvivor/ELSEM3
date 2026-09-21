@@ -23,6 +23,7 @@ look like real data rather than a broken file.
 
     python -m src.experiments.promote_reference fp16_20260921T180125Z --name baseline_fp16
     python -m src.experiments.promote_reference fp16_20260921T180125Z --name baseline_fp16 --check-only
+    python -m src.experiments.promote_reference baseline_fp16 --reference  # re-check a promoted copy
 """
 
 from __future__ import annotations
@@ -71,8 +72,18 @@ def validate_run(run_id: str) -> list[str]:
     conditions = {result.condition for result in results}
     if len(conditions) > 1:
         problems.append(f"mixed conditions in one run: {sorted(conditions)}")
-    elif not run_id.startswith(f"{next(iter(conditions))}_"):
-        problems.append(f"condition {next(iter(conditions))!r} doesn't match run id {run_id!r}")
+
+    # Compare the condition against the run id STORED IN THE RECORDS, not the directory name.
+    # A promoted reference lives under a human-chosen name like "baseline_fp16", so checking the
+    # directory would flag every promoted copy as broken -- exactly when re-validating matters
+    # most, e.g. after moving the files between machines by hand.
+    recorded_ids = {result.run_id for result in results}
+    if len(recorded_ids) > 1:
+        problems.append(f"records span multiple run ids: {sorted(recorded_ids)}")
+    elif len(conditions) == 1:
+        recorded_id, condition = next(iter(recorded_ids)), next(iter(conditions))
+        if not recorded_id.startswith(f"{condition}_"):
+            problems.append(f"condition {condition!r} doesn't match recorded run id {recorded_id!r}")
 
     try:
         summaries = read_category_summary(run_id)
@@ -113,9 +124,21 @@ def promote(run_id: str, name: str) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_id", help="the run to promote, e.g. fp16_20260921T180125Z")
-    parser.add_argument("--name", required=True, help="name under results/reference/, e.g. baseline_fp16")
+    parser.add_argument("--name", help="name under results/reference/, e.g. baseline_fp16")
     parser.add_argument("--check-only", action="store_true", help="validate without copying")
+    parser.add_argument(
+        "--reference",
+        action="store_true",
+        help="RUN_ID names an already-promoted directory under results/reference/ -- validate it "
+        "in place. Use after moving a reference between machines by hand.",
+    )
     args = parser.parse_args()
+
+    if args.reference:
+        args.run_id = f"{REFERENCE_DIR_NAME}/{args.run_id}"
+        args.check_only = True
+    elif not args.name:
+        parser.error("--name is required unless --reference is given")
 
     problems = validate_run(args.run_id)
     if problems:

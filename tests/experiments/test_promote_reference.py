@@ -110,7 +110,7 @@ def test_condition_not_matching_the_run_id_is_caught():
     _write_run(results, _complete_summaries())
 
     problems = promote_reference.validate_run(RUN_ID)
-    assert any("doesn't match run id" in p for p in problems)
+    assert any("doesn't match recorded run id" in p for p in problems)
 
 
 def test_summary_disagreeing_with_the_records_is_caught():
@@ -162,3 +162,30 @@ def test_promoting_twice_replaces_rather_than_nesting(results_dir):
 
     assert not (destination / "baseline_fp16").exists()
     assert len(logger.read_question_results(RUN_ID)) == PER_CATEGORY * len(CATEGORIES)
+
+
+def test_a_promoted_copy_validates_under_its_own_name():
+    """A promoted reference lives under a chosen name like "baseline_fp16", not a run id.
+
+    Validating it must key off the run id recorded in the records, not the directory name --
+    otherwise every promoted copy reports as broken, which is exactly the moment re-validating
+    matters most (e.g. after hand-copying the files between machines).
+    """
+    _write_run(_complete_results(), _complete_summaries())
+    promote_reference.promote(RUN_ID, "baseline_fp16")
+
+    assert promote_reference.validate_run("reference/baseline_fp16") == []
+
+
+def test_records_spanning_multiple_run_ids_are_caught():
+    # Two different runs concatenated into one file would pass every per-category check while
+    # being a blend of two conditions' worth of answers.
+    results = _complete_results()
+    merged = results + [
+        QuestionResult(**{**r.to_dict(), "run_id": "fp16_20260922T000000Z", "question_id": f"x{i}"})
+        for i, r in enumerate(results[:2])
+    ]
+    _write_run(merged, _complete_summaries())
+
+    problems = promote_reference.validate_run(RUN_ID)
+    assert any("multiple run ids" in p for p in problems)
