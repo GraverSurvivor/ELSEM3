@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,10 +26,28 @@ def new_run_id(condition: str) -> str:
     return f"{condition}_{timestamp}"
 
 
-def _run_dir(run_id: str) -> Path:
+def _run_dir(run_id: str, create: bool = True) -> Path:
     run_dir = RESULTS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    if create:
+        run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
+
+
+def _write_atomically(path: Path, write) -> Path:
+    """Writes via a temp file and renames, so an interrupt cannot leave a half-written file.
+
+    These files are checkpoints for long runs, so they get rewritten repeatedly while a run
+    is in progress -- which makes an interrupt landing mid-write a real possibility rather
+    than a theoretical one. A truncated JSONL line would make the run unresumable and would
+    look like corrupt data rather than an interrupted write. os.replace is atomic on both
+    POSIX and Windows, so what is on disk is always either the previous complete version or
+    the new one.
+    """
+    temp_path = path.with_name(path.name + ".tmp")
+    with temp_path.open("w", encoding="utf-8", newline="") as handle:
+        write(handle)
+    os.replace(temp_path, path)
+    return path
 
 
 def write_question_results(results: list[QuestionResult], run_id: str) -> Path:
@@ -36,14 +55,24 @@ def write_question_results(results: list[QuestionResult], run_id: str) -> Path:
     incrementally during a long eval run, unlike a single JSON array.
     """
     path = _run_dir(run_id) / "question_results.jsonl"
-    with path.open("w", encoding="utf-8") as f:
+
+    def write(handle) -> None:
         for result in results:
-            f.write(json.dumps(result.to_dict()) + "\n")
-    return path
+            handle.write(json.dumps(result.to_dict()) + "\n")
+
+    return _write_atomically(path, write)
 
 
-def read_question_results(run_id: str) -> list[QuestionResult]:
-    path = _run_dir(run_id) / "question_results.jsonl"
+def read_question_results(run_id: str, missing_ok: bool = False) -> list[QuestionResult]:
+    """Reads back a run's per-question records.
+
+    `missing_ok` returns [] instead of raising when the run has nothing written yet, which
+    is what resuming needs: "no such run" and "interrupted before the first checkpoint"
+    should both just mean "start from the beginning".
+    """
+    path = _run_dir(run_id, create=False) / "question_results.jsonl"
+    if missing_ok and not path.exists():
+        return []
     with path.open("r", encoding="utf-8") as f:
         return [QuestionResult(**json.loads(line)) for line in f if line.strip()]
 
@@ -52,16 +81,18 @@ def write_category_summary(summaries: list[CategorySummary], run_id: str) -> Pat
     """Writes per-category summaries as CSV -- this is what the plotting/reporting code reads."""
     path = _run_dir(run_id) / "category_summary.csv"
     fieldnames = list(summaries[0].to_dict().keys())
-    with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+    def write(handle) -> None:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for summary in summaries:
             writer.writerow(summary.to_dict())
-    return path
+
+    return _write_atomically(path, write)
 
 
 def read_category_summary(run_id: str) -> list[CategorySummary]:
-    path = _run_dir(run_id) / "category_summary.csv"
+    path = _run_dir(run_id, create=False) / "category_summary.csv"
     with path.open("r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
 
