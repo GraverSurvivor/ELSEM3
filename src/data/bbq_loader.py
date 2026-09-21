@@ -160,17 +160,15 @@ def _to_item(row: dict, category: str) -> BBQItem:
     )
 
 
-def load_bbq_ambiguous(category: str) -> list[BBQItem]:
-    """Loads one category's ambiguous-condition rows as normalized BBQItems.
+def _load_bbq(category: str, context_condition: str) -> list[BBQItem]:
+    """Loads one category's rows for one context condition ("ambig" or "disambig").
 
-    `category` must be a key of CATEGORIES (project naming), e.g. "SES", not "Socioeconomic".
-
-    A tiny fraction of items (measured: 8/12148 = 0.07%, all in Gender_identity) have
-    `additional_metadata.stereotyped_groups` that doesn't correspond to either of that specific
-    item's own non-"unknown" options — a genuine BBQ data-quality quirk, not a bug in
-    `_find_stereotype_index`'s matching logic (verified against every category's real label
-    vocabulary). Rather than crash the whole category or guess a possibly-wrong classification,
-    those items are skipped with a logged warning.
+    A tiny fraction of items (measured: 8/12148 = 0.07% in each condition, all in
+    Gender_identity) have `additional_metadata.stereotyped_groups` that doesn't correspond to
+    either of that specific item's own non-"unknown" options — a genuine BBQ data-quality quirk,
+    not a bug in `_find_stereotype_index`'s matching logic (verified against every category's
+    real label vocabulary). Rather than crash the whole category or guess a possibly-wrong
+    classification, those items are skipped with a logged warning.
     """
     if category not in CATEGORIES:
         raise ValueError(f"Unknown category {category!r}; expected one of {list(CATEGORIES)}")
@@ -179,11 +177,11 @@ def load_bbq_ambiguous(category: str) -> list[BBQItem]:
     ds: Dataset = load_dataset(
         DATASET_ID, split="test", revision="refs/convert/parquet", data_dir=config_name
     )
-    ambig = ds.filter(lambda row: row["context_condition"] == "ambig")
+    matching = ds.filter(lambda row: row["context_condition"] == context_condition)
 
     items = []
     skipped = 0
-    for row in ambig:
+    for row in matching:
         try:
             items.append(_to_item(row, category))
         except ValueError:
@@ -191,6 +189,26 @@ def load_bbq_ambiguous(category: str) -> list[BBQItem]:
     if skipped:
         print(f"Warning: skipped {skipped} {category} item(s) with unresolvable stereotype_index")
     return items
+
+
+def load_bbq_ambiguous(category: str) -> list[BBQItem]:
+    """Loads one category's ambiguous-condition rows — the benchmark the project measures on.
+
+    `category` must be a key of CATEGORIES (project naming), e.g. "SES", not "Socioeconomic".
+    """
+    return _load_bbq(category, "ambig")
+
+
+def load_bbq_disambiguated(category: str) -> list[BBQItem]:
+    """Loads one category's DISAMBIGUATED rows — not part of the fairness benchmark.
+
+    These exist only to validate the evaluator itself (`src/eval/validate_scorer.py`): their
+    context does state who did what, so `label` points at a real content-based answer rather
+    than "unknown" (verified: 0/12148 disambiguated items have label == the unknown option).
+    A working option-scorer should score well above the 33% chance floor here; one that doesn't
+    tells us the harness is broken before we trust any USR/SRS number it produces.
+    """
+    return _load_bbq(category, "disambig")
 
 
 def load_all_categories() -> dict[str, list[BBQItem]]:
