@@ -1,4 +1,4 @@
-.PHONY: install baseline validate quantize swap-spike repair-state headline test
+.PHONY: install baseline validate promote-reference quantize swap-spike repair-state headline test
 
 install:
 	pip install -r requirements.txt
@@ -11,6 +11,12 @@ DTYPE ?= fp16
 BATCH_SIZE ?= 16
 baseline:
 	python -m src.eval.run_baseline --dtype $(DTYPE) --batch-size $(BATCH_SIZE)
+
+# Promote a finished run to results/reference/, the one results path git tracks. Validates
+# first -- a truncated or duplicated run promoted as "the baseline" would silently redefine
+# what every later stage compares against. Pass RUN_ID=<id> NAME=<name>.
+promote-reference:
+	python -m src.experiments.promote_reference $(RUN_ID) --name $(NAME)
 
 # Confidence check on the scorer itself, via BBQ's disambiguated condition. Run this before
 # trusting any USR/SRS number from a new dtype, model, or prompt format.

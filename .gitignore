@@ -217,7 +217,14 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-results/
+# Run outputs are local by default -- see CLAUDE.md. The one exception is
+# results/reference/, which holds the shared baseline every later stage is defined
+# relative to; it is small, it must be identical for all three of us, and having it in
+# the repo lets the flipped-set, statistics and plotting work run without a GPU.
+# NB: 'results/*' not 'results/', because git never descends into an excluded directory --
+# with 'results/' the negation below would silently do nothing.
+results/*
+!results/reference/
 *.pt
 *.safetensors
 .env
