@@ -1,7 +1,7 @@
-"""Week 1 sanity check: BF16 model loads and generates, BBQ ambiguous splits load cleanly.
+"""Sanity check: the model loads and generates, and BBQ ambiguous splits load cleanly.
 
 Run in Colab (or any CUDA box) after `pip install -r requirements.txt`:
-    python -m src.eval.verify_week1
+    python -m src.eval.verify_model_and_data
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from src.eval.model_loader import load_model
 def main() -> None:
     print(f"CUDA available: {torch.cuda.is_available()}")
 
-    print("\nLoading BF16 Phi-3.5-mini-Instruct...")
+    print("\nLoading Phi-3.5-mini-Instruct...")
     model, tokenizer = load_model()
     print(f"Model dtype: {next(model.parameters()).dtype}")
     print(f"Model device: {next(model.parameters()).device}")

@@ -1,7 +1,7 @@
-"""Week 1 sanity check: Phi-3.5-mini quantizes to 3-bit via HQQ end-to-end and still generates.
+"""Sanity check: Phi-3.5-mini quantizes to 3-bit via HQQ end-to-end and still generates.
 
-No mixed precision yet (Week 2). Run in Colab after `pip install -r requirements.txt`:
-    python -m src.quant.verify_week1
+Uniform 3-bit, no mixed precision -- that's `verify_module_swap.py`. Run in Colab after `pip install -r requirements.txt`:
+    python -m src.quant.verify_hqq_3bit
 """
 
 from __future__ import annotations

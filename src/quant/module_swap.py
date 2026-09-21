@@ -24,6 +24,24 @@ from hqq.core.quantize import HQQLinear
 from src.quant.hqq_quantizer import DEFAULT_GROUP_SIZE, build_quant_config
 
 
+def infer_compute_dtype(model: nn.Module) -> torch.dtype:
+    """Reads the compute dtype off an already-quantized layer in `model`.
+
+    A promoted module that dequantizes into a different dtype than the rest of the model is a
+    silent correctness bug, not a crash: torch will happily upcast across the boundary and the
+    model keeps answering, just at a precision nothing recorded. Since the project's baseline
+    dtype is now a measured choice rather than a constant (see CLAUDE.md > Precision), taking
+    the dtype from the live model is safer than any default this module could hardcode.
+    """
+    for module in model.modules():
+        if isinstance(module, HQQLinear):
+            return module.compute_dtype
+    raise ValueError(
+        "No HQQLinear found in model - promote_module expects an already-quantized model. "
+        "Pass compute_dtype explicitly if swapping into an unquantized one."
+    )
+
+
 def get_module_by_path(model: nn.Module, path: str) -> nn.Module:
     """Resolves a dotted module path (e.g. "model.layers.0.self_attn.qkv_proj") to the module."""
     module = model
@@ -66,7 +84,7 @@ def promote_module(
     snapshot: nn.Linear,
     nbits: int,
     group_size: int = DEFAULT_GROUP_SIZE,
-    compute_dtype: torch.dtype = torch.bfloat16,
+    compute_dtype: torch.dtype | None = None,
     device: str = "cuda",
 ) -> None:
     """Swaps the quantized module at `path` for a fresh HQQLinear at `nbits`, requantized from
@@ -76,7 +94,14 @@ def promote_module(
     `snapshot` itself is never mutated: a fresh nn.Linear is built from its weights each call,
     since `HQQLinear(..., del_orig=True)` deletes whatever linear layer it's handed, and the
     snapshot needs to survive being promoted more than once (e.g. demoted back to 3-bit later).
+
+    `compute_dtype=None` (the default) reads the dtype off the model's existing quantized
+    layers, so the promoted module can't end up at a different precision than everything around
+    it. Pass it explicitly only to override that deliberately.
     """
+    if compute_dtype is None:
+        compute_dtype = infer_compute_dtype(model)
+
     fresh = nn.Linear(snapshot.in_features, snapshot.out_features, bias=snapshot.bias is not None)
     fresh.weight.data = snapshot.weight.data.clone()
     if snapshot.bias is not None:
