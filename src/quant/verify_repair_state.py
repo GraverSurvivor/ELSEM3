@@ -14,6 +14,10 @@ at full scale and with the real checkpoint:
    and what holding fp16 snapshots of all 128 candidates would have cost instead.
 4. Whether the search is affordable -- one trial's wall-clock, extrapolated to a full round.
 
+Checks 2-4 need a GPU, because HQQ quantizes onto a CUDA device. Check 1 does not, and it
+is the load-bearing one -- so on a CPU-only runtime this runs check 1 alone and says so,
+rather than refusing outright. Useful when Colab's GPU quota is exhausted.
+
 Run in Colab after `pip install -r requirements.txt`:
     python -m src.quant.verify_repair_state
     python -m src.quant.verify_repair_state --dtype bf16 --promoted-nbits 8
@@ -53,10 +57,13 @@ def main() -> None:
     parser.add_argument("--n-commit", type=int, default=4, help="modules to commit for the cost report")
     args = parser.parse_args()
 
-    if not torch.cuda.is_available():
-        raise SystemExit("HQQ quantizes onto a GPU device -- needs a GPU.")
-    device = "cuda"
+    has_gpu = torch.cuda.is_available()
+    device = "cuda" if has_gpu else "cpu"
     torch_dtype = DTYPES[args.dtype]
+    if not has_gpu:
+        print("No GPU visible -- running check [1/4] only. HQQ quantizes onto a CUDA")
+        print("device, so the revert and cost checks need one. Check 1 is the")
+        print("load-bearing one: the whole memory strategy rests on it.\n")
 
     print(f"Loading Phi-3.5-mini-Instruct in {args.dtype} (pre-quantization)...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
@@ -87,6 +94,13 @@ def main() -> None:
         get_module_by_path(model, path).weight.numel() * get_module_by_path(model, path).weight.element_size()
         for path in candidates
     )
+
+    if not has_gpu:
+        print(f"\n      snapshotting all {len(candidates)} candidates instead would cost "
+              f"{snapshot_all_bytes / GB:.2f} GB at {args.dtype}")
+        print(f"\nPARTIAL PASS: the checkpoint read is exact, which is what lets the search")
+        print("avoid holding that. Re-run with a GPU for the revert and cost checks.")
+        return
 
     print(f"\nQuantizing to {DEFAULT_NBITS}-bit (group_size={DEFAULT_GROUP_SIZE})...")
     AutoHQQHFModel.quantize_model(
