@@ -1,18 +1,25 @@
-"""Deterministic option-scoring evaluator: one forward pass per question, compare logits over
-the 3 multiple-choice labels (A/B/C -> ans0/ans1/ans2), argmax picks the model's answer.
+"""Deterministic option-scoring evaluator: compare logits over the 3 multiple-choice labels
+(A/B/C -> ans0/ans1/ans2), argmax picks the model's answer.
 
-No free-text generation, per CLAUDE.md's scoring convention — one forward pass (not
-autoregressive decoding) keeps this fast and fully deterministic (no sampling).
+No free-text generation, per CLAUDE.md's scoring convention — reading logits (not autoregressive
+decoding) keeps this fast and fully deterministic (no sampling).
+
+Scoring is batched. That's not a micro-optimization: Stage 4's greedy search re-runs the flipped
+set once per candidate module (128 candidates x however many rounds), so at one item per forward
+pass the search alone would run for days and the headline experiment would never finish. Batching
+is what makes the back half of this project fit in the schedule at all.
 """
 
 from __future__ import annotations
 
 import torch
+from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from src.data.bbq_loader import BBQItem
 
 LABELS = ("A", "B", "C")
+DEFAULT_BATCH_SIZE = 8
 
 
 def format_prompt(item: BBQItem, tokenizer: PreTrainedTokenizerBase) -> str:
@@ -49,14 +56,74 @@ def _label_token_ids(prompt_text: str, tokenizer: PreTrainedTokenizerBase) -> li
     return label_ids
 
 
+def _resolve_label_token_ids(prompts: list[str], tokenizer: PreTrainedTokenizerBase) -> list[int]:
+    """Resolves the A/B/C token ids once for a whole run instead of per item.
+
+    Every prompt ends with the same fixed suffix ("...only the letter of the correct
+    option.<|end|><|assistant|>"), so the ids are constant across items — resolving per item cost
+    4 tokenizer calls each, ~48k redundant calls over a full 12k-item benchmark.
+
+    Cross-checks the first and last prompt rather than trusting that invariant blindly: if the
+    prompt template ever changes so the suffix stops being constant, this fails loudly instead of
+    silently scoring every item against the wrong three tokens.
+    """
+    first = _label_token_ids(prompts[0], tokenizer)
+    last = _label_token_ids(prompts[-1], tokenizer)
+    if first != last:
+        raise ValueError(
+            f"Label token ids differ across prompts ({first} vs {last}) — they can no longer be "
+            "resolved once per run, so scoring would use the wrong tokens for some items."
+        )
+    return first
+
+
 @torch.no_grad()
+def score_items(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    items: list[BBQItem],
+    device: str,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    desc: str | None = None,
+) -> list[int]:
+    """Scores every item, returning predicted option indices (0/1/2) in the SAME order as `items`.
+
+    Prompts are grouped by length before batching so each batch pads to a similar width — BBQ
+    contexts vary several-fold in length, and without this a batch is padded out to its longest
+    member. Original order is restored before returning.
+    """
+    if not items:
+        return []
+
+    # Left padding is required, not incidental: this reads the next-token logits at position -1,
+    # which is only the real final token of every row if the padding sits in front.
+    tokenizer.padding_side = "left"
+
+    prompts = [format_prompt(item, tokenizer) for item in items]
+    label_ids = _resolve_label_token_ids(prompts, tokenizer)
+
+    by_length = sorted(range(len(prompts)), key=lambda i: len(prompts[i]))
+    predictions = [-1] * len(items)
+
+    batch_starts = range(0, len(by_length), batch_size)
+    if desc is not None:
+        batch_starts = tqdm(batch_starts, desc=desc, total=(len(by_length) + batch_size - 1) // batch_size)
+
+    for start in batch_starts:
+        positions = by_length[start : start + batch_size]
+        inputs = tokenizer(
+            [prompts[i] for i in positions], return_tensors="pt", padding=True, add_special_tokens=True
+        ).to(device)
+
+        final_logits = model(**inputs).logits[:, -1, :]
+        batch_predictions = torch.argmax(final_logits[:, label_ids], dim=-1).tolist()
+
+        for position, prediction in zip(positions, batch_predictions):
+            predictions[position] = prediction
+
+    return predictions
+
+
 def score_item(model: PreTrainedModel, tokenizer: PreTrainedTokenizerBase, item: BBQItem, device: str) -> int:
-    """Runs ONE forward pass and returns the predicted option index (0, 1, or 2)."""
-    prompt_text = format_prompt(item, tokenizer)
-    label_ids = _label_token_ids(prompt_text, tokenizer)
-
-    inputs = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=True).to(device)
-    logits = model(**inputs).logits[0, -1, :]  # next-token logits at the last prompt position
-
-    label_logits = logits[label_ids]
-    return int(torch.argmax(label_logits).item())
+    """Scores a single item — convenience wrapper for debugging and one-off checks."""
+    return score_items(model, tokenizer, [item], device, batch_size=1)[0]

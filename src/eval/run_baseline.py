@@ -11,12 +11,13 @@ Run in Colab after `pip install -r requirements.txt`:
 
 from __future__ import annotations
 
+import argparse
+
 import torch
-from tqdm import tqdm
 
 from src.data.bbq_loader import CATEGORIES, load_all_categories
 from src.eval.model_loader import load_bf16_model
-from src.eval.option_scorer import score_item
+from src.eval.option_scorer import DEFAULT_BATCH_SIZE, score_items
 from src.experiments.logger import new_run_id, write_category_summary, write_question_results
 from src.experiments.schema import CategorySummary, QuestionResult, summarize_category
 
@@ -48,6 +49,10 @@ def _aggregate_overall(results: list[QuestionResult], run_id: str, condition: st
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    args = parser.parse_args()
+
     print(f"CUDA available: {torch.cuda.is_available()}")
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -58,26 +63,26 @@ def main() -> None:
     items_by_category = load_all_categories()
 
     run_id = new_run_id(CONDITION)
-    print(f"\nRun ID: {run_id}")
+    print(f"\nRun ID: {run_id} (batch size {args.batch_size})")
 
     all_results: list[QuestionResult] = []
     for category, items in items_by_category.items():
-        for item in tqdm(items, desc=category):
-            predicted_index = score_item(model, tokenizer, item, device)
-            all_results.append(
-                QuestionResult(
-                    run_id=run_id,
-                    condition=CONDITION,
-                    question_id=item.question_id,
-                    category=item.category,
-                    predicted_index=predicted_index,
-                    label=item.label,
-                    unknown_index=item.unknown_index,
-                    is_unknown_predicted=(predicted_index == item.unknown_index),
-                    is_correct=(predicted_index == item.label),
-                    is_stereotyped_predicted=(predicted_index == item.stereotype_index),
-                )
+        predictions = score_items(model, tokenizer, items, device, batch_size=args.batch_size, desc=category)
+        all_results.extend(
+            QuestionResult(
+                run_id=run_id,
+                condition=CONDITION,
+                question_id=item.question_id,
+                category=item.category,
+                predicted_index=predicted_index,
+                label=item.label,
+                unknown_index=item.unknown_index,
+                is_unknown_predicted=(predicted_index == item.unknown_index),
+                is_correct=(predicted_index == item.label),
+                is_stereotyped_predicted=(predicted_index == item.stereotype_index),
             )
+            for item, predicted_index in zip(items, predictions)
+        )
 
     write_question_results(all_results, run_id)
 
