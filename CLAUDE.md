@@ -103,6 +103,39 @@ in the results files.
 Beware `torch.cuda.is_bf16_supported()` — it returns True on a T4. It means bf16 runs, not that
 it runs fast. On an Ampere+ GPU (L4/A100), bf16 is the better choice and `--dtype bf16` restores it.
 
+## Repair state (Stage 4/5 memory + revert)
+
+Two constraints shape how the attribution search is allowed to work. Both are implemented in
+`src/quant/weight_source.py` and `src/quant/module_swap.py`, and verified end-to-end on the real
+model by `src/quant/verify_repair_state.py` (`make repair-state`).
+
+**Never snapshot the whole candidate set.** `snapshot_linear` must run before quantization
+(HQQLinear deletes the originals as it packs them), and the candidate set is all 128
+`{qkv_proj, o_proj, gate_up_proj, down_proj}` x 32 layers — 3.62B parameters, essentially every
+linear weight in the model. Snapshotting them all at fp16 is ~7.25 GB against a 3-bit model of
+~1.70 GB: likely an OOM on free Colab's 12.7 GB of system RAM, and it would make the reported
+"memory overhead vs plain 3-bit" meaningless, since we'd be holding 4.3x the compressed model to
+claim a small overhead. Instead `CheckpointWeightSource` reads one module's weights from the
+safetensors shards on demand and holds nothing in between. This is exact, not approximate:
+`from_pretrained(torch_dtype=...)` casts those same tensors on load, so the read is bit-identical
+to the eager snapshot — which is check [1/4] of the verify script, and is load-bearing. If it
+ever fails, promotions inject weights the baseline never had and the search attributes recovery
+to a difference it created itself.
+
+**Revert by restoring the displaced module object, never by requantizing.** The search is
+promote → measure → put back, 128 times per round. Requantizing back would be slower and would
+assume HQQ's optimizer is bit-deterministic; any non-determinism compounds over hundreds of
+trials, and it fails silently — the model keeps answering, it just isn't the model the previous
+round thought it scored. `SwapRegistry.trial()` keeps the displaced module and restores it in a
+`finally`, so even an OOM mid-evaluation can't contaminate later candidates.
+
+Two memory numbers, reported separately and not to be conflated: `deployed_overhead_bytes()` is
+what the repair costs to ship (promoted modules minus the quantized ones they replaced — one
+`gate_up_proj` at 8-bit is ~+30 MB, about +1.8%), while `search_overhead_bytes()` is the
+transient cost of the retained originals, freed by `release_baselines()`. Sizes are measured off
+the live tensors rather than computed from nbits, because HQQ's real cost includes packing and
+per-group scale/zero: 3.75 bits/weight at 3-bit, 8.50 at 8-bit, not 3 and 8.
+
 ## Conventions
 
 - Branch per person/feature (`person-a/...`, `person-b/...`, `person-c/...`), PR into `main`.

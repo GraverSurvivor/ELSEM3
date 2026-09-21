@@ -1,4 +1,4 @@
-.PHONY: install baseline validate quantize swap-spike headline test
+.PHONY: install baseline validate quantize swap-spike repair-state headline test
 
 install:
 	pip install -r requirements.txt
@@ -24,6 +24,11 @@ quantize:
 
 swap-spike:
 	python -m src.quant.verify_module_swap
+
+# Stage 4 groundwork (Person B): checks lazy checkpoint loading is bit-exact, that a trialled
+# promotion reverts exactly, and prints the real memory numbers for the report.
+repair-state:
+	python -m src.quant.verify_repair_state
 
 # Stages 1-5 x3 failure windows (Person C): full detect -> localize -> repair loop.
 # NOT BUILT YET -- Week 6 deliverable.
