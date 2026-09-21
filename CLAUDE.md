@@ -141,6 +141,17 @@ per-group scale/zero: 3.75 bits/weight at 3-bit, 8.50 at 8-bit, not 3 and 8.
 - Branch per person/feature (`person-a/...`, `person-b/...`, `person-c/...`), PR into `main`.
 - Every result-writing script logs structured output (JSON/CSV) under `results/` via
   `src/eval` or `src/experiments` — never hand-copy numbers into the deck.
+- `results/` is gitignored with ONE exception: `results/reference/`, which holds the shared
+  baseline. Everything downstream is defined relative to it (the safe set is "what the baseline
+  got right", the flipped set is "what changed against the baseline"), all three of us must use
+  the identical file, and having it in the repo means the flipped-set, statistics and plotting
+  work needs no GPU at all. It was lost three times before this rule existed — an interrupt, a
+  dead Colab session, a dead Kaggle session — at ~8 GPU-minutes and a working GPU each time.
+  Promote a run with `make promote-reference RUN_ID=<id> NAME=<name>`, which validates
+  completeness first: a truncated or duplicated run promoted as "the baseline" would not crash
+  anything, it would quietly redefine what every later stage compares against.
+- Long runs checkpoint per category and resume with `--resume <RUN_ID>`; a category is only
+  written once fully scored, so anything in the file is complete.
 - `notebooks/` is for exploration only; final numbers come from `src/` scripts so they're
   reproducible.
 - Write pytest tests alongside new functions in `src/data`, `src/eval`, `src/stats`.
