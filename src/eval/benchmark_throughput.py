@@ -25,13 +25,10 @@ import argparse
 import time
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.data.bbq_loader import load_bbq_ambiguous
-from src.eval.model_loader import MODEL_ID
+from src.eval.model_loader import DTYPES, load_model
 from src.eval.option_scorer import score_items
-
-DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16}
 
 
 def main() -> None:
@@ -50,17 +47,13 @@ def main() -> None:
     print(f"torch.cuda.is_bf16_supported(): {torch.cuda.is_bf16_supported()}\n")
 
     items = load_bbq_ambiguous("Age")[: args.n_items]
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
     results: dict[tuple[str, int], float] = {}
     predictions_by_dtype: dict[str, list[int]] = {}
 
     for dtype_name in args.dtypes:
         print(f"Loading model in {dtype_name}...")
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID, torch_dtype=DTYPES[dtype_name], device_map="cuda"
-        )
-        model.eval()
+        model, tokenizer = load_model(dtype_name)
 
         for batch_size in args.batch_sizes:
             start = time.perf_counter()

@@ -1,12 +1,17 @@
-"""Stage 1: BF16 baseline evaluation on BBQ ambiguous condition, all 5 categories.
+"""Stage 1: full-precision baseline evaluation on BBQ ambiguous condition, all 5 categories.
 
 Runs the deterministic option-scoring evaluator over every item, writes per-question and
 per-category results via Person C's logger (results/<run_id>/), and prints USR/SRS per category
-and overall. This is the BF16 reference run everything else (the safe set, the flipped-set
-diff after compression) gets compared against.
+and overall. This is the uncompressed reference run everything else (the safe set, the
+flipped-set diff after compression) gets compared against.
+
+`--dtype` is a methodology choice, not just a speed knob — it's recorded as the run's condition
+and is what Stage 3 diffs against. See `src/eval/model_loader.py` for why it's parameterized
+(bf16 runs ~6.5x slower than fp16 on a Turing-era GPU like Colab's T4).
 
 Run in Colab after `pip install -r requirements.txt`:
     python -m src.eval.run_baseline
+    python -m src.eval.run_baseline --dtype fp16 --batch-size 16
 """
 
 from __future__ import annotations
@@ -16,12 +21,10 @@ import argparse
 import torch
 
 from src.data.bbq_loader import CATEGORIES, load_all_categories
-from src.eval.model_loader import load_bf16_model
+from src.eval.model_loader import DEFAULT_DTYPE, DTYPES, load_model
 from src.eval.option_scorer import DEFAULT_BATCH_SIZE, score_items
 from src.experiments.logger import new_run_id, write_category_summary, write_question_results
 from src.experiments.schema import CategorySummary, QuestionResult, summarize_category
-
-CONDITION = "bf16"
 
 
 def _aggregate_overall(results: list[QuestionResult], run_id: str, condition: str) -> CategorySummary:
@@ -51,19 +54,24 @@ def _aggregate_overall(results: list[QuestionResult], run_id: str, condition: st
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--dtype", default=DEFAULT_DTYPE, choices=list(DTYPES))
     args = parser.parse_args()
+
+    # The condition label follows the dtype: it's written into every result record and is what
+    # Stage 3 diffs against, so a run must never be filed under a precision it wasn't run at.
+    condition = args.dtype
 
     print(f"CUDA available: {torch.cuda.is_available()}")
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print("\nLoading BF16 Phi-3.5-mini-Instruct...")
-    model, tokenizer = load_bf16_model()
+    print(f"\nLoading Phi-3.5-mini-Instruct in {args.dtype}...")
+    model, tokenizer = load_model(args.dtype)
 
     print("\nLoading BBQ ambiguous condition, all 5 categories...")
     items_by_category = load_all_categories()
 
-    run_id = new_run_id(CONDITION)
-    print(f"\nRun ID: {run_id} (batch size {args.batch_size})")
+    run_id = new_run_id(condition)
+    print(f"\nRun ID: {run_id} (dtype {args.dtype}, batch size {args.batch_size})")
 
     all_results: list[QuestionResult] = []
     for category, items in items_by_category.items():
@@ -71,7 +79,7 @@ def main() -> None:
         all_results.extend(
             QuestionResult(
                 run_id=run_id,
-                condition=CONDITION,
+                condition=condition,
                 question_id=item.question_id,
                 category=item.category,
                 predicted_index=predicted_index,
@@ -86,8 +94,8 @@ def main() -> None:
 
     write_question_results(all_results, run_id)
 
-    summaries = [summarize_category(all_results, run_id, CONDITION, category) for category in CATEGORIES]
-    overall = _aggregate_overall(all_results, run_id, CONDITION)
+    summaries = [summarize_category(all_results, run_id, condition, category) for category in CATEGORIES]
+    overall = _aggregate_overall(all_results, run_id, condition)
     write_category_summary(summaries + [overall], run_id)
 
     print(f"\n{'Category':<20} {'N':>6} {'USR':>8} {'SRS':>8}")

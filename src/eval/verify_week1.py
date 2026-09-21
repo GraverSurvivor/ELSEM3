@@ -9,14 +9,14 @@ from __future__ import annotations
 import torch
 
 from src.data.bbq_loader import CATEGORIES, load_all_categories, summarize_splits
-from src.eval.model_loader import load_bf16_model
+from src.eval.model_loader import load_model
 
 
 def main() -> None:
     print(f"CUDA available: {torch.cuda.is_available()}")
 
     print("\nLoading BF16 Phi-3.5-mini-Instruct...")
-    model, tokenizer = load_bf16_model()
+    model, tokenizer = load_model()
     print(f"Model dtype: {next(model.parameters()).dtype}")
     print(f"Model device: {next(model.parameters()).device}")
 

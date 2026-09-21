@@ -1,4 +1,19 @@
-"""Loads Phi-3.5-mini-Instruct at BF16 — the reference model all quantized variants compare to."""
+"""Loads Phi-3.5-mini-Instruct at full precision — the reference all quantized variants compare to.
+
+Dtype is a parameter rather than a constant because it turned out to be a 6.5x throughput
+decision on the hardware this project actually runs on. Measured on a Colab T4
+(`src/eval/benchmark_throughput.py`): bf16 3.88 items/s vs fp16 23.27 items/s at batch 8. The
+T4 is Turing (compute capability 7.5) and native BF16 tensor cores only arrived with Ampere
+(8.0), so bf16 runs there without tensor-core acceleration.
+
+Watch out for `torch.cuda.is_bf16_supported()` — it returns True on a T4. It means bf16 will
+run, not that it will run fast, which is why this was invisible until throughput was measured
+directly.
+
+Changing dtype is a methodology decision, not just a performance knob: the baseline's precision
+is part of what the project reports. Validate any change with `src/eval/validate_scorer.py
+--dtype <x>` before trusting numbers produced under it.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +22,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, P
 
 MODEL_ID = "microsoft/Phi-3.5-mini-instruct"
 
+# Named dtypes for CLI flags, so scripts can expose --dtype without importing torch types.
+DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16}
+DEFAULT_DTYPE = "bf16"
 
-def load_bf16_model(device_map: str = "auto") -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
-    """Loads the BF16 baseline model + tokenizer.
+
+def load_model(
+    dtype: str = DEFAULT_DTYPE, device_map: str = "auto"
+) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
+    """Loads the full-precision baseline model + tokenizer at the named dtype.
 
     Requires a CUDA device for `device_map="auto"` to place the model on GPU; falls back to
     whatever `accelerate` resolves (CPU) if no GPU is visible, which will be slow but correct.
@@ -22,10 +43,13 @@ def load_bf16_model(device_map: str = "auto") -> tuple[PreTrainedModel, PreTrain
     `generate()` that the native implementation doesn't have, since it's kept in sync with the
     library's own Cache API.
     """
+    if dtype not in DTYPES:
+        raise ValueError(f"Unknown dtype {dtype!r}; expected one of {list(DTYPES)}")
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=DTYPES[dtype],
         device_map=device_map,
     )
     model.eval()
