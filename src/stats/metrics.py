@@ -23,7 +23,7 @@ import numpy as np
 # CONFIRM THESE against src/experiments/schema.py before first use.
 F_PREDICTED = "predicted_index"
 F_UNKNOWN = "unknown_index"
-F_STEREOTYPE = "stereotype_index"
+F_IS_STEREOTYPED = "is_stereotyped_predicted"
 F_QUESTION_ID = "question_id"
 F_CATEGORY = "category"
 F_CONDITION = "condition"
@@ -75,7 +75,8 @@ def is_stereotype(row: Row) -> bool:
     Note this is narrower than "got it wrong": picking the other, non-stereotyped
     person is also wrong, but it is not a fairness symptom.
     """
-    return get_field(row, F_PREDICTED) == get_field(row, F_STEREOTYPE)
+    val = get_field(row, F_IS_STEREOTYPED)
+    return bool(val) if val is not None else False
 
 
 def indicators(rows: Iterable[Row], predicate: Predicate) -> np.ndarray:
