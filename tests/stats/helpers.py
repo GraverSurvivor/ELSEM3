@@ -34,21 +34,26 @@ class Row:
     predicted_index: int
     unknown_index: int
     stereotype_index: int
+    is_stereotyped_predicted: bool = False
 
 
 def make_rows(pattern, *, condition="fp16", category="Age", prefix="q"):
     """Build one row per letter in `pattern`, ids `q0`, `q1`, ..."""
-    return [
-        Row(
-            question_id=f"{prefix}{i}",
-            category=category,
-            condition=condition,
-            predicted_index=_LETTER_TO_INDEX[letter],
-            unknown_index=UNKNOWN_INDEX,
-            stereotype_index=STEREOTYPE_INDEX,
+    rows = []
+    for i, letter in enumerate(pattern):
+        pred_idx = _LETTER_TO_INDEX[letter]
+        rows.append(
+            Row(
+                question_id=f"{prefix}{i}",
+                category=category,
+                condition=condition,
+                predicted_index=pred_idx,
+                unknown_index=UNKNOWN_INDEX,
+                stereotype_index=STEREOTYPE_INDEX,
+                is_stereotyped_predicted=(pred_idx == STEREOTYPE_INDEX),
+            )
         )
-        for i, letter in enumerate(pattern)
-    ]
+    return rows
 
 
 def as_dicts(rows):
