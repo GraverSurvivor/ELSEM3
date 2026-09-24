@@ -76,7 +76,14 @@ def is_stereotype(row: Row) -> bool:
     person is also wrong, but it is not a fairness symptom.
     """
     val = get_field(row, F_IS_STEREOTYPED)
-    return bool(val) if val is not None else False
+    if val is None:
+        # Treating None as False would turn an unlabelled run into "SRS 0.000, nothing
+        # flipped" -- a plausible-looking result instead of an error.
+        raise ValueError(
+            f"row {get_field(row, F_QUESTION_ID)!r} has no stereotype label "
+            "(is_stereotyped_predicted is None)"
+        )
+    return bool(val)
 
 
 def indicators(rows: Iterable[Row], predicate: Predicate) -> np.ndarray:
