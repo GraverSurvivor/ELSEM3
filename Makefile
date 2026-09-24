@@ -23,10 +23,12 @@ promote-reference:
 validate:
 	python -m src.eval.validate_scorer --dtype $(DTYPE) --batch-size $(BATCH_SIZE)
 
-# Stage 2-3 (Person B/A): HQQ 3-bit compress, flipped-set + statistical detection.
-# NOT BUILT YET -- the working entry point today is the module-swap spike below.
+# Stage 2 (Person A): HQQ 3-bit eval on BBQ ambiguous, all 5 categories. Always fp16 compute, to
+# match the baseline -- the dtype is fixed inside the script, not a flag. Needs a GPU.
+# Then: make promote-reference RUN_ID=<printed id> NAME=hqq_3bit, and build the flipped set with
+# python -m src.data.safe_set (see its --help).
 quantize:
-	@echo 'Stage 2-3 driver not written yet. Available now: make swap-spike' && exit 1
+	python -m src.eval.run_quantized --batch-size $(BATCH_SIZE)
 
 swap-spike:
 	python -m src.quant.verify_module_swap
