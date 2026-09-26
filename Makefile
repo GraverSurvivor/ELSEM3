@@ -1,4 +1,4 @@
-.PHONY: install baseline validate promote-reference quantize swap-spike repair-state headline test
+.PHONY: install baseline validate promote-reference quantize search swap-spike repair-state headline test
 
 install:
 	pip install -r requirements.txt
@@ -29,6 +29,13 @@ validate:
 # python -m src.data.safe_set (see its --help).
 quantize:
 	python -m src.eval.run_quantized --batch-size $(BATCH_SIZE)
+
+# Stage 4 (Person B): greedy attribution search on the fixed flipped-set sample. Needs a GPU.
+# Draw the sample first (CPU): python -m src.attribution.search_sample
+SAMPLE ?= results/search_samples/hqq_3bit_n300_seed0.json
+THRESHOLD ?= 0.01
+search:
+	python -m src.attribution.run_search --sample $(SAMPLE) --threshold $(THRESHOLD) --batch-size $(BATCH_SIZE)
 
 swap-spike:
 	python -m src.quant.verify_module_swap
