@@ -217,14 +217,24 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Run outputs are local by default -- see CLAUDE.md. The one exception is
-# results/reference/, which holds the shared baseline every later stage is defined
-# relative to; it is small, it must be identical for all three of us, and having it in
-# the repo lets the flipped-set, statistics and plotting work run without a GPU.
+# Run outputs are local by default -- see CLAUDE.md. Three exceptions:
+# - results/reference/ holds the shared baseline and hqq_3bit runs every later stage is
+#   defined relative to.
+# - results/flipped/ holds the flipped-set JSON (Stage 3's deliverable) built from those two
+#   runs -- Stage 4's search is evidence-driven, so its input has to be one shared file, not
+#   whatever each of us happens to regenerate locally.
+# - results/search_samples/ holds the FIXED seeded sample the search scores every candidate
+#   on. The search's whole "not a corner cut" argument depends on every candidate seeing the
+#   exact same questions; a sample redrawn per person would quietly break that even with the
+#   same seed and size, if the flipped set it's drawn from ever drifts.
+# All three are small text files, and having them in the repo lets the search, statistics and
+# plotting work run without a GPU.
 # NB: 'results/*' not 'results/', because git never descends into an excluded directory --
-# with 'results/' the negation below would silently do nothing.
+# with 'results/' the negations below would silently do nothing.
 results/*
 !results/reference/
+!results/flipped/
+!results/search_samples/
 *.pt
 *.safetensors
 .env
