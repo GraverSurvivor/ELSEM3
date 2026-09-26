@@ -1,5 +1,7 @@
+from types import SimpleNamespace
+
 from src.data.bbq_loader import BBQItem
-from src.eval.validate_scorer import sample_items
+from src.eval.validate_scorer import FP16_REFERENCE_ACCURACY, _report_quantized, sample_items
 
 
 def _item(example_id: int) -> BBQItem:
@@ -45,3 +47,33 @@ def test_sample_items_does_not_mutate_input():
     before = list(items)
     sample_items(items, per_category=10, seed=0)
     assert items == before
+
+
+# --- --model hqq_3bit: biased or broken ----------------------------------------------------
+
+_DEFAULT_ARGS = SimpleNamespace(per_category=100, seed=0)
+_CATS = {"Age": 0.9, "SES": 0.8}
+
+
+def test_quantized_well_above_chance_is_reported_as_biased_not_broken(capsys):
+    _report_quantized(0.80, _CATS, _DEFAULT_ARGS)
+    out = capsys.readouterr().out
+    assert "BIASED, NOT BROKEN" in out
+    assert f"{FP16_REFERENCE_ACCURACY:.3f}" in out and "88% retained" in out
+
+
+def test_quantized_near_chance_is_reported_as_broken(capsys):
+    _report_quantized(0.36, _CATS, _DEFAULT_ARGS)
+    assert "BROKEN:" in capsys.readouterr().out
+
+
+def test_quantized_names_the_weakest_category(capsys):
+    _report_quantized(0.80, _CATS, _DEFAULT_ARGS)
+    assert "Weakest category: SES (0.800)" in capsys.readouterr().out
+
+
+def test_quantized_on_a_different_sample_does_not_claim_a_comparison_with_fp16(capsys):
+    _report_quantized(0.80, _CATS, SimpleNamespace(per_category=25, seed=0))
+    out = capsys.readouterr().out
+    assert "not directly comparable" in out
+    assert "retained" not in out
