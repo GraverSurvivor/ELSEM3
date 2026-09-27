@@ -107,7 +107,9 @@ def main() -> None:
         if latest is not None:
             done_in_round = sum(t.round == latest.round for t in result.trials)
             print(
-                f"\rround {latest.round}  {done_in_round}/{n_per_round - len(result.kept)}  "
+                # Round r tries every candidate except the r - 1 kept before it. Not len(kept):
+                # after a keep, kept already includes this round's winner, which read 124/123.
+                f"\rround {latest.round}  {done_in_round}/{n_per_round - (latest.round - 1)}  "
                 f"best gain so far {max(t.gain for t in result.trials if t.round == latest.round):+.3f}  "
                 f"({(time.time() - started) / 60:.0f} min)",
                 end="",
