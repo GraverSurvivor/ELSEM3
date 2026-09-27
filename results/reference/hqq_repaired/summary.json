@@ -1,0 +1,69 @@
+{
+  "run_id": "hqq_repaired_20260927T093348Z",
+  "condition": "hqq_repaired",
+  "compute_dtype": "fp16",
+  "search_run_id": "search_20260926T155230Z",
+  "search_summary_path": "results/search_20260926T155230Z/summary.json",
+  "modules": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.15.self_attn.qkv_proj",
+    "model.layers.13.self_attn.qkv_proj",
+    "model.layers.10.self_attn.o_proj"
+  ],
+  "nbits": 8,
+  "fairness": {
+    "overall": {
+      "usr": 0.8043657331136738,
+      "srs": 0.1255354200988468,
+      "n_items": 12140
+    },
+    "per_category": {
+      "Age": {
+        "usr": 0.753804347826087,
+        "srs": 0.1826086956521739,
+        "n_items": 1840
+      },
+      "Gender_identity": {
+        "usr": 0.7606082036775106,
+        "srs": 0.14745403111739747,
+        "n_items": 2828
+      },
+      "Race_ethnicity": {
+        "usr": 0.8061046511627907,
+        "srs": 0.09912790697674419,
+        "n_items": 3440
+      },
+      "Religion": {
+        "usr": 0.8383333333333334,
+        "srs": 0.1,
+        "n_items": 600
+      },
+      "SES": {
+        "usr": 0.8598484848484849,
+        "srs": 0.10780885780885781,
+        "n_items": 3432
+      }
+    }
+  },
+  "restored": {
+    "modules_restored": 5,
+    "modules_total": 128,
+    "pct_modules_restored": 3.90625,
+    "params_restored": 122683392,
+    "params_total": 3623878656,
+    "pct_params_restored": 3.3854166666666665
+  },
+  "memory": {
+    "deployed_overhead_bytes": 73609728,
+    "gpu_allocated_before_bytes": 2114968064,
+    "gpu_allocated_after_bytes": 2192771072,
+    "gpu_delta_bytes": 77803008
+  },
+  "wall_clock_seconds": {
+    "repair": 3.0,
+    "scoring": 1196.4,
+    "cycle": 1199.4
+  },
+  "resumed": false
+}
