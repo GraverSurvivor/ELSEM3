@@ -83,6 +83,22 @@ class TestConditionGuards:
             make_rows("us", condition="hqq_3bit"),
         )
 
+    @pytest.mark.parametrize("other", ["fp16", "hqq_3bit"])
+    def test_hqq_repaired_is_comparable_with_the_baseline_and_the_3bit_run(self, other):
+        # Stage 5 compares the repaired run against both: baseline for how much
+        # fairness is back, hqq_3bit for how much the repair itself recovered.
+        assert_comparable(
+            make_rows("uu", condition=other),
+            make_rows("us", condition="hqq_repaired"),
+        )
+
+    def test_hqq_repaired_against_bf16_still_raises(self):
+        with pytest.raises(ConditionMismatchError, match="different dtypes"):
+            assert_comparable(
+                make_rows("uu", condition="bf16"),
+                make_rows("uu", condition="hqq_repaired"),
+            )
+
     def test_fp16_against_bf16_raises(self):
         with pytest.raises(ConditionMismatchError, match="different dtypes"):
             assert_comparable(
