@@ -25,6 +25,7 @@ from .effect_size import (
     srs_delta,
     usr_delta,
 )
+from .recovery import recovery_fraction
 from .metrics import (
     ConditionMismatchError,
     align_by_question,
@@ -57,6 +58,7 @@ __all__ = [
     "is_stereotype",
     "is_unknown",
     "proportion_delta",
+    "recovery_fraction",
     "srs",
     "srs_delta",
     "stereotype_chisq",
