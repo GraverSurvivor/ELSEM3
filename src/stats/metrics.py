@@ -40,6 +40,9 @@ CONDITION_COMPUTE_DTYPE: dict[str, str] = {
     "fp16": "fp16",
     "bf16": "bf16",
     "hqq_3bit": "fp16",
+    # 3-bit with the search's kept modules restored to 8-bit (src/attribution/run_repair.py).
+    # Still fp16 compute, so it compares with both the baseline and hqq_3bit.
+    "hqq_repaired": "fp16",
 }
 
 Row = Any
