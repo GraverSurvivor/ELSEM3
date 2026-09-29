@@ -241,3 +241,7 @@ results/*
 wandb/
 __pycache__/
 .ipynb_checkpoints/
+
+# Deck generator dependencies (cd deck && npm install)
+deck/node_modules/
+deck/package-lock.json

@@ -45,6 +45,15 @@ Socioeconomic-heavy, balanced). Report which blocks get restored each time — s
 windows means localization is category-invariant; different blocks each time means static
 protection can't be sufficient. Both are publishable.
 
+Implemented in `src/experiments/`: `windows.py` defines the windows as category weights on the
+fixed search sample (Age-heavy / SES-heavy: that category 60%, others 10% each; balanced: 20%
+each -- equal, not proportional, since the proportional sample is the existing Stage 4 run).
+`headline.py` runs Person B's `run_search` / `run_repair` per window as subprocesses and records
+every run id in `results/headline_<ts>/manifest.json` so `--resume` survives dead sessions;
+`headline_report.py` (CPU) writes the comparison table, per-category recovery, the overlap verdict
+and the restored-blocks figure. The three window samples are committed under
+`results/search_samples/` like the Stage 4 one.
+
 Per-run reporting bundle: fairness recovered (USR/SRS), % of model restored to higher precision,
 memory overhead vs plain 3-bit, wall-clock time of the cycle.
 
