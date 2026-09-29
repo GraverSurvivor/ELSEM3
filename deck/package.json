@@ -1,0 +1,11 @@
+{
+  "name": "elsem3-deck",
+  "private": true,
+  "description": "Generates ELSEM3_deck.pptx from the committed results (run `python -m src.plotting.make_figures` first).",
+  "scripts": {
+    "build": "node build_deck.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

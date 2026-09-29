@@ -38,3 +38,8 @@ make figures    # all charts + results table from the committed reference runs (
 make headline   # full detect -> localize -> repair loop, 3 failure windows (GPU, resumable)
 make headline-report HEADLINE_ID=headline_<ts>   # headline tables, overlap verdict, figures (CPU)
 ```
+
+## Deck
+
+`deck/ELSEM3_deck.pptx` is generated, not hand-edited: every number on it is read from the committed
+results. After `make figures`, rebuild with `cd deck && npm install && node build_deck.js`.
