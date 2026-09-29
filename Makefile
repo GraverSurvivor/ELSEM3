@@ -1,4 +1,4 @@
-.PHONY: install baseline validate promote-reference quantize search swap-spike repair-state headline test
+.PHONY: install baseline validate promote-reference quantize search swap-spike repair-state figures headline headline-report test
 
 install:
 	pip install -r requirements.txt
@@ -45,10 +45,22 @@ swap-spike:
 repair-state:
 	python -m src.quant.verify_repair_state
 
-# Stages 1-5 x3 failure windows (Person C): full detect -> localize -> repair loop.
-# NOT BUILT YET -- Week 6 deliverable.
+# Person C: every figure and results table the committed reference runs support. CPU only.
+# Add a recovery curve with: python -m src.plotting.make_figures --search-summary results/search_<id>/summary.json
+figures:
+	python -m src.plotting.make_figures
+
+# Stages 3-5 x3 failure windows (Person C): detect -> localize -> repair on the Age-heavy,
+# SES-heavy and balanced windows. Needs a GPU, ~7-8 h on a T4 in total -- run one window per
+# session with WINDOWS=age_heavy, and continue with RESUME=headline_<id>. Check the plan first
+# with `make headline DRY_RUN=1`.
+WINDOWS ?= age_heavy ses_heavy balanced
 headline:
-	@echo 'Headline experiment not written yet (Week 6).' && exit 1
+	python -m src.experiments.headline --windows $(WINDOWS) --threshold $(THRESHOLD) --batch-size $(BATCH_SIZE) 		$(if $(RESUME),--resume $(RESUME)) $(if $(DRY_RUN),--dry-run)
+
+# Headline tables, overlap verdict and figures from a finished (or partly finished) experiment. CPU only.
+headline-report:
+	python -m src.experiments.headline_report $(HEADLINE_ID)
 
 test:
 	pytest tests/ -v

@@ -25,6 +25,23 @@ CATEGORY_PALETTE = {
     "SES": "#CC78BC",
 }
 
+# Model conditions, for charts that compare runs rather than categories (baseline vs 3-bit vs
+# repaired). Neutral grey for the reference, a warning red for the damaged model, a dark blue for
+# the repair -- dark enough that it doesn't read as Age's lighter blue on an adjacent slide.
+CONDITION_PALETTE = {
+    "baseline": "#7F7F7F",
+    "hqq_3bit": "#C0392B",
+    "hqq_repaired": "#1F3A68",
+}
+
+# Failure windows of the headline experiment. Each takes the colour of the category it
+# over-weights, so "Age-heavy" reads as Age everywhere; balanced gets a neutral dark tone.
+WINDOW_PALETTE = {
+    "age_heavy": CATEGORY_PALETTE["Age"],
+    "ses_heavy": CATEGORY_PALETTE["SES"],
+    "balanced": "#333333",
+}
+
 
 def set_house_style() -> None:
     """Call once at the top of any plotting script, before creating figures."""

@@ -34,5 +34,7 @@ tests/             pytest, mirrors src/
 ```bash
 make baseline   # BF16 eval on BBQ ambiguous, all 5 categories
 make quantize   # HQQ 3-bit compress + flipped-set detection
-make headline   # full detect -> localize -> repair loop, 3 failure windows
+make figures    # all charts + results table from the committed reference runs (CPU)
+make headline   # full detect -> localize -> repair loop, 3 failure windows (GPU, resumable)
+make headline-report HEADLINE_ID=headline_<ts>   # headline tables, overlap verdict, figures (CPU)
 ```
