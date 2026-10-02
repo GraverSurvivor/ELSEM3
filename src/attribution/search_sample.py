@@ -81,7 +81,7 @@ def draw_search_sample(
     for category in sorted(counts):
         question_ids.extend(rng.sample(sorted(by_category[category]), counts[category]))
 
-    return {
+    sample = {
         "baseline_run_id": flipped["baseline_run_id"],
         "quantized_run_id": flipped["quantized_run_id"],
         "flipped_total": flipped["total_flipped"],
@@ -91,6 +91,13 @@ def draw_search_sample(
         "per_category": dict(sorted(counts.items())),
         "question_ids": sorted(question_ids),
     }
+    # A general-ability flipped set comes from disambiguated runs, and run_search must load its ids
+    # from that question set. Only recorded when it isn't the default, so the committed fairness
+    # samples (which headline.py re-draws and compares byte-for-byte) stay unchanged.
+    if flipped.get("context", "ambig") != "ambig":
+        sample["context"] = flipped["context"]
+        sample["kind"] = flipped.get("kind", "capability")
+    return sample
 
 
 def write_search_sample(sample: dict, out_path: Path) -> Path:

@@ -238,13 +238,17 @@ def test_main_writes_the_full_reporting_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(run_repair, "RESULTS_DIR", tmp_path)
     monkeypatch.setattr(run_repair.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(run_repair, "_cuda_memory_allocated", FakeMemory(1_000, 1_000 + 5 * 2**20))
-    monkeypatch.setattr(hqq_quantizer, "load_hqq_3bit_model", lambda device, dtype: (_tiny_phi(), None))
+    import src.eval.scoring_run as scoring_run
+
+    monkeypatch.setattr(hqq_quantizer, "load_hqq_3bit_model", lambda device, dtype, nbits=3: (_tiny_phi(), None))
     monkeypatch.setattr(weight_source, "CheckpointWeightSource", lambda model_id: None)
     monkeypatch.setattr(module_swap, "SwapRegistry", lambda model, source, device: FakeRegistry(overhead=4 * 2**20))
-    monkeypatch.setattr(run_repair, "load_all_categories", _items)
+    monkeypatch.setattr(run_repair, "load_all_categories", lambda context="ambig": _items())
     monkeypatch.setattr(
-        run_repair, "score_items",
-        lambda model, tok, items, device, batch_size, desc: [UNKNOWN, STEREOTYPE][: len(items)],
+        scoring_run, "score_items_with_confidence",
+        lambda model, tok, items, device, batch_size, desc: (
+            [UNKNOWN, STEREOTYPE][: len(items)], [0.9, 0.6][: len(items)]
+        ),
     )
 
     kept = ["model.layers.1.self_attn.qkv_proj", "model.layers.10.self_attn.o_proj"]

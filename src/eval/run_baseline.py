@@ -16,6 +16,7 @@ Run after `pip install -r requirements.txt`:
     python -m src.eval.run_baseline
     python -m src.eval.run_baseline --batch-size 16
     python -m src.eval.run_baseline --resume fp16_20260921T175733Z
+    python -m src.eval.run_baseline --context disambig      # the control set
 """
 
 from __future__ import annotations
@@ -24,15 +25,15 @@ import argparse
 
 import torch
 
-from src.data.bbq_loader import CATEGORIES, load_all_categories
+from src.data.bbq_loader import CATEGORIES, CONTEXTS, load_all_categories
 from src.eval.model_loader import DEFAULT_DTYPE, DTYPES, load_model
-from src.eval.option_scorer import DEFAULT_BATCH_SIZE, score_items
+from src.eval.option_scorer import DEFAULT_BATCH_SIZE
+from src.eval.scoring_run import check_resume_id, condition_for, score_categories
 from src.experiments.logger import (
     RESULTS_DIR,
     new_run_id,
     read_question_results,
     write_category_summary,
-    write_question_results,
 )
 from src.experiments.schema import CategorySummary, QuestionResult, summarize_category
 
@@ -66,27 +67,29 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--dtype", default=DEFAULT_DTYPE, choices=list(DTYPES))
     parser.add_argument(
+        "--context",
+        default="ambig",
+        choices=CONTEXTS,
+        help="ambig = the fairness benchmark; disambig = the control set where the text states the answer",
+    )
+    parser.add_argument(
         "--resume",
         metavar="RUN_ID",
         help="continue an interrupted run, skipping categories it already finished",
     )
     args = parser.parse_args()
 
-    # The condition label follows the dtype: it's written into every result record and is what
-    # Stage 3 diffs against, so a run must never be filed under a precision it wasn't run at.
-    condition = args.dtype
+    # The condition label follows the dtype (and the question set): it's written into every result
+    # record and is what Stage 3 diffs against, so a run must never be filed under a precision or a
+    # question set it wasn't run on.
+    condition = condition_for(args.dtype, args.context)
 
     if args.resume:
         run_id = args.resume
-        # The dtype is baked into the run id, and mixing precisions inside one run would
-        # produce a results file that looks uniform but is not -- the exact confound the
-        # condition label exists to make visible. Refuse rather than warn.
-        resumed_dtype = run_id.split("_")[0]
-        if resumed_dtype != args.dtype:
-            raise SystemExit(
-                f"Run {run_id!r} was started at {resumed_dtype}, but --dtype is {args.dtype}. "
-                f"Resume it with --dtype {resumed_dtype}, or start a fresh run."
-            )
+        # Mixing precisions or question sets inside one run would produce a results file that
+        # looks uniform but is not -- the exact confound the condition label exists to make
+        # visible. Refuse rather than warn.
+        check_resume_id(run_id, condition)
         completed = read_question_results(run_id, missing_ok=True)
     else:
         run_id = new_run_id(condition)
@@ -98,42 +101,13 @@ def main() -> None:
     print(f"\nLoading Phi-3.5-mini-Instruct in {args.dtype}...")
     model, tokenizer = load_model(args.dtype)
 
-    print("\nLoading BBQ ambiguous condition, all 5 categories...")
-    items_by_category = load_all_categories()
+    print(f"\nLoading BBQ {args.context} condition, all 5 categories...")
+    items_by_category = load_all_categories(args.context)
 
-    print(f"\nRun ID: {run_id} (dtype {args.dtype}, batch size {args.batch_size})")
-
-    # A category is only ever written once it is fully scored, so anything already in the
-    # file is complete -- which is what makes "skip it" safe rather than a source of
-    # half-scored categories.
-    finished_categories = {result.category for result in completed}
-    if finished_categories:
-        print(f"Resuming: {sorted(finished_categories)} already scored, skipping.")
-
-    all_results: list[QuestionResult] = list(completed)
-    for category, items in items_by_category.items():
-        if category in finished_categories:
-            continue
-        predictions = score_items(model, tokenizer, items, device, batch_size=args.batch_size, desc=category)
-        all_results.extend(
-            QuestionResult(
-                run_id=run_id,
-                condition=condition,
-                question_id=item.question_id,
-                category=item.category,
-                predicted_index=predicted_index,
-                label=item.label,
-                unknown_index=item.unknown_index,
-                is_unknown_predicted=(predicted_index == item.unknown_index),
-                is_correct=(predicted_index == item.label),
-                is_stereotyped_predicted=(predicted_index == item.stereotype_index),
-            )
-            for item, predicted_index in zip(items, predictions)
-        )
-        # Checkpoint after every category. A full run is ~8 minutes and sessions do get
-        # interrupted; without this, a stop partway through the fourth category throws
-        # away the three that finished.
-        write_question_results(all_results, run_id)
+    print(f"\nRun ID: {run_id} (condition {condition}, batch size {args.batch_size})")
+    all_results = score_categories(
+        model, tokenizer, items_by_category, device, run_id, condition, args.batch_size, completed
+    )
 
     summaries = [summarize_category(all_results, run_id, condition, category) for category in CATEGORIES]
     overall = _aggregate_overall(all_results, run_id, condition)

@@ -1,4 +1,4 @@
-.PHONY: install baseline validate promote-reference quantize search swap-spike repair-state figures headline headline-report test
+.PHONY: install baseline validate promote-reference quantize search repair disambig quant-error baselines controls sensitivity groups fairgate-check fairgate-report studio studio-preview swap-spike repair-state figures headline headline-report test
 
 install:
 	pip install -r requirements.txt
@@ -36,6 +36,48 @@ SAMPLE ?= results/search_samples/hqq_3bit_n300_seed0.json
 THRESHOLD ?= 0.01
 search:
 	python -m src.attribution.run_search --sample $(SAMPLE) --threshold $(THRESHOLD) --batch-size $(BATCH_SIZE)
+
+# Stage 5 (Person B): verify any patch on the full benchmark. GPU. CONTEXT=disambig for the control set.
+PATCH ?= results/patches/search_top5.json
+CONTEXT ?= ambig
+repair:
+	python -m src.attribution.run_repair --patch $(PATCH) --context $(CONTEXT) --batch-size $(BATCH_SIZE)
+
+# --- Revised plan: fairness controls (Improvement #1) -------------------------------------------
+# Disambiguated control runs, one per model (GPU). Promote each afterwards as *_disambig.
+disambig:
+	python -m src.eval.run_baseline --context disambig --batch-size $(BATCH_SIZE)
+	python -m src.eval.run_quantized --context disambig --batch-size $(BATCH_SIZE)
+	python -m src.attribution.run_repair --patch results/patches/search_top5.json --context disambig --batch-size $(BATCH_SIZE)
+
+# Per-module quantization error (GPU, a few minutes), then the matched-budget baseline patches (CPU).
+quant-error:
+	python -m src.quant.quant_error
+baselines:
+	python -m src.attribution.baselines $(if $(wildcard results/quant_error/hqq_3bit_g64.json),--quant-error results/quant_error/hqq_3bit_g64.json)
+
+# Hedging check + search vs baselines -> results/stats/controls.json (CPU).
+controls:
+	python -m src.stats.controls
+
+# Other analyses on committed runs (CPU).
+sensitivity:
+	python -m src.stats.sensitivity
+groups:
+	python -m src.stats.groups
+
+# --- Revised plan: FairGate ------------------------------------------------------------------------
+fairgate-check:
+	python -m src.product.fairgate check
+fairgate-report: controls groups
+	python -m src.product.fairgate report
+
+# FairGate Studio, the presentation app. Live needs a GPU (add --share on Colab); the preview runs
+# anywhere on the saved results.
+studio:
+	python -m src.product.studio
+studio-preview:
+	python -m src.product.studio --offline
 
 swap-spike:
 	python -m src.quant.verify_module_swap

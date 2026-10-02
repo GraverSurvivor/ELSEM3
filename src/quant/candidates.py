@@ -36,6 +36,27 @@ def candidate_paths(n_layers: int = 32) -> list[str]:
     ]
 
 
+CANDIDATE_SETS = ("all", "attention", "mlp")
+
+
+def filter_candidates(paths: list[str], candidate_set: str) -> list[str]:
+    """Restricts the candidate list to one module family, keeping its order.
+
+    Used for the attention-only vs MLP-only ablation. The unrestricted search on the fairness
+    sample kept only attention modules on its own, so the informative run is MLP-only: it asks
+    how much fairness MLP restoration can recover when attention is off the table.
+    """
+    if candidate_set == "all":
+        return list(paths)
+    if candidate_set == "attention":
+        suffixes = ATTENTION_MODULES
+    elif candidate_set == "mlp":
+        suffixes = MLP_MODULES
+    else:
+        raise ValueError(f"unknown candidate set {candidate_set!r}; expected one of {CANDIDATE_SETS}")
+    return [path for path in paths if path.endswith(suffixes)]
+
+
 def candidate_paths_for_model(model: nn.Module) -> list[str]:
     """Same list, with the layer count read off the model instead of assumed."""
     return candidate_paths(n_layers=len(model.model.layers))

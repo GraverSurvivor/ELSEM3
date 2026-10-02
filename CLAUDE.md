@@ -63,8 +63,8 @@ memory overhead vs plain 3-bit, wall-clock time of the cycle.
   baseline harness, safe/flipped-set logic, statistical tests.
 - **Person B** (Attribution & Repair Lead) — `src/quant/`, `src/attribution/`. Stages 4-5: HQQ
   mixed-precision plumbing, greedy search, module swap.
-- **Person C** (Experiments & Reporting Lead) — `src/experiments/`, `src/plotting/`. Headline
-  experiment, sweeps, plots, results tables.
+- **Person C** (Experiments & Reporting Lead) — `src/experiments/`, `src/plotting/`,
+  `src/product/`. Headline experiment, sweeps, plots, results tables, FairGate.
 
 ## Repo layout
 
@@ -145,15 +145,63 @@ transient cost of the retained originals, freed by `release_baselines()`. Sizes 
 the live tensors rather than computed from nbits, because HQQ's real cost includes packing and
 per-group scale/zero: 3.75 bits/weight at 3-bit, 8.50 at 8-bit, not 3 and 8.
 
+## Revised plan additions (October 2026)
+
+A literature review (see the revised-plan PDF) found that detecting quantization bias and
+statically protecting fairness-critical weights are both published; what stays distinctive here is
+repair after compression, without retraining, at module level, from the model's own failures. The
+additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in order.**
+
+- **Disambiguated control set.** `run_baseline`, `run_quantized` and `run_repair` take
+  `--context disambig`: BBQ's questions where the text states the answer, filed as
+  `<condition>_disambig`. Ambiguous and disambiguated question ids never overlap, and every
+  ambiguous label is "unknown", so all scoring is "correct = label" for both sets. One shared loop
+  (`src/eval/scoring_run.py`) serves all three scripts; results now record each answer's
+  confidence.
+- **Patch files** (`src/attribution/patch.py`, tracked under `results/patches/`): which modules
+  to restore and where the choice came from. `run_repair --patch` verifies any patch; `run_search`
+  writes its kept modules as `patch.json`. Sizes come from Phi-3.5's fixed shapes.
+- **Fairness controls** (Improvement #1). `src/attribution/baselines.py` builds patches at the
+  search patch's weight budget (+-5%): random x5, positional (same module types, earliest layers),
+  largest quantization error (`src/quant/quant_error.py`), and the search's prefixes top1-top4.
+  `src/stats/controls.py` reports the hedging check (false-"unknown" rate on the disambiguated set)
+  and search-vs-baseline recovery differences, ending in decision point 1's verdict. Prefix runs
+  are excluded from that verdict -- they are the recovery-by-modules curve, not alternatives.
+- **Search options.** `run_search` loads ids from the question set its sample names (so the same
+  search locates general-ability damage), `--candidates mlp` for the ablation, and an optional
+  hedging penalty (`--penalty-sample`, `--penalty-weight`), off by default.
+- **Analyses (CPU).** `src/stats/`: `bbq_bias` (BBQ's own s_DIS / s_AMB), `flip_predictability`,
+  `sensitivity`, `groups` (per targeted group), `dissociation` (concentrated vs diffuse).
+- **Beyond BBQ multiple choice.** `src/eval/run_crows_pairs.py`, `src/eval/run_open_ended.py`, and
+  `run_quantized --nbits 4` / `run_repair --base-nbits 4`. `src/eval/model_variants.py` loads fp16,
+  3-bit, or 3-bit with a patch, always at fp16 compute.
+- **FairGate** (`src/product/fairgate.py`, Person C): `check` (PASS/FAIL gate on paired CIs),
+  `repair` (summary -> patch), `export` (llama.cpp `--tensor-type` overrides using Phi-3's GGUF
+  names attn_qkv / attn_output / ffn_up / ffn_down, or an HQQ per-module config), `report` (one
+  self-contained HTML audit report). CPU only; it reads result files.
+- **FairGate Studio** (`src/product/studio.py`, logic in `studio_core.py`, Person C): the Gradio
+  presentation app. A guide, then Ask / Diagnose / Repair / Ship. Live mode holds the 16-bit model
+  and one 3-bit model; "compressed" answers swap the restored modules back to their original 3-bit
+  objects for the duration (instant and exact, like SwapRegistry's revert). Demo questions are
+  flipped-set items no search sample contains. `--offline` runs on saved results and shows only
+  states a promoted run measured. The replay reads `results/reference/search_fairness*/trials.csv`.
+
+Findings already computed from committed runs, to keep in mind when writing anything up: the 92%
+recovery is stable across bootstrap settings and benchmark subsets; the repair moves 84% of the
+search sample's flipped items back to "unknown" but 77% of those it never saw; and per targeted
+group, 8 of 23 groups end significantly more stereotyped than the original model after repair.
+
 ## Conventions
 
 - Branch per person/feature (`person-a/...`, `person-b/...`, `person-c/...`), PR into `main`.
 - Every result-writing script logs structured output (JSON/CSV) under `results/` via
   `src/eval` or `src/experiments` — never hand-copy numbers into the deck.
-- `results/` is gitignored with three exceptions: `results/reference/` (the shared baseline
-  and hqq_3bit runs), `results/flipped/` (the flipped set built from them) and
+- `results/` is gitignored with five exceptions: `results/reference/` (the shared baseline
+  and hqq_3bit runs), `results/flipped/` (the flipped set built from them),
   `results/search_samples/` (the fixed sample Stage 4 scores every candidate on — shared so
-  every candidate, and every teammate, sees the identical questions). The reference runs
+  every candidate, and every teammate, sees the identical questions), `results/patches/` and
+  `results/quant_error/` (which modules each repair restores, so every teammate's baseline runs
+  restore identical module sets). The reference runs
   matter most: everything downstream is defined relative to them (the safe set is "what the baseline
   got right", the flipped set is "what changed against the baseline"), all three of us must use
   the identical file, and having it in the repo means the flipped-set, statistics and plotting

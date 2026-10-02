@@ -1,0 +1,24 @@
+{
+  "name": "search_top5_top4",
+  "modules": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.15.self_attn.qkv_proj",
+    "model.layers.13.self_attn.qkv_proj"
+  ],
+  "nbits": 8,
+  "source": {
+    "kind": "prefix",
+    "search_run_id": "search_20260926T155230Z",
+    "prefix_of": "search_top5",
+    "k": 4
+  },
+  "base": {
+    "method": "hqq",
+    "nbits": 3,
+    "group_size": 64,
+    "compute_dtype": "fp16"
+  },
+  "model_id": "microsoft/Phi-3.5-mini-instruct",
+  "params": 113246208
+}

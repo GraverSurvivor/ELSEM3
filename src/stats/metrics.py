@@ -43,7 +43,15 @@ CONDITION_COMPUTE_DTYPE: dict[str, str] = {
     # 3-bit with the search's kept modules restored to 8-bit (src/attribution/run_repair.py).
     # Still fp16 compute, so it compares with both the baseline and hqq_3bit.
     "hqq_repaired": "fp16",
+    # 4-bit compression and its repair (revised plan, "beyond one test"): same fp16 compute.
+    "hqq_4bit": "fp16",
+    "hqq_4bit_repaired": "fp16",
 }
+# Every condition also exists scored on BBQ's disambiguated set -- the control questions where
+# the text states the answer -- under the same name plus "_disambig". Same model, same compute
+# dtype; only the questions differ (and align_by_question refuses to pair the two sets, since
+# their question ids never overlap).
+CONDITION_COMPUTE_DTYPE.update({f"{c}_disambig": d for c, d in list(CONDITION_COMPUTE_DTYPE.items())})
 
 Row = Any
 Predicate = Callable[[Row], bool]
