@@ -235,6 +235,10 @@ results/*
 !results/reference/
 !results/flipped/
 !results/search_samples/
+# Patch files (which modules each repair restores) and the per-module quantization-error ranking:
+# small JSON, and every teammate's baseline runs must restore the identical module sets.
+!results/patches/
+!results/quant_error/
 *.pt
 *.safetensors
 .env

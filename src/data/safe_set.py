@@ -86,6 +86,57 @@ def flipped_set_payload(
     }
 
 
+# --- General-ability flipped set (revised plan: concentrated vs diffuse damage) ------------------
+#
+# The control counterpart of the flipped set. On the disambiguated questions the text states who
+# did what, so the right answer is a real person; items the uncompressed model gets right and the
+# 3-bit model gets wrong are general-ability damage, with no fairness content at all. Running the
+# same greedy search on these asks where *general* damage lives -- and comparing that with where
+# the fairness damage lives is the project's concentrated-vs-diffuse question.
+
+def build_capability_flipped_set(
+    baseline: list[QuestionResult], quantized: list[QuestionResult]
+) -> list[dict]:
+    """Disambiguated items the baseline answers correctly and the compressed model doesn't."""
+    assert_comparable(baseline, quantized)
+    before, after = align_by_question(baseline, quantized)
+    if any(b.label == b.unknown_index for b in before):
+        raise ValueError(
+            "baseline contains items whose correct answer is 'unknown' -- the general-ability set "
+            "must be built from disambiguated runs (--context disambig), not ambiguous ones"
+        )
+    return [
+        {
+            "question_id": b.question_id,
+            "category": b.category,
+            "baseline_answer": b.predicted_index,
+            "new_answer": a.predicted_index,
+        }
+        for b, a in zip(before, after)
+        if b.is_correct and not a.is_correct
+    ]
+
+
+def capability_flipped_payload(
+    baseline: list[QuestionResult], quantized: list[QuestionResult]
+) -> dict:
+    """Same shape as `flipped_set_payload`, so search_sample.py draws from it unchanged, plus the
+    `context`/`kind` markers run_search uses to load the ids from the disambiguated set."""
+    flipped = build_capability_flipped_set(baseline, quantized)
+    return {
+        "kind": "capability",
+        "context": "disambig",
+        "baseline_run_id": baseline[0].run_id,
+        "baseline_condition": baseline[0].condition,
+        "quantized_run_id": quantized[0].run_id,
+        "quantized_condition": quantized[0].condition,
+        "safe_set_size": sum(r.is_correct for r in baseline),
+        "total_flipped": len(flipped),
+        "flipped_per_category": dict(sorted(Counter(f["category"] for f in flipped).items())),
+        "items": flipped,
+    }
+
+
 def write_flipped_set(
     baseline: list[QuestionResult], quantized: list[QuestionResult], out_path: Path
 ) -> Path:
@@ -110,9 +161,22 @@ if __name__ == "__main__":
     parser.add_argument("--baseline", type=Path, required=True, help="baseline question_results.jsonl")
     parser.add_argument("--quantized", type=Path, required=True, help="compressed question_results.jsonl")
     parser.add_argument("--out", type=Path, required=True, help="output JSON path")
+    parser.add_argument(
+        "--kind",
+        default="fairness",
+        choices=("fairness", "capability"),
+        help="fairness: safe-set items that flip to the stereotype (ambiguous runs); "
+        "capability: correct items that become wrong (disambiguated runs)",
+    )
     args = parser.parse_args()
 
-    path = write_flipped_set(read_results_file(args.baseline), read_results_file(args.quantized), args.out)
+    baseline_rows, quantized_rows = read_results_file(args.baseline), read_results_file(args.quantized)
+    if args.kind == "fairness":
+        path = write_flipped_set(baseline_rows, quantized_rows, args.out)
+    else:
+        payload = capability_flipped_payload(baseline_rows, quantized_rows)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        path = _write_atomically(args.out, lambda handle: json.dump(payload, handle, indent=2))
     payload = json.loads(path.read_text(encoding="utf-8"))
     print(f"{payload['total_flipped']} flipped of {payload['safe_set_size']} safe -> {path}")
     for category, count in payload["flipped_per_category"].items():
