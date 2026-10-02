@@ -132,7 +132,7 @@ function bullets(slide, items, opts) {
   const stats = [
     [`${pct(usrB)} → ${pct(usrQ)}`, "of ambiguous questions answered \"unknown\": full precision → HQQ 3-bit", C.red],
     [flipped.total_flipped.toLocaleString("en-US"), `safe answers flipped to the stereotype, out of ${flipped.safe_set_size.toLocaleString("en-US")}`, C.red],
-    [`${pct(recovered, 0)}`, `of the lost accuracy recovered by restoring ${restored.modules_restored} of ${restored.modules_total} modules (${restored.pct_params_restored.toFixed(1)}% of weights, +${memMb.toFixed(0)} MB)`, C.blue],
+    [`${pct(recovered, 0)}`, `of the lost fairness (USR) recovered by restoring ${restored.modules_restored} of ${restored.modules_total} modules (${restored.pct_params_restored.toFixed(1)}% of weights, +${memMb.toFixed(0)} MB)`, C.blue],
   ];
   stats.forEach(([big, label, color], i) => {
     const y = 1.5 + i * 1.2;
@@ -198,8 +198,8 @@ function bullets(slide, items, opts) {
   const s = pres.addSlide();
   title(s, "Related work: three pieces, never joined", "Each line of work covers one part of the problem");
   const cols = [
-    ["Compression hurts fairness", "…but nobody repairs it", "Gonçalves & Strubell (EMNLP 2023): compression changes social bias in LLMs. BBQ (Parrish et al., ACL Findings 2022) is the benchmark.", C.red],
-    ["Protect weights before deploying", "…static, chosen blind to symptoms", "LLM.int8() (Dettmers et al., NeurIPS 2022), SpQR (Dettmers et al., ICLR 2024), AWQ (Lin et al., MLSys 2024) keep salient weights at high precision, picked for accuracy up front.", C.grey],
+    ["Compression hurts fairness", "…but nobody repairs it", "Gonçalves & Strubell (EMNLP 2023); Hua et al. (COLM 2026): bias flips hidden by averages. Rath & Maliakkal (2026): same model, BBQ and 3-bit as ours, detection only.", C.red],
+    ["Protect weights before deploying", "…static, chosen blind to symptoms", "Critical Weight Protection (Al Hakim et al., 2026) keeps fairness-critical weights (top 60%) in FP16 at quantization time; Q-resafe (ICML 2025) patches safety with retraining.", C.grey],
     ["Localize behaviour to components", "…never used to repair compression", "Causal mediation finds gender bias in specific heads (Vig et al., NeurIPS 2020); ROME localizes facts to MLPs (Meng et al., NeurIPS 2022).", C.blue],
   ];
   cols.forEach(([head, gap, body, color], i) => {
@@ -216,10 +216,13 @@ function bullets(slide, items, opts) {
   ], { x: 0.75, y: 4.0, w: 8.5, h: 0.8, fontFace: BODY, fontSize: 13, valign: "middle", margin: 0, isTextBox: true });
   draft(s, "Person C, check against team notes");
   s.addNotes(
-    "Draft built from the project brief. Before Week 7: (1) reconcile with the team's literature notes; (2) add the " +
-    "fairness-specific static-protection paper(s) the brief refers to, since the middle column currently cites accuracy-oriented " +
-    "mixed-precision methods; (3) check every venue/year against the actual papers. HQQ: Badri & Shaji, Mobius Labs, 2023. " +
-    "Phi-3: Abdin et al., Phi-3 Technical Report, 2024.",
+    "How we differ: Rath & Maliakkal (arXiv 2605.15208) detect the same damage on our exact setup but don't repair it. " +
+    "Critical Weight Protection (arXiv 2601.12033) is the closest method: per-weight gradient scores, static, at quantization " +
+    "time, 60% of weights kept in FP16 -- ours repairs after compression, from the failing examples, 3.4% of weights, no " +
+    "retraining. Q-resafe (arXiv 2506.20251) repairs after compression but for safety and with DPO/LoRA training. Accuracy-" +
+    "oriented mixed precision (LLM.int8, SpQR, AWQ) protects weights for accuracy, not fairness. Hu & Ramachandran (arXiv " +
+    "2609.01587) show general-ability damage is diffuse -- the basis for our concentrated-vs-diffuse comparison. " +
+    "HQQ: Badri & Shaji, Mobius Labs, 2023. Phi-3: Abdin et al., Phi-3 Technical Report, 2024.",
   );
 }
 
@@ -261,10 +264,16 @@ function bullets(slide, items, opts) {
   });
   s.addText(`${restored.modules_restored} modules · ${restored.pct_params_restored.toFixed(1)}% of weights · +${memMb.toFixed(0)} MB`,
     { x, y: 4.4, w: 2.6, h: 0.5, fontFace: BODY, fontSize: 12, bold: true, color: C.navy, margin: 0, isTextBox: true });
+  s.addText("Limitation: Gender identity recovers least (85%).",
+    { x, y: 4.85, w: 2.6, h: 0.3, fontFace: BODY, fontSize: 10, color: C.red, margin: 0, isTextBox: true });
   draft(s, "Person C, update after headline run");
   s.addNotes(
     "Figure: results/figures/conditions_usr.png. Full per-category table with CIs: results/figures/results_table.md. " +
-    "Honest caveat for Q&A: repair overshoots baseline on Age but leaves Gender_identity ~8 points short.",
+    "Honest caveats for Q&A: (1) repair overshoots baseline on Age but leaves Gender_identity ~8 points short (85% recovered). " +
+    "(2) Per targeted group (python -m src.stats.groups), 8 of 23 groups end significantly MORE stereotyped than the original " +
+    "model after repair, e.g. women 11.8% -> 17.0%, Hispanic/Latino 5.4% -> 11.0%. (3) The repair moves 84% of the 300 " +
+    "flipped questions the search saw back to 'unknown' vs 77% of the 3,092 it never saw: real, modest fitting to the sample. " +
+    "(4) If a chi-squared p-value is shown, write p < 10^-300, never p = 0.",
   );
 }
 
