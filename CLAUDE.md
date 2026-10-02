@@ -179,6 +179,12 @@ additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in
   `repair` (summary -> patch), `export` (llama.cpp `--tensor-type` overrides using Phi-3's GGUF
   names attn_qkv / attn_output / ffn_up / ffn_down, or an HQQ per-module config), `report` (one
   self-contained HTML audit report). CPU only; it reads result files.
+- **FairGate Studio** (`src/product/studio.py`, logic in `studio_core.py`, Person C): the Gradio
+  presentation app. A guide, then Ask / Diagnose / Repair / Ship. Live mode holds the 16-bit model
+  and one 3-bit model; "compressed" answers swap the restored modules back to their original 3-bit
+  objects for the duration (instant and exact, like SwapRegistry's revert). Demo questions are
+  flipped-set items no search sample contains. `--offline` runs on saved results and shows only
+  states a promoted run measured. The replay reads `results/reference/search_fairness*/trials.csv`.
 
 Findings already computed from committed runs, to keep in mind when writing anything up: the 92%
 recovery is stable across bootstrap settings and benchmark subsets; the repair moves 84% of the

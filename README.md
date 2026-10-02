@@ -57,6 +57,18 @@ python -m src.product.fairgate export --patch results/patches/search_top5.json -
 python -m src.product.fairgate report     # results/fairgate/report.html
 ```
 
+## FairGate Studio (the demo app)
+
+The presentation app: a short guide, then four screens. **Ask** (three models answer the same
+question side by side, and you can swap the two people or type your own question), **Diagnose** (a
+replay of the search), **Repair** (restore parts yourself and watch the stereotyped answers drop,
+live) and **Ship** (the verdict on the full benchmark, and the patch to download).
+
+```bash
+python -m src.product.studio --share     # live, on a Colab T4: notebooks/fairgate_studio.ipynb
+python -m src.product.studio --offline   # preview on saved results, any laptop (needs gradio)
+```
+
 ## Deck
 
 `deck/ELSEM3_deck.pptx` is generated, not hand-edited: every number on it is read from the committed

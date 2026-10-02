@@ -140,6 +140,24 @@ unclear), then `python -m src.eval.run_open_ended report results/reference/open_
 
 ---
 
+## Presenting: FairGate Studio
+
+Open `notebooks/fairgate_studio.ipynb` in Colab (T4 GPU) **at least 15 minutes before** the
+presentation and run it top to bottom. It prints a public link once the models are loaded (about
+8-10 minutes). Suggested flow, about 6 minutes:
+
+1. **Start here**: one sentence on the problem, then press *Start*.
+2. **Ask**: the age example. The compressed model says "the 85 year old", the others say it can't
+   be told. Press *Swap the two people*: it still picks the older person. Let an evaluator type a question.
+3. **Diagnose**: *Replay the search* (about 15 seconds).
+4. **Repair**: *Start from scratch*, then *Restore the next suggested part* five times. Then *Try
+   random parts* to show that random parts of the same size don't do this.
+5. **Ship**: the honest verdict (still fails narrowly), the groups that got worse, *Download my repair*.
+
+Backup if Colab dies: the notebook's last cell (saved results, no GPU), or on a laptop
+`python -m src.product.studio --offline`. Every repair run promoted into `results/reference/`
+(the prefix and random runs above) also becomes available in the backup, so run those first.
+
 ## GPU budget
 
 | Phase | GPU hours |

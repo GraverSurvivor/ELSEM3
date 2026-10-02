@@ -1,4 +1,4 @@
-.PHONY: install baseline validate promote-reference quantize search repair disambig quant-error baselines controls sensitivity groups fairgate-check fairgate-report swap-spike repair-state figures headline headline-report test
+.PHONY: install baseline validate promote-reference quantize search repair disambig quant-error baselines controls sensitivity groups fairgate-check fairgate-report studio studio-preview swap-spike repair-state figures headline headline-report test
 
 install:
 	pip install -r requirements.txt
@@ -71,6 +71,13 @@ fairgate-check:
 	python -m src.product.fairgate check
 fairgate-report: controls groups
 	python -m src.product.fairgate report
+
+# FairGate Studio, the presentation app. Live needs a GPU (add --share on Colab); the preview runs
+# anywhere on the saved results.
+studio:
+	python -m src.product.studio
+studio-preview:
+	python -m src.product.studio --offline
 
 swap-spike:
 	python -m src.quant.verify_module_swap
