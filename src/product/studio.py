@@ -5,7 +5,7 @@ Four screens, in the order of the pipeline, opened by a short guide:
     1 Ask        the original, compressed and repaired models answer the same question side by side
     2 Diagnose   a replay of the real search finding which parts of the model cause the bias
     3 Repair     restore parts yourself and watch the stereotyped answers drop, live
-    4 Ship       the FairGate verdict on the full benchmark, the cost, and the patch to download
+    4 Ship       the FairGate verdict on the full benchmark, the memory the repair adds, and the patch
 
 Live mode needs a GPU (a Colab T4 is enough: the 16-bit model takes 7.6 GB, the 3-bit one 1.7 GB).
 Preview mode runs anywhere on the saved full-benchmark results, and is the fallback if the GPU
@@ -301,7 +301,7 @@ GUIDE = """
   <div class="fg-step"><b class="num">3</b><b>Repair</b><p>Restore those parts yourself, one click at a time,
   and watch the biased answers disappear. Try random parts too, to compare.</p></div>
   <div class="fg-step"><b class="num">4</b><b>Ship</b><p>See the pass/fail verdict on the whole benchmark,
-  what the repair costs, and download the fix.</p></div>
+  how much memory the repair adds, and download the fix.</p></div>
 </div>
 """
 
