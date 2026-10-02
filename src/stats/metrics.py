@@ -46,6 +46,11 @@ CONDITION_COMPUTE_DTYPE: dict[str, str] = {
     # 4-bit compression and its repair (revised plan, "beyond one test"): same fp16 compute.
     "hqq_4bit": "fp16",
     "hqq_4bit_repaired": "fp16",
+    # The llama.cpp transfer test (src/eval/run_llamacpp.py). llama.cpp has its own kernels and
+    # mixed k-quant formats, so these compare with each other only, never with the runs above.
+    "llamacpp_f16": "llamacpp",
+    "llamacpp_q3km": "llamacpp",
+    "llamacpp_q3km_fairgate": "llamacpp",
 }
 # Every condition also exists scored on BBQ's disambiguated set -- the control questions where
 # the text states the answer -- under the same name plus "_disambig". Same model, same compute

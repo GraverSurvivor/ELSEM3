@@ -140,6 +140,44 @@ unclear), then `python -m src.eval.run_open_ended report results/reference/open_
 
 ---
 
+## Week 6: wrap up
+
+### llama.cpp transfer test (stretch, about 1.5 GPU-hours)
+Does the patch, found with HQQ, still help in llama.cpp's own 3-bit format? One Colab T4 session:
+```
+!git clone --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp
+!pip install -q -r /content/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+!cmake -S /content/llama.cpp -B /content/llama.cpp/build -DGGML_CUDA=ON && cmake --build /content/llama.cpp/build --target llama-quantize -j 4
+!CMAKE_ARGS="-DGGML_CUDA=on" pip install -q llama-cpp-python      # compiles, about 15 min
+from huggingface_hub import snapshot_download; HF = snapshot_download("microsoft/Phi-3.5-mini-instruct")
+!python /content/llama.cpp/convert_hf_to_gguf.py {HF} --outtype f16 --outfile /content/phi35-f16.gguf
+!/content/llama.cpp/build/bin/llama-quantize /content/phi35-f16.gguf /content/phi35-q3km.gguf Q3_K_M
+!python -m src.product.fairgate export --patch results/patches/search_top5.json --format llamacpp --gguf-in /content/phi35-f16.gguf --gguf-out /content/phi35-q3km-fairgate.gguf --binary /content/llama.cpp/build/bin/llama-quantize --out /content/quantize_fairgate.sh
+!bash /content/quantize_fairgate.sh
+```
+Then score each one (about 20 minutes each) and promote under the printed condition name:
+| Command | Promote as |
+|---|---|
+| `!python -m src.eval.run_llamacpp --gguf /content/phi35-f16.gguf --variant f16` | `llamacpp_f16` |
+| `!python -m src.eval.run_llamacpp --gguf /content/phi35-q3km.gguf --variant q3km` | `llamacpp_q3km` |
+| `!python -m src.eval.run_llamacpp --gguf /content/phi35-q3km-fairgate.gguf --variant q3km_fairgate` | `llamacpp_q3km_fairgate` |
+
+These are compared with each other only (llama.cpp computes differently from transformers).
+
+### Headline results into the repo
+After `headline_report`, copy `results/headline_<id>/report/headline.json` to
+`results/reference/headline/headline.json` and commit it, so the final tables can read it.
+
+### Final tables, audit report, freeze (CPU)
+```
+python -m src.stats.final_tables        # results/final/tables.md: every number, and what is still pending
+python -m src.product.fairgate report   # the full audit report
+python -m src.experiments.freeze        # refuses until every required run is committed
+```
+When `freeze` passes, commit `results/final/` through a PR, then tag the merge commit:
+`git tag -a v1.0 -m "Frozen results" && git push origin v1.0`. Later, `python -m src.experiments.freeze --verify`
+proves no frozen number changed.
+
 ## Presenting: FairGate Studio
 
 Open `notebooks/fairgate_studio.ipynb` in Colab (T4 GPU) **at least 15 minutes before** the

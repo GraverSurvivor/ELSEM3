@@ -130,8 +130,107 @@ def _ci(d: dict) -> str:
     return f"{d['point']:.0%} [{d['lower']:.0%}, {d['upper']:.0%}]"
 
 
+def md_to_html(lines: list[str]) -> str:
+    """The small Markdown subset src/stats/final_tables writes: tables, bullets, **bold**, *italic*."""
+    import re
+
+    def inline(text: str) -> str:
+        text = html.escape(text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+        return re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("|"):
+            block = []
+            while i < len(lines) and lines[i].startswith("|"):
+                block.append([c.strip() for c in lines[i].strip("|").split("|")])
+                i += 1
+            head, body = block[0], [r for r in block[1:] if not all(set(c) <= {"-"} for c in r)]
+            out.append("<div class='wrap'><table><tr>" + "".join(f"<th>{inline(c)}</th>" for c in head) + "</tr>")
+            out += ["<tr>" + "".join(f"<td>{inline(c)}</td>" for c in r) + "</tr>" for r in body]
+            out.append("</table></div>")
+            continue
+        if line.startswith("- "):
+            out.append("<ul>")
+            while i < len(lines) and lines[i].startswith("- "):
+                out.append(f"<li>{inline(lines[i][2:])}</li>")
+                i += 1
+            out.append("</ul>")
+            continue
+        if line.strip():
+            out.append(f"<p>{inline(line)}</p>")
+        i += 1
+    return "\n".join(out)
+
+
+# Sections of src/stats/final_tables added to the audit report, in order, with their headings.
+REPORT_SECTIONS = {
+    "recovery_by_modules": "Recovery by number of modules",
+    "hedging": "Hedging check",
+    "dissociation": "Fairness damage vs general damage",
+    "crows_pairs": "Second bias test: CrowS-Pairs",
+    "open_ended": "Free-text answers",
+    "llamacpp": "Does the patch transfer to llama.cpp?",
+    "monitoring": "Label-free monitoring",
+    "robustness": "Robustness of the recovery",
+    "headline": "Different symptoms, same fix?",
+}
+
+
+def final_sections_html(final: dict) -> str:
+    from src.stats.final_tables import _section_md
+
+    parts, pending = [], []
+    for key, title in REPORT_SECTIONS.items():
+        section = final.get(key)
+        if section is None:
+            continue
+        if section["status"] == "pending":
+            pending.append(f"{title} ({section['waiting_for']})")
+            continue
+        parts.append(f"<h2>{html.escape(title)}</h2>")
+        parts.append(md_to_html(_section_md(key, section)))
+    if pending:
+        parts.append("<h2>Not yet measured</h2><ul>" + "".join(f"<li>{html.escape(p)}</li>" for p in pending) + "</ul>")
+    return "\n".join(parts)
+
+
+def provenance_html(patch: Patch | None, reference_dir: Path = REFERENCE_DIR) -> str:
+    """Where every number came from: the model, the compression, the patch's origin, and the runs."""
+    import subprocess
+
+    rows = []
+    if patch is not None:
+        base = ", ".join(f"{k} {v}" for k, v in patch.base.items())
+        rows += [("Model", patch.model_id), ("Compression", base),
+                 ("Patch", f"{patch.name}: {len(patch.modules)} modules at {patch.nbits}-bit, "
+                           f"{patch.params:,} weights ({patch.pct_params:.2f}%)"),
+                 ("Patch source", ", ".join(f"{k}: {v}" for k, v in patch.source.items()))]
+    for name in ("baseline_fp16", "hqq_3bit", "hqq_repaired"):
+        results_path = Path(reference_dir) / name / "question_results.jsonl"
+        run_id = "not committed"
+        if results_path.exists():
+            with results_path.open(encoding="utf-8") as handle:
+                run_id = json.loads(handle.readline()).get("run_id", "?")
+        rows.append((f"Run: {name}", run_id))
+    flipped = Path("results/flipped/hqq_3bit.json")
+    if flipped.exists():
+        data = json.loads(flipped.read_text(encoding="utf-8"))
+        rows.append(("Flipped set", f"{data['total_flipped']:,} of {data['safe_set_size']:,} safe questions"))
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                                check=True).stdout.strip()
+        rows.append(("Code version", f"git {commit}"))
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    body = "".join(f"<tr><th>{html.escape(k)}</th><td><code>{html.escape(str(v))}</code></td></tr>" for k, v in rows)
+    return f"<h2>Provenance</h2><div class='wrap'><table>{body}</table></div>"
+
+
 def build_report(reference: list, compressed: list, repaired: list | None, patch: Patch | None,
-                 controls: dict | None, groups: list | None) -> str:
+                 controls: dict | None, groups: list | None, final: dict | None = None) -> str:
     gate = check(reference, compressed)
     after = check(reference, repaired) if repaired is not None else None
     recovery = recovery_fraction(reference, compressed, repaired, is_unknown) if repaired is not None else None
@@ -193,7 +292,7 @@ th {{ background: #f0f4f8; }} .pass {{ color: #1b7f3b; font-weight: 600; }} .fai
     if controls and controls.get("verdict", {}).get("outcome") not in (None, "incomplete"):
         v = controls["verdict"]
         parts.append(f"<p><b>{html.escape(v['outcome'].replace('_', ' '))}</b> — {html.escape(v['message'])}</p>")
-        parts.append("<div class='wrap'><table><tr><th>Patch (same weight budget)</th><th>USR recovered</th><th>Search minus this</th></tr>")
+        parts.append("<div class='wrap'><table><tr><th>Patch (same number of weights)</th><th>USR recovered</th><th>Search minus this</th></tr>")
         for name, row in controls.get("baselines", {}).items():
             diff = _ci(row["search_minus_this"]) if "search_minus_this" in row else "—"
             parts.append(f"<tr><td>{html.escape(name)}</td><td>{_ci(row['usr_recovery'])}</td><td>{diff}</td></tr>")
@@ -206,7 +305,7 @@ th {{ background: #f0f4f8; }} .pass {{ color: #1b7f3b; font-weight: 600; }} .fai
                          "".join(f", {html.escape(n)} {r['false_unknown_rate']['point']:.1%}" for n, r in h["repaired"].items()) +
                          ".</p>")
     else:
-        parts.append("<p class='muted'>Not yet run: the hedging check and the matched-budget baselines "
+        parts.append("<p class='muted'>Not yet run: the hedging check and the same-size baselines "
                      "(python -m src.stats.controls, after the GPU runs in RUNBOOK.md).</p>")
 
     if groups:
@@ -221,6 +320,10 @@ th {{ background: #f0f4f8; }} .pass {{ color: #1b7f3b; font-weight: 600; }} .fai
             parts.append(f"<tr><td>{html.escape(g['category'])}</td><td{mark}>{html.escape(g['group'])}</td><td>{g['n']}</td>"
                          f"<td>{g['srs']['baseline']:.1%}</td><td>{g['srs']['hqq_3bit']:.1%}</td><td>{g['srs']['repaired']:.1%}</td></tr>")
         parts.append("</table></div>")
+
+    if final is not None:
+        parts.append(final_sections_html(final))
+    parts.append(provenance_html(patch))
 
     parts.append("""<h2>Limits of this report</h2><ul>
 <li>One model (Phi-3.5-mini), one compression method (HQQ 3-bit), one benchmark (BBQ, multiple choice).</li>
@@ -251,6 +354,9 @@ def main() -> None:
     e.add_argument("--patch", type=Path, required=True)
     e.add_argument("--format", choices=("llamacpp", "hqq"), required=True)
     e.add_argument("--base-type", default="Q3_K_M", help="llama.cpp base quantization type")
+    e.add_argument("--gguf-in", default="model-f16.gguf", help="the 16-bit GGUF to quantize")
+    e.add_argument("--gguf-out", help="output GGUF (default: model-<base-type>-fairgate.gguf)")
+    e.add_argument("--binary", default="llama-quantize", help="path to llama.cpp's llama-quantize")
     e.add_argument("--out", type=Path)
 
     rep = sub.add_parser("report", help="write the HTML audit report")
@@ -281,8 +387,9 @@ def main() -> None:
     if args.command == "export":
         patch = load_patch(args.patch)
         if args.format == "llamacpp":
-            text = ("llama-quantize \\\n  " + " \\\n  ".join(llamacpp_overrides(patch)) +
-                    f" \\\n  model-f16.gguf model-{args.base_type}-fairgate.gguf {args.base_type}\n")
+            out_gguf = args.gguf_out or f"model-{args.base_type}-fairgate.gguf"
+            text = (f"{args.binary} \\\n  " + " \\\n  ".join(llamacpp_overrides(patch)) +
+                    f" \\\n  {args.gguf_in} {out_gguf} {args.base_type}\n")
         else:
             text = json.dumps(hqq_config(patch), indent=2) + "\n"
         if args.out:
@@ -297,7 +404,10 @@ def main() -> None:
     groups = json.loads((STATS_DIR / "groups.json").read_text(encoding="utf-8")) if (STATS_DIR / "groups.json").exists() else None
     repaired = _load(args.repaired) if args.repaired.exists() else None
     patch = load_patch(args.patch) if args.patch.exists() else None
-    report_html = build_report(_load(args.reference), _load(args.compressed), repaired, patch, controls, groups)
+    from src.stats.final_tables import collect
+
+    final = collect(only=set(REPORT_SECTIONS))
+    report_html = build_report(_load(args.reference), _load(args.compressed), repaired, patch, controls, groups, final)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(report_html, encoding="utf-8")
     print(f"Report written to {args.out.resolve()}")

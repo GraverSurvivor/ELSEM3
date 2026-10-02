@@ -179,6 +179,13 @@ additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in
   `repair` (summary -> patch), `export` (llama.cpp `--tensor-type` overrides using Phi-3's GGUF
   names attn_qkv / attn_output / ffn_up / ffn_down, or an HQQ per-module config), `report` (one
   self-contained HTML audit report). CPU only; it reads result files.
+- **Week 6 wrap-up.** `src/stats/final_tables.py` (Person A) collects every final number into
+  `results/final/tables.md`, each section marked done or with the runbook step it waits for; the
+  FairGate report renders the same collection, so the two can't disagree. `src/eval/run_llamacpp.py`
+  (Person B, stretch) scores BBQ through llama.cpp: conditions `llamacpp_*` map to compute type
+  "llamacpp" in `metrics.py`, so they compare only with each other. `src/experiments/freeze.py`
+  (Person C) refuses to freeze until every required run is committed and complete, then writes
+  `results/final/manifest.json` (SHA-256 per tracked result file); `--verify` checks it later.
 - **FairGate Studio** (`src/product/studio.py`, logic in `studio_core.py`, Person C): the Gradio
   presentation app. A guide, then Ask / Diagnose / Repair / Ship. Live mode holds the 16-bit model
   and one 3-bit model; "compressed" answers swap the restored modules back to their original 3-bit
@@ -196,12 +203,13 @@ group, 8 of 23 groups end significantly more stereotyped than the original model
 - Branch per person/feature (`person-a/...`, `person-b/...`, `person-c/...`), PR into `main`.
 - Every result-writing script logs structured output (JSON/CSV) under `results/` via
   `src/eval` or `src/experiments` — never hand-copy numbers into the deck.
-- `results/` is gitignored with five exceptions: `results/reference/` (the shared baseline
+- `results/` is gitignored with six exceptions: `results/reference/` (the shared baseline
   and hqq_3bit runs), `results/flipped/` (the flipped set built from them),
   `results/search_samples/` (the fixed sample Stage 4 scores every candidate on — shared so
   every candidate, and every teammate, sees the identical questions), `results/patches/` and
   `results/quant_error/` (which modules each repair restores, so every teammate's baseline runs
-  restore identical module sets). The reference runs
+  restore identical module sets), and `results/final/` (the final tables and the freeze
+  manifest). The reference runs
   matter most: everything downstream is defined relative to them (the safe set is "what the baseline
   got right", the flipped set is "what changed against the baseline"), all three of us must use
   the identical file, and having it in the repo means the flipped-set, statistics and plotting

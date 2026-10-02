@@ -1,4 +1,4 @@
-.PHONY: install baseline validate promote-reference quantize search repair disambig quant-error baselines controls sensitivity groups fairgate-check fairgate-report studio studio-preview swap-spike repair-state figures headline headline-report test
+.PHONY: install baseline validate promote-reference quantize search repair disambig quant-error baselines controls sensitivity groups fairgate-check fairgate-report studio studio-preview final-tables freeze swap-spike repair-state figures headline headline-report test
 
 install:
 	pip install -r requirements.txt
@@ -78,6 +78,14 @@ studio:
 	python -m src.product.studio
 studio-preview:
 	python -m src.product.studio --offline
+
+# --- Week 6: wrap up -----------------------------------------------------------------------------
+# Every final number in one file, with what each section still waits for (CPU).
+final-tables:
+	python -m src.stats.final_tables
+# Check every required run is committed and complete, then hash all result files for v1.0 (CPU).
+freeze: final-tables
+	python -m src.experiments.freeze
 
 swap-spike:
 	python -m src.quant.verify_module_swap

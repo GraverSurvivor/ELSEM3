@@ -239,6 +239,8 @@ results/*
 # small JSON, and every teammate's baseline runs must restore the identical module sets.
 !results/patches/
 !results/quant_error/
+# Week 6: the final tables and the freeze manifest (hashes of every tracked result file).
+!results/final/
 *.pt
 *.safetensors
 .env
