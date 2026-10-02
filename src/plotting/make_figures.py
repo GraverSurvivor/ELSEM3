@@ -47,6 +47,62 @@ def _save(fig: plt.Figure, name: str) -> Path:
     return path
 
 
+def _prefix_points() -> list[dict]:
+    """Full-benchmark recovery after restoring the search's top 1..k modules, from promoted
+    prefix repairs plus the committed full repair. Empty until the prefix runs exist."""
+    from src.stats.metrics import is_unknown
+    from src.stats.recovery import recovery_fraction
+
+    runs = {}
+    for summary_path in REFERENCE_DIR.glob("*/summary.json"):
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        source = summary.get("patch_source") or {}
+        if summary.get("condition") != "hqq_repaired":
+            continue
+        if source.get("kind") == "prefix":
+            runs[int(source["k"])] = (summary_path.parent, summary["modules"])
+        elif summary_path.parent.name == "hqq_repaired":
+            runs[len(summary["modules"])] = (summary_path.parent, summary["modules"])
+    if len(runs) < 2:
+        return []
+    base = read_results_file(REFERENCE_DIR / "baseline_fp16" / "question_results.jsonl")
+    q3 = read_results_file(REFERENCE_DIR / "hqq_3bit" / "question_results.jsonl")
+    points = []
+    for k in sorted(runs):
+        directory, modules = runs[k]
+        r = recovery_fraction(base, q3, read_results_file(directory / "question_results.jsonl"), is_unknown)
+        points.append({"k": k, "point": r.point, "lower": r.lower, "upper": r.upper, "module": modules[k - 1]})
+    return points
+
+
+def _revised_plan_figures(capability_trials: Path | None, fairness_trials: Path | None) -> None:
+    """Figures for the controls, groups, recovery-by-modules and concentration -- each drawn only
+    once the analysis behind it has produced its results file."""
+    from src.plotting.control_charts import (
+        plot_baseline_comparison,
+        plot_concentration,
+        plot_group_changes,
+        plot_recovery_by_modules,
+    )
+
+    stats_dir = Path("results/stats")
+    controls = stats_dir / "controls.json"
+    if controls.exists():
+        data = json.loads(controls.read_text(encoding="utf-8"))
+        if len(data.get("baselines", {})) > 1:
+            _save(plot_baseline_comparison(data), "controls_baselines")
+    groups = stats_dir / "groups.json"
+    if groups.exists():
+        _save(plot_group_changes(json.loads(groups.read_text(encoding="utf-8"))), "groups_srs")
+    points = _prefix_points()
+    if points:
+        _save(plot_recovery_by_modules(points), "recovery_by_modules")
+    if capability_trials and fairness_trials:
+        from src.stats.dissociation import read_trials
+
+        _save(plot_concentration(read_trials(fairness_trials), read_trials(capability_trials)), "concentration")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--flipped", type=Path, default=Path("results/flipped/hqq_3bit.json"))
@@ -54,6 +110,8 @@ def main() -> None:
                         help="a run_search summary.json to draw a recovery curve for (repeatable)")
     parser.add_argument("--skip-table", action="store_true",
                         help="skip the results table (its bootstrap CIs take a minute or two)")
+    parser.add_argument("--fairness-trials", type=Path, help="trials.csv of the fairness search, for the concentration chart")
+    parser.add_argument("--capability-trials", type=Path, help="trials.csv of the general-ability search")
     args = parser.parse_args()
 
     set_house_style()
@@ -81,6 +139,8 @@ def main() -> None:
     if args.search_summary:
         searches = {path.parent.name: json.loads(path.read_text(encoding="utf-8")) for path in args.search_summary}
         _save(plot_recovery_curves(searches), "recovery_curve")
+
+    _revised_plan_figures(args.capability_trials, args.fairness_trials)
 
     if not args.skip_table and len(summaries) == 3:
         from src.stats.repair_report import build_comparison
