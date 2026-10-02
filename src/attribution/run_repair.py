@@ -40,31 +40,53 @@ from typing import Callable
 
 import torch
 
-from src.data.bbq_loader import CATEGORIES, load_all_categories
-from src.eval.option_scorer import DEFAULT_BATCH_SIZE, score_items
+from src.attribution.patch import Patch, load_patch
+from src.data.bbq_loader import CATEGORIES, CONTEXTS, load_all_categories
+from src.eval.option_scorer import DEFAULT_BATCH_SIZE
 from src.eval.run_baseline import _aggregate_overall
+from src.eval.scoring_run import check_resume_id, condition_for, score_categories
 from src.experiments.logger import (
     RESULTS_DIR,
     _write_atomically,
     new_run_id,
     read_question_results,
     write_category_summary,
-    write_question_results,
 )
-from src.experiments.schema import QuestionResult, summarize_category
+from src.experiments.schema import summarize_category
 
 CONDITION = "hqq_repaired"
 # Must match the baseline, the hqq_3bit run and the search that chose the modules.
 COMPUTE_DTYPE = "fp16"
+SUPPORTED_BASE_NBITS = (3, 4)
+
+
+def repaired_condition(base_nbits: int) -> str:
+    """`hqq_repaired` for the main 3-bit experiment (the name every existing result uses), and
+    `hqq_4bit_repaired` for the 4-bit comparison."""
+    return CONDITION if base_nbits == 3 else f"hqq_{base_nbits}bit_repaired"
 
 
 @dataclass(frozen=True)
 class RepairPlan:
-    """What to restore, as decided by one search run."""
+    """What to restore: a search's kept modules, or any patch file."""
 
     modules: tuple[str, ...]
     nbits: int
     search_run_id: str
+    patch_name: str | None = None
+    patch_source: dict | None = None
+
+
+def plan_from_patch(patch: Patch) -> RepairPlan:
+    """A patch as a repair plan. Baseline and prefix patches carry no search id of their own, so
+    the patch name stands in, and the full source is kept for the run's summary."""
+    return RepairPlan(
+        modules=patch.modules,
+        nbits=patch.nbits,
+        search_run_id=patch.source.get("search_run_id") or patch.name,
+        patch_name=patch.name,
+        patch_source=dict(patch.source),
+    )
 
 
 @dataclass(frozen=True)
@@ -162,8 +184,23 @@ def _cuda_memory_allocated() -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--search-summary", type=Path, required=True, help="summary.json from run_search")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--search-summary", type=Path, help="summary.json from run_search")
+    source.add_argument("--patch", type=Path, help="a patch file (src/attribution/patch.py), e.g. a baseline")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument(
+        "--context",
+        default="ambig",
+        choices=CONTEXTS,
+        help="ambig = the fairness benchmark; disambig = the control set where the text states the answer",
+    )
+    parser.add_argument(
+        "--base-nbits",
+        type=int,
+        default=3,
+        choices=SUPPORTED_BASE_NBITS,
+        help="bit-width of the compressed model the modules are restored into",
+    )
     parser.add_argument(
         "--resume",
         metavar="RUN_ID",
@@ -171,15 +208,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    plan = load_repair_plan(json.loads(args.search_summary.read_text(encoding="utf-8")))
+    if args.patch:
+        plan = plan_from_patch(load_patch(args.patch))
+    else:
+        plan = load_repair_plan(json.loads(args.search_summary.read_text(encoding="utf-8")))
+    condition = condition_for(repaired_condition(args.base_nbits), args.context)
 
     if args.resume:
         run_id = args.resume
-        if not run_id.startswith(f"{CONDITION}_"):
-            raise SystemExit(f"Run {run_id!r} is not a {CONDITION} run. Resume only runs this script started.")
+        check_resume_id(run_id, condition)
         completed = read_question_results(run_id, missing_ok=True)
     else:
-        run_id = new_run_id(CONDITION)
+        run_id = new_run_id(condition)
         completed = []
 
     if not torch.cuda.is_available():
@@ -193,8 +233,8 @@ def main() -> None:
     from src.quant.module_swap import SwapRegistry
     from src.quant.weight_source import CheckpointWeightSource
 
-    print(f"\nLoading Phi-3.5-mini-Instruct, HQQ 3-bit, {COMPUTE_DTYPE} compute...")
-    model, tokenizer = load_hqq_3bit_model(device=device, dtype=COMPUTE_DTYPE)
+    print(f"\nLoading Phi-3.5-mini-Instruct, HQQ {args.base_nbits}-bit, {COMPUTE_DTYPE} compute...")
+    model, tokenizer = load_hqq_3bit_model(device=device, nbits=args.base_nbits, dtype=COMPUTE_DTYPE)
     registry = SwapRegistry(model, CheckpointWeightSource(MODEL_ID), device=device)
 
     # Read before the repair: sizes come off the modules as the model is loaded, 3-bit throughout.
@@ -203,7 +243,8 @@ def main() -> None:
     # The cycle's clock starts at the repair, not at model load: loading and quantizing the base
     # model is the same fixed cost with or without a repair, so it isn't the repair's cost.
     cycle_start = time.time()
-    print(f"\nRestoring {len(plan.modules)} modules to {plan.nbits}-bit (from search {plan.search_run_id}):")
+    origin = f"patch {plan.patch_name}" if plan.patch_name else f"search {plan.search_run_id}"
+    print(f"\nRestoring {len(plan.modules)} modules to {plan.nbits}-bit (from {origin}):")
     for path in plan.modules:
         print(f"  {path}")
     memory = apply_repair(registry, plan, _cuda_memory_allocated)
@@ -215,49 +256,33 @@ def main() -> None:
         f"({share['modules_restored']}/{share['modules_total']} modules)"
     )
 
-    print("\nLoading BBQ ambiguous condition, all 5 categories...")
-    items_by_category = load_all_categories()
+    print(f"\nLoading BBQ {args.context} condition, all 5 categories...")
+    items_by_category = load_all_categories(args.context)
 
-    print(f"\nRun ID: {run_id} (condition {CONDITION}, batch size {args.batch_size})")
-    finished_categories = {result.category for result in completed}
-    if finished_categories:
-        print(f"Resuming: {sorted(finished_categories)} already scored, skipping.")
-
-    all_results: list[QuestionResult] = list(completed)
-    for category, items in items_by_category.items():
-        if category in finished_categories:
-            continue
-        predictions = score_items(model, tokenizer, items, device, batch_size=args.batch_size, desc=category)
-        all_results.extend(
-            QuestionResult(
-                run_id=run_id,
-                condition=CONDITION,
-                question_id=item.question_id,
-                category=item.category,
-                predicted_index=predicted_index,
-                label=item.label,
-                unknown_index=item.unknown_index,
-                is_unknown_predicted=(predicted_index == item.unknown_index),
-                is_correct=(predicted_index == item.label),
-                is_stereotyped_predicted=(predicted_index == item.stereotype_index),
-            )
-            for item, predicted_index in zip(items, predictions)
-        )
-        # Checkpoint after every category, as in run_baseline.
-        write_question_results(all_results, run_id)
+    print(f"\nRun ID: {run_id} (condition {condition}, batch size {args.batch_size})")
+    all_results = score_categories(
+        model, tokenizer, items_by_category, device, run_id, condition, args.batch_size, completed
+    )
 
     scoring_seconds = time.time() - cycle_start - repair_seconds
 
-    summaries = [summarize_category(all_results, run_id, CONDITION, category) for category in CATEGORIES]
-    overall = _aggregate_overall(all_results, run_id, CONDITION)
+    summaries = [summarize_category(all_results, run_id, condition, category) for category in CATEGORIES]
+    overall = _aggregate_overall(all_results, run_id, condition)
     write_category_summary(summaries + [overall], run_id)
+    accuracy = sum(r.is_correct for r in all_results) / len(all_results)
 
     repair_summary = {
         "run_id": run_id,
-        "condition": CONDITION,
+        "condition": condition,
+        "context": args.context,
+        "base_nbits": args.base_nbits,
         "compute_dtype": COMPUTE_DTYPE,
         "search_run_id": plan.search_run_id,
-        "search_summary_path": str(args.search_summary),
+        "search_summary_path": str(args.search_summary) if args.search_summary else None,
+        "patch_path": str(args.patch) if args.patch else None,
+        "patch_name": plan.patch_name,
+        "patch_source": plan.patch_source,
+        "accuracy": accuracy,
         "modules": list(plan.modules),
         "nbits": plan.nbits,
         "fairness": {
@@ -285,7 +310,8 @@ def main() -> None:
     print(f"\nCycle wall clock: {repair_summary['wall_clock_seconds']['cycle'] / 60:.1f} min"
           + (" (resumed -- partial)" if args.resume else ""))
     print(f"Results written to {(RESULTS_DIR / run_id).resolve()} (incl. summary.json)")
-    print(f"Next: make promote-reference RUN_ID={run_id} NAME={CONDITION}")
+    print(f"Accuracy: {accuracy:.3f}")
+    print(f"Next: make promote-reference RUN_ID={run_id} NAME={plan.patch_name or condition}")
 
 
 if __name__ == "__main__":

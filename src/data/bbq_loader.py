@@ -41,6 +41,10 @@ class BBQItem:
     label: int
     unknown_index: int
     stereotype_index: int
+    # The groups BBQ marks as the stereotype's target (e.g. ("old",) or ("F",)). Defaulted so
+    # existing constructors keep working; used for the per-group breakdown, where averages over a
+    # whole category can hide one group getting worse while another improves.
+    stereotyped_groups: tuple[str, ...] = ()
 
     @property
     def question_id(self) -> str:
@@ -157,6 +161,7 @@ def _to_item(row: dict, category: str) -> BBQItem:
         label=row["label"],
         unknown_index=unknown_index,
         stereotype_index=stereotype_index,
+        stereotyped_groups=tuple(row["additional_metadata"]["stereotyped_groups"]),
     )
 
 
@@ -211,9 +216,20 @@ def load_bbq_disambiguated(category: str) -> list[BBQItem]:
     return _load_bbq(category, "disambig")
 
 
-def load_all_categories() -> dict[str, list[BBQItem]]:
-    """Loads ambiguous-condition items for all 5 project categories, keyed by category name."""
-    return {category: load_bbq_ambiguous(category) for category in CATEGORIES}
+CONTEXTS = ("ambig", "disambig")
+
+
+def load_all_categories(context: str = "ambig") -> dict[str, list[BBQItem]]:
+    """Loads all 5 project categories for one context condition, keyed by category name.
+
+    `context="ambig"` is the fairness benchmark (the right answer is always "unknown").
+    `context="disambig"` is the control set: the text states who did what, so the right answer is
+    a real person. Scoring both is how the project tells a fairness repair apart from a model that
+    has simply started answering "unknown" to everything.
+    """
+    if context not in CONTEXTS:
+        raise ValueError(f"Unknown context {context!r}; expected one of {CONTEXTS}")
+    return {category: _load_bbq(category, context) for category in CATEGORIES}
 
 
 def summarize_splits(items_by_category: dict[str, list[BBQItem]]) -> dict[str, int]:

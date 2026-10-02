@@ -37,6 +37,9 @@ class QuestionResult:
     is_correct: bool
     # None until Person A's Stage 3 stereotype/anti-stereotype identification is built.
     is_stereotyped_predicted: bool | None = None
+    # Softmax probability of the chosen answer over the three options (1/3 to 1.0). None for runs
+    # written before the scorer recorded it, so older result files still load unchanged.
+    confidence: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
