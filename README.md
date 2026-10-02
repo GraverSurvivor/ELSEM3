@@ -32,11 +32,29 @@ tests/             pytest, mirrors src/
 ## Reproducing a run
 
 ```bash
-make baseline   # BF16 eval on BBQ ambiguous, all 5 categories
+make baseline   # fp16 eval on BBQ ambiguous, all 5 categories
 make quantize   # HQQ 3-bit compress + flipped-set detection
 make figures    # all charts + results table from the committed reference runs (CPU)
 make headline   # full detect -> localize -> repair loop, 3 failure windows (GPU, resumable)
 make headline-report HEADLINE_ID=headline_<ts>   # headline tables, overlap verdict, figures (CPU)
+make disambig   # the control runs on BBQ's disambiguated questions (GPU)
+make repair PATCH=results/patches/positional.json   # verify any patch on the full benchmark (GPU)
+make controls   # hedging check + search vs matched-budget baselines (CPU)
+make fairgate-report   # the FairGate HTML audit report (CPU)
+```
+
+The full sequence of GPU runs for the revised plan, with timings and what to commit, is in
+[RUNBOOK.md](RUNBOOK.md).
+
+## FairGate
+
+A command-line tool over the same pipeline: does compressing a model make it more biased, and what
+fixes it?
+
+```bash
+python -m src.product.fairgate check      # PASS/FAIL: original vs compressed
+python -m src.product.fairgate export --patch results/patches/search_top5.json --format llamacpp
+python -m src.product.fairgate report     # results/fairgate/report.html
 ```
 
 ## Deck

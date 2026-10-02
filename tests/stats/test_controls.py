@@ -95,3 +95,23 @@ def test_hedging_block_flags_a_repair_that_answers_unknown_where_it_is_wrong():
     block = hedging_block(fp16, q3, {"search_top5": hedger})
     assert block["repaired"]["search_top5"]["hedging_detected"] is True
     assert verdict({"hedging": block, "baselines": {}})["outcome"] == "hedging"
+
+
+def test_discover_repairs_excludes_prefixes_and_labels_other_searches(tmp_path):
+    import json
+
+    from src.stats.controls import discover_repairs
+
+    def promote(folder, **summary):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "summary.json").write_text(json.dumps({"condition": "hqq_repaired", **summary}))
+
+    promote("hqq_repaired")
+    promote("repair_positional", patch_name="positional", patch_source={"kind": "baseline"})
+    promote("repair_search_top5_top4", patch_name="search_top5_top4", patch_source={"kind": "prefix", "k": 4})
+    promote("repair_capability", patch_name="search_20261012T0900Z", patch_source={"kind": "search"})
+    (tmp_path / "hqq_repaired_disambig").mkdir()
+    (tmp_path / "hqq_repaired_disambig" / "summary.json").write_text(json.dumps({"condition": "hqq_repaired_disambig"}))
+
+    found = discover_repairs(tmp_path)
+    assert set(found) == {"search_top5", "positional", "repair_capability"}

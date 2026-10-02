@@ -113,16 +113,29 @@ def verdict(controls: dict, search_name: str = SEARCH_NAME) -> dict:
 
 
 def discover_repairs(reference_dir: Path = REFERENCE_DIR) -> dict[str, Path]:
-    """Promoted ambiguous repair runs, keyed by patch name (the committed search repair is search_top5)."""
+    """Promoted ambiguous 3-bit repair runs that belong in the controls comparison.
+
+    The committed search repair (`hqq_repaired/`) is the search patch. Baseline patches keep their
+    patch name. Another search's patch -- the general-ability search, the fourth control -- is
+    labelled by its folder (e.g. `repair_capability`) rather than its timestamped run id.
+
+    Prefix runs (the search's own top 1-4 modules) are left out: they are the recovery-by-modules
+    curve, not alternatives at the same budget, and the full patch can't be expected to beat its own
+    first four modules significantly -- including them would wrongly read as "a baseline matches".
+    """
     found = {}
     for summary_path in sorted(reference_dir.glob("*/summary.json")):
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        condition = summary.get("condition", "")
-        if not condition.startswith("hqq_repaired") or condition.endswith("_disambig"):
+        if summary.get("condition") != "hqq_repaired":
             continue
-        name = summary.get("patch_name") or (SEARCH_NAME if summary_path.parent.name == "hqq_repaired" else None)
-        if name:
-            found[name] = summary_path.parent
+        folder = summary_path.parent.name
+        kind = (summary.get("patch_source") or {}).get("kind")
+        if folder == "hqq_repaired":
+            found[SEARCH_NAME] = summary_path.parent
+        elif kind == "baseline":
+            found[summary.get("patch_name") or folder] = summary_path.parent
+        elif kind == "search":
+            found[folder] = summary_path.parent
     return found
 
 
