@@ -64,3 +64,23 @@ def test_report_contains_the_verdicts_and_the_patch():
     assert "blk\\.10\\.attn_output=q8_0" in html
     assert "Not yet run" in html  # controls missing is reported, not hidden
     assert html.count("<table") == html.count("</table></div>")
+
+
+def test_markdown_tables_and_bullets_become_html():
+    from src.product.fairgate import md_to_html
+
+    out = md_to_html(["| A | B |", "|---|---|", "| **x** | 1 |", "", "- one *two*", "- three", "plain"])
+    assert "<th>A</th>" in out and "<td><b>x</b></td>" in out and "---" not in out
+    assert "<li>one <i>two</i></li>" in out and "<p>plain</p>" in out
+
+
+def test_report_adds_final_sections_and_lists_what_is_pending():
+    final = {
+        "robustness": {"status": "done", "ci_lower_range": [0.90, 0.91], "ci_upper_range": [0.93, 0.94],
+                       "search_sample": {"recovered_in_sample": 0.84, "recovered_outside_sample": 0.77, "gap": 0.07}},
+        "llamacpp": {"status": "pending", "waiting_for": "RUNBOOK Week 6"},
+    }
+    html_out = build_report(BASE, BROKEN, REPAIRED, PATCH, None, None, final)
+    assert "Robustness of the recovery" in html_out and "77.0%" in html_out
+    assert "Not yet measured" in html_out and "RUNBOOK Week 6" in html_out
+    assert "Provenance" in html_out and "search_top5" in html_out

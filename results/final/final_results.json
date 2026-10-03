@@ -1,0 +1,273 @@
+{
+  "main": {
+    "status": "done",
+    "rows": {
+      "Original (fp16)": {
+        "n": 12140,
+        "usr": 0.8402800658978583,
+        "srs": 0.11696869851729819,
+        "bias_score_ambig": 0.07421746293245472
+      },
+      "HQQ 3-bit": {
+        "n": 12140,
+        "usr": 0.36523887973640856,
+        "srs": 0.37306425041186164,
+        "bias_score_ambig": 0.11136738056013178
+      },
+      "3-bit + search patch": {
+        "n": 12140,
+        "usr": 0.8043657331136738,
+        "srs": 0.1255354200988468,
+        "bias_score_ambig": 0.05543657331136737
+      }
+    },
+    "usr_recovery": {
+      "point": 0.924397433674354,
+      "lower": 0.9102710758735211,
+      "upper": 0.9383440860069283
+    }
+  },
+  "per_category": {
+    "status": "done",
+    "rows": {
+      "Age": {
+        "usr": [
+          0.7195652173913043,
+          0.3141304347826087,
+          0.753804347826087
+        ],
+        "srs": [
+          0.2467391304347826,
+          0.4326086956521739,
+          0.1826086956521739
+        ],
+        "usr_recovery": {
+          "point": 1.0844504021447723,
+          "lower": 1.0276646450355436,
+          "upper": 1.1434734572530532
+        }
+      },
+      "Gender_identity": {
+        "usr": [
+          0.8391089108910891,
+          0.3323903818953324,
+          0.7606082036775106
+        ],
+        "srs": [
+          0.11244695898161244,
+          0.37906647807637905,
+          0.14745403111739747
+        ],
+        "usr_recovery": {
+          "point": 0.8450802512212141,
+          "lower": 0.8174981617266307,
+          "upper": 0.8735585109690205
+        }
+      },
+      "Race_ethnicity": {
+        "usr": [
+          0.8587209302325581,
+          0.3453488372093023,
+          0.8061046511627907
+        ],
+        "srs": [
+          0.06656976744186047,
+          0.3363372093023256,
+          0.09912790697674419
+        ],
+        "usr_recovery": {
+          "point": 0.8975084937712345,
+          "lower": 0.8712796064583521,
+          "upper": 0.9237529728947712
+        }
+      },
+      "Religion": {
+        "usr": [
+          0.875,
+          0.48333333333333334,
+          0.8383333333333334
+        ],
+        "srs": [
+          0.09666666666666666,
+          0.3016666666666667,
+          0.1
+        ],
+        "usr_recovery": {
+          "point": 0.9063829787234043,
+          "lower": 0.8372724089635853,
+          "upper": 0.9855089882943143
+        }
+      },
+      "SES": {
+        "usr": [
+          0.8814102564102564,
+          0.418997668997669,
+          0.8598484848484849
+        ],
+        "srs": [
+          0.10518648018648019,
+          0.38548951048951047,
+          0.10780885780885781
+        ],
+        "usr_recovery": {
+          "point": 0.9533711405166982,
+          "lower": 0.9263407687564991,
+          "upper": 0.984273892204189
+        }
+      }
+    }
+  },
+  "recovery_by_modules": {
+    "status": "partial",
+    "rows": [
+      {
+        "modules": 5,
+        "added": "model.layers.10.self_attn.o_proj",
+        "pct_weights": 3.3854166666666665,
+        "memory_mb": 70.19970703125,
+        "memory_measured": true,
+        "usr_recovery": {
+          "point": 0.924397433674354,
+          "lower": 0.9102710758735211,
+          "upper": 0.9383440860069283
+        }
+      }
+    ],
+    "missing_prefixes": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "waiting_for": "RUNBOOK Phase 2, Account 3"
+  },
+  "controls": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Phase 2, Account 2 (baseline repairs)"
+  },
+  "hedging": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Phase 2, Account 1 (disambiguated runs)"
+  },
+  "dissociation": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Phase 3, step 8"
+  },
+  "crows_pairs": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Phase 4 (CrowS-Pairs runs)"
+  },
+  "open_ended": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Phase 4 (open-ended runs)"
+  },
+  "llamacpp": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Week 6 (llama.cpp transfer test, stretch)"
+  },
+  "monitoring": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Phase 2 (flip_predictability, after baseline_fp16_confidence)"
+  },
+  "robustness": {
+    "status": "done",
+    "ci_lower_range": [
+      0.908305992237,
+      0.9106097433341198
+    ],
+    "ci_upper_range": [
+      0.9383440860069283,
+      0.9416215908089612
+    ],
+    "search_sample": {
+      "recovered_in_sample": 0.8433333333333334,
+      "n_in_sample": 300,
+      "recovered_outside_sample": 0.7700517464424321,
+      "n_outside_sample": 3092,
+      "gap": 0.07328158689090125
+    }
+  },
+  "groups": {
+    "status": "done",
+    "n_groups": 23,
+    "n_worse": 8,
+    "worse": [
+      {
+        "category": "Gender_identity",
+        "group": "Transgender women / transgender men / trans",
+        "srs": {
+          "baseline": 0.07720588235294118,
+          "hqq_3bit": 0.46691176470588236,
+          "repaired": 0.15073529411764705
+        }
+      },
+      {
+        "category": "Religion",
+        "group": "Atheist",
+        "srs": {
+          "baseline": 0.0,
+          "hqq_3bit": 0.23333333333333334,
+          "repaired": 0.06666666666666667
+        }
+      },
+      {
+        "category": "Race_ethnicity",
+        "group": "Native American / African American / Hispanic / Latino / Black",
+        "srs": {
+          "baseline": 0.06333333333333334,
+          "hqq_3bit": 0.5166666666666667,
+          "repaired": 0.12333333333333334
+        }
+      },
+      {
+        "category": "Race_ethnicity",
+        "group": "Hispanic / Latino",
+        "srs": {
+          "baseline": 0.05384615384615385,
+          "hqq_3bit": 0.3173076923076923,
+          "repaired": 0.10961538461538461
+        }
+      },
+      {
+        "category": "Gender_identity",
+        "group": "F",
+        "srs": {
+          "baseline": 0.11778846153846154,
+          "hqq_3bit": 0.3942307692307692,
+          "repaired": 0.1700721153846154
+        }
+      },
+      {
+        "category": "Race_ethnicity",
+        "group": "Middle Eastern / Arab",
+        "srs": {
+          "baseline": 0.04583333333333333,
+          "hqq_3bit": 0.3416666666666667,
+          "repaired": 0.09583333333333334
+        }
+      },
+      {
+        "category": "Religion",
+        "group": "Muslim / Mormon / Orthodox / Catholic",
+        "srs": {
+          "baseline": 0.0,
+          "hqq_3bit": 0.14166666666666666,
+          "repaired": 0.05
+        }
+      },
+      {
+        "category": "Race_ethnicity",
+        "group": "Black / African American",
+        "srs": {
+          "baseline": 0.07214285714285715,
+          "hqq_3bit": 0.32857142857142857,
+          "repaired": 0.1
+        }
+      }
+    ]
+  },
+  "headline": {
+    "status": "pending",
+    "waiting_for": "RUNBOOK Phase 4 (headline windows), then copy headline.json to results/reference/headline/"
+  }
+}

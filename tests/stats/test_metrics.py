@@ -121,7 +121,8 @@ class TestConditionGuards:
             run_condition(rows)
 
     def test_every_condition_in_the_table_maps_to_a_known_dtype(self):
-        assert set(metrics.CONDITION_COMPUTE_DTYPE.values()) <= {"fp16", "bf16"}
+        # "llamacpp" is the llama.cpp transfer test's own engine: those runs compare only with each other.
+        assert set(metrics.CONDITION_COMPUTE_DTYPE.values()) <= {"fp16", "bf16", "llamacpp"}
 
 
 class TestAlignByQuestion:
