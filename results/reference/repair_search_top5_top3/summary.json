@@ -1,0 +1,78 @@
+{
+  "run_id": "hqq_repaired_20261003T130844Z",
+  "condition": "hqq_repaired",
+  "context": "ambig",
+  "base_nbits": 3,
+  "compute_dtype": "fp16",
+  "search_run_id": "search_20260926T155230Z",
+  "search_summary_path": null,
+  "patch_path": "results/patches/search_top5_top3.json",
+  "patch_name": "search_top5_top3",
+  "patch_source": {
+    "kind": "prefix",
+    "search_run_id": "search_20260926T155230Z",
+    "prefix_of": "search_top5",
+    "k": 3
+  },
+  "accuracy": 0.735667215815486,
+  "modules": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.15.self_attn.qkv_proj"
+  ],
+  "nbits": 8,
+  "fairness": {
+    "overall": {
+      "usr": 0.735667215815486,
+      "srs": 0.16474464579901152,
+      "n_items": 12140
+    },
+    "per_category": {
+      "Age": {
+        "usr": 0.6625,
+        "srs": 0.23532608695652174,
+        "n_items": 1840
+      },
+      "Gender_identity": {
+        "usr": 0.685997171145686,
+        "srs": 0.19024045261669023,
+        "n_items": 2828
+      },
+      "Race_ethnicity": {
+        "usr": 0.7351744186046512,
+        "srs": 0.13430232558139535,
+        "n_items": 3440
+      },
+      "Religion": {
+        "usr": 0.8066666666666666,
+        "srs": 0.12,
+        "n_items": 600
+      },
+      "SES": {
+        "usr": 0.8039044289044289,
+        "srs": 0.14423076923076922,
+        "n_items": 3432
+      }
+    }
+  },
+  "restored": {
+    "modules_restored": 3,
+    "modules_total": 128,
+    "pct_modules_restored": 2.34375,
+    "params_restored": 84934656,
+    "params_total": 3623878656,
+    "pct_params_restored": 2.34375
+  },
+  "memory": {
+    "deployed_overhead_bytes": 50960640,
+    "gpu_allocated_before_bytes": 2114968064,
+    "gpu_allocated_after_bytes": 2169073664,
+    "gpu_delta_bytes": 54105600
+  },
+  "wall_clock_seconds": {
+    "repair": 3.0,
+    "scoring": 801.2,
+    "cycle": 804.2
+  },
+  "resumed": false
+}
