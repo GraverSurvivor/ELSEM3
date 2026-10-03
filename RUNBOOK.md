@@ -26,16 +26,13 @@ downloaded, plus its `summary.json` from Drive) into `results/reference/search_f
 Clone with your token, install, restart, re-enter the folder: the same cells as before. On Kaggle,
 first run `import os; os.environ["CUDA_VISIBLE_DEVICES"] = "0"`.
 
-Mount Google Drive and point `results/` at it, so a disconnect can't erase a run (Colab):
-```python
-from google.colab import drive; drive.mount('/content/drive')
-import os, shutil
-DRIVE = "/content/drive/MyDrive/ELSEM3_results"; os.makedirs(DRIVE, exist_ok=True)
-shutil.copytree("results", DRIVE, dirs_exist_ok=True); shutil.rmtree("results"); os.symlink(DRIVE, "results")
-```
+Don't point `results/` at Google Drive with a symlink: git refuses to commit files through a
+symlink, so the promoted runs could not be pushed. Instead, promote and push after **every** run, so
+a disconnect loses at most the run in progress (and that resumes per category with `--resume`).
 
 After each run below: `!python -m src.experiments.promote_reference <RUN_ID> --name <NAME>`, then
-commit `results/reference/<NAME>/` through a PR.
+commit `results/reference/<NAME>/` to a branch and open a PR. `PHASE2_COLAB.md` has ready-made cells
+that do this automatically for Phase 2.
 
 ---
 
