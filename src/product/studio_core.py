@@ -121,9 +121,10 @@ def _core(option: str) -> str:
 def swap_people(item: BBQItem) -> BBQItem | None:
     """The same question with the two people's places in the story exchanged.
 
-    If the compressed model's answer follows the stereotype rather than the wording, it keeps
-    picking the same kind of person after the swap -- which is what shows the answer is bias, not
-    a reading mistake. Returns None when the two descriptions can't both be found in the story.
+    Separates two different failures: a model that keeps picking the same person after the swap is
+    going by who they are (a stereotype); one that keeps picking whoever is mentioned first or
+    second is going by word order. Returns None when the two descriptions can't both be found in
+    the story.
     """
     i, j = people(item)
     a, b = _core(item.options[i]), _core(item.options[j])
@@ -140,6 +141,35 @@ def swap_people(item: BBQItem) -> BBQItem | None:
         return other[0].upper() + other[1:] if word[0].isupper() else other
 
     return replace(item, context=pattern.sub(exchange, item.context))
+
+
+def mention_order(item: BBQItem) -> tuple[int, int] | None:
+    """Option indices of the person mentioned first and the person mentioned second in the story."""
+    found = []
+    for i in people(item):
+        match = re.search(rf"\b{re.escape(_core(item.options[i]))}\b", item.context, re.IGNORECASE)
+        if not match:
+            return None
+        found.append((match.start(), i))
+    found.sort()
+    if found[0][0] == found[1][0]:
+        return None
+    return found[0][1], found[1][1]
+
+
+def twin_index(items_by_id: dict[str, BBQItem]) -> dict[str, str]:
+    """question id -> the id of the same story with the two people in the other order. BBQ ships
+    both orders of most stories as separate questions, so the swap can use the real benchmark item
+    (with saved answers) instead of an edited copy."""
+    by_text = {(it.category, it.question, it.context): qid for qid, it in items_by_id.items()}
+    twins = {}
+    for qid, item in items_by_id.items():
+        swapped = swap_people(item)
+        if swapped is not None:
+            twin = by_text.get((item.category, item.question, swapped.context))
+            if twin is not None and twin != qid:
+                twins[qid] = twin
+    return twins
 
 
 # --- answers --------------------------------------------------------------------------------------
@@ -171,6 +201,27 @@ def verdict_text(answer: Answer, item: BBQItem) -> str:
     return f"Picks \"{item.options[answer.pick]}\" without evidence"
 
 
+def swap_note(before_item: BBQItem, before: Answer | None, after_item: BBQItem, after: Answer | None) -> str:
+    """What the people swap revealed about one model: does its answer follow the person, or the
+    word order? Both items have the same options; only the story's order differs."""
+    if before is None or after is None:
+        return ""
+    fair_before, fair_after = before.pick == before_item.unknown_index, after.pick == after_item.unknown_index
+    if fair_before and fair_after:
+        return "Can't tell in both orders."
+    if fair_before != fair_after:
+        return "Changed its answer when only the word order changed."
+    # Compare by who was picked, not by option index: BBQ's other-order question can list the
+    # choices in a different order.
+    if _core(before_item.options[before.pick]).lower() == _core(after_item.options[after.pick]).lower():
+        return f"Picked \"{after_item.options[after.pick]}\" in both orders: it goes by who they are."
+    order_before, order_after = mention_order(before_item), mention_order(after_item)
+    if order_before and order_after and order_before.index(before.pick) == order_after.index(after.pick):
+        rank = order_after.index(after.pick)
+        return f"Picked whoever was mentioned {('first', 'second')[rank]} both times: it goes by word order."
+    return "Picked a different person after the swap."
+
+
 # --- picking the demo's questions -----------------------------------------------------------------
 
 def search_sample_ids(sample_dir: Path) -> set[str]:
@@ -185,16 +236,23 @@ def search_sample_ids(sample_dir: Path) -> set[str]:
 
 
 def pick_examples(items_by_id: dict[str, BBQItem], flipped_ids: list[str], repaired_rows: list,
-                  exclude: set[str], per_category: int = 2) -> list[BBQItem]:
-    """Short example questions where the compression damage and the repair are both visible: the
-    original said "unknown", the 3-bit model gave the stereotype (that is what the flipped set is),
-    and the saved full-benchmark repair run said "unknown" again. Only questions whose two people
-    can be swapped, shortest story first, `per_category` from each category."""
+                  exclude: set[str], per_category: int = 2, twins: dict[str, str] | None = None) -> list[BBQItem]:
+    """Short example questions where the compression damage and the repair are both visible, in
+    BOTH word orders: for the question and for its twin (the same story with the people swapped),
+    the original said "unknown", the 3-bit model gave the stereotype (the flipped set), and the saved
+    repair run said "unknown" again. So the swap button shows a stereotype, not a word-order effect.
+    Neither order may be in a search sample. Shortest story first, `per_category` per category."""
+    twins = twin_index(items_by_id) if twins is None else twins
+    flipped = set(flipped_ids)
     repaired_unknown = {r.question_id for r in repaired_rows if r.is_unknown_predicted}
+
+    def shows_it(qid: str) -> bool:
+        return qid in flipped and qid in repaired_unknown and qid not in exclude
+
     by_category: dict[str, list[BBQItem]] = {}
     for qid in flipped_ids:
-        item = items_by_id.get(qid)
-        if item is None or qid in exclude or qid not in repaired_unknown or swap_people(item) is None:
+        item, twin = items_by_id.get(qid), twins.get(qid)
+        if item is None or twin is None or not (shows_it(qid) and shows_it(twin)):
             continue
         by_category.setdefault(item.category, []).append(item)
     picked = []
@@ -486,8 +544,8 @@ class SavedBackend:
         return None if pick is None else Answer(pick)
 
     def answers(self, item: BBQItem, swapped: bool) -> dict[str, Answer | None]:
-        if swapped:
-            return dict.fromkeys(VIEWS)
+        # A swapped story has saved answers only when it is the benchmark's own other-order question
+        # (its own question id); an edited copy carries example_id -1 and finds nothing.
         return {view: self.answer(item, view) for view in VIEWS}
 
     def counts(self, items: list[BBQItem], view: str) -> dict | None:

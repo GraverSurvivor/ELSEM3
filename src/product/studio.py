@@ -24,6 +24,7 @@ import argparse
 import json
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,7 +56,9 @@ from .studio_core import (
     saved_repairs,
     search_sample_ids,
     studio_patch,
+    swap_note,
     swap_people,
+    twin_index,
 )
 
 REFERENCE_DIR = Path("results/reference")
@@ -206,7 +209,8 @@ class StudioData:
             "repaired": read_results_file(reference_dir / "hqq_repaired" / "question_results.jsonl"),
         }
         unseen = search_sample_ids(SAMPLES_DIR)
-        self.examples = pick_examples(self.items_by_id, flipped_ids, self.runs["repaired"], unseen)
+        self.twins = twin_index(self.items_by_id)
+        self.examples = pick_examples(self.items_by_id, flipped_ids, self.runs["repaired"], unseen, twins=self.twins)
         self.counter_items = [self.items_by_id[q] for q in pick_counter_set(flipped_ids, unseen, n=COUNTER_N)]
         self.patch = load_patch(SEARCH_PATCH)
         self.random_patches = [load_patch(p) for p in RANDOM_PATCHES if p.exists()]
@@ -349,10 +353,11 @@ def build_app(backend, data: StudioData):
         return f"3-bit + {len(paths)} part{'s' if len(paths) != 1 else ''} restored (+{backend.overhead_mb():.0f} MB)"
 
     # --- Ask ---------------------------------------------------------------------------------------
-    def render(item, swapped):
+    def render(item, swapped, base_item=None):
         if item is None:
             return ("", "", "", "")
         answers = backend.answers(item, swapped)
+        before = backend.answers(base_item, False) if swapped and base_item is not None else {}
         cards = []
         for view in VIEWS:
             note = ""
@@ -361,6 +366,8 @@ def build_app(backend, data: StudioData):
                     note = "Not loaded in this session."
                 elif not backend.live:
                     note = "This needs the live app (GPU). Preview mode only has saved answers."
+            elif swapped and base_item is not None:
+                note = swap_note(base_item, before.get(view), item, answers[view])
             sub = repaired_sub() if view == "repaired" else None
             cards.append(answer_card_html(view, item, answers[view], subtitle=sub, note=note))
         return (question_html(item, swapped), *cards)
@@ -374,10 +381,16 @@ def build_app(backend, data: StudioData):
             raise gr.Error("Pick a question first.")
         if swapped:
             return (base_item, False, *render(base_item, False))
-        flipped = swap_people(base_item)
-        if flipped is None:
-            raise gr.Error("This question's two people can't be swapped automatically.")
-        return (flipped, True, *render(flipped, True))
+        twin = data.twins.get(base_item.question_id)
+        if twin is not None and base_item.category != "Custom":
+            flipped = data.items_by_id[twin]  # the benchmark's own other-order question
+        else:
+            flipped = swap_people(base_item)
+            if flipped is None:
+                raise gr.Error("This question's two people can't be swapped automatically.")
+            if flipped.category != "Custom":
+                flipped = replace(flipped, example_id=-1)  # an edited copy: no saved answers apply
+        return (flipped, True, *render(flipped, True, base_item))
 
     def ask_custom(story, question, a, b):
         try:
@@ -386,8 +399,8 @@ def build_app(backend, data: StudioData):
             raise gr.Error(str(error))
         return (item, item, False, *render(item, False))
 
-    def rerender(item, swapped):
-        return render(item, swapped)
+    def rerender(item, swapped, base_item):
+        return render(item, swapped, base_item)
 
     # --- Repair ------------------------------------------------------------------------------------
     counter_cache = {}
@@ -547,8 +560,9 @@ def build_app(backend, data: StudioData):
             with gr.Tab("1 · Ask", id="ask") as ask_tab:
                 gr.HTML(_help(
                     "Pick a question from the list. The three cards show each model's answer.",
-                    "Press <b>Swap the two people</b>. A biased model keeps picking the same kind of person, "
-                    "wherever they appear in the story.",
+                    "Press <b>Swap the two people</b> to tell the story in the other order. Each card then says "
+                    "whether its answer follows <i>who</i> the person is (a stereotype) or <i>where</i> they "
+                    "appear (word order).",
                     "Or write your own question below. Keep it so the story <i>doesn't</i> say who did it.",
                 ))
                 with gr.Row():
@@ -646,7 +660,7 @@ def build_app(backend, data: StudioData):
         swap_btn.click(toggle_swap, [base_state, swapped_state], [item_state, swapped_state, *ask_outputs])
         custom_btn.click(ask_custom, [story_in, question_in, a_in, b_in],
                          [item_state, base_state, swapped_state, *ask_outputs])
-        ask_tab.select(rerender, [item_state, swapped_state], ask_outputs)
+        ask_tab.select(rerender, [item_state, swapped_state, base_state], ask_outputs)
 
         replay_btn.click(replay, None, [replay_grid, replay_caption])
 
@@ -660,7 +674,7 @@ def build_app(backend, data: StudioData):
 
         export_btn.click(export, None, [export_md, export_code, export_file])
 
-        app.load(rerender, [item_state, swapped_state], ask_outputs)
+        app.load(rerender, [item_state, swapped_state, base_state], ask_outputs)
 
     return app, (theme if major >= 6 else None)
 
