@@ -23,6 +23,16 @@ USR recovered by the search patch: **92% [91%, 94%]**
 | Religion | 87.5% / 48.3% / 83.8% | 9.7% / 30.2% / 10.0% | 91% [84%, 99%] |
 | SES | 88.1% / 41.9% / 86.0% | 10.5% / 38.5% / 10.8% | 95% [93%, 98%] |
 
+## Does the answer depend on the letter?
+
+| Model | USR when "unknown" is A | B | C | Picks A / B / C |
+|---|---|---|---|---|
+| Original (fp16) | 81.6% | 84.8% | 85.7% | 29.8% / 35.8% / 34.4% |
+| HQQ 3-bit | 14.4% | 42.2% | 52.6% | 13.5% / 46.3% / 40.1% |
+| 3-bit + search patch | 61.6% | 85.3% | 94.2% | 21.3% / 39.9% / 38.8% |
+
+A model with no letter effect says "unknown" equally often wherever it is listed.
+
 ## Recovery by number of modules
 
 | Modules | Added | % of weights | Memory added | USR recovered |

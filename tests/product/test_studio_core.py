@@ -229,3 +229,39 @@ def test_probabilities_show_precision_at_the_ends():
     assert format_prob(0.9999) == ">99.9%"
     assert format_prob(0.003) == "0.3%"
     assert format_prob(0.0001) == "<0.1%"
+
+
+def test_answer_orders_cover_all_six_and_keep_the_labels_on_the_right_choice():
+    from src.product.studio_core import answer_orders
+
+    item = _item()  # unknown 0 ("Cannot answer"), stereotype 2 ("The 85 year old")
+    orders = answer_orders(item)
+    assert len(orders) == 6 and len({o.options for o, _ in orders}) == 6
+    for shown, perm in orders:
+        assert shown.options[shown.unknown_index] == "Cannot answer"
+        assert shown.options[shown.stereotype_index] == "The 85 year old"
+        assert [item.options[perm[i]] for i in range(3)] == list(shown.options)
+    custom = make_question("A and B met.", "Who?", "The nurse", "The mechanic")
+    assert all(o.stereotype_index == -1 for o, _ in answer_orders(custom))
+
+
+def test_combined_answer_is_fair_only_if_fair_in_every_order():
+    from src.product.studio_core import answer_orders, combine_orders
+
+    item = _item()
+    orders = answer_orders(item)
+    perms = [p for _, p in orders]
+
+    def answering(choice_of):  # choice_of(shown_item) -> shown position
+        return [Answer(choice_of(o), tuple(1.0 if i == choice_of(o) else 0.0 for i in range(3))) for o, _ in orders]
+
+    fair, note = combine_orders(item, answering(lambda o: o.unknown_index), perms)
+    assert fair.pick == item.unknown_index and "all 6" in note
+    assert fair.probs == pytest.approx((1.0, 0.0, 0.0))
+
+    # Fair unless "unknown" is listed first -- the 3-bit model's letter-A avoidance.
+    def avoids_a(o):
+        return o.stereotype_index if o.unknown_index == 0 else o.unknown_index
+    combined, note = combine_orders(item, answering(avoids_a), perms)
+    assert combined.pick == item.stereotype_index
+    assert "2 of 6" in note and "other 4" in note

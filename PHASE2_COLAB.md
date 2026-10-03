@@ -49,9 +49,18 @@ if sh(f"git fetch -q {REPO} {BRANCH}") == 0:
 else:
     sh(f"git checkout -q -B {BRANCH} origin/main")
 sh('git config user.name "ELSEM3 Colab" && git config user.email "GraverSurvivor@users.noreply.github.com"')
-!pip install -q -r requirements.txt
+!pip install -q -r requirements.txt "transformers==5.0.0" "hqq==0.2.8.post1" "accelerate==1.13.0" "tokenizers==0.22.2" "safetensors==0.7.0"
 ```
+The pinned versions are the ones the saved reference runs were made with (`requirements.lock.txt`).
 If Colab asks to **restart the session**, restart, then run Cells 2 and 3 again (it skips the clone).
+
+## Cell 2b: check this machine reproduces the saved runs (about 10 min, every new session)
+```python
+!python -m src.eval.check_reproduction
+```
+**Only continue if it ends with PASS.** If it says FAIL and `torch` differs, run
+`!pip install -q torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128`, restart, and check again.
+Runs made on a machine that fails this check can't be compared with the saved runs.
 
 ## Cell 3: helpers (run once per session)
 ```python

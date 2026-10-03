@@ -23,7 +23,10 @@ downloaded, plus its `summary.json` from Drive) into `results/reference/search_f
 ```
 !nvidia-smi                                   # must show a Tesla T4
 ```
-Clone with your token, install, restart, re-enter the folder: the same cells as before. On Kaggle,
+Clone with your token, install, restart, re-enter the folder: the same cells as before. Install the
+reference runs' versions (`pip install -r requirements.txt "transformers==5.0.0" "hqq==0.2.8.post1" "accelerate==1.13.0" "tokenizers==0.22.2" "safetensors==0.7.0"`), then run
+`python -m src.eval.check_reproduction` and continue only on PASS: a machine that builds a different
+3-bit model produces runs that can't be compared with the saved ones. On Kaggle,
 first run `import os; os.environ["CUDA_VISIBLE_DEVICES"] = "0"`.
 
 Don't point `results/` at Google Drive with a symlink: git refuses to commit files through a

@@ -97,6 +97,24 @@ def per_category(ref: Path) -> dict:
     return _done(rows=out)
 
 
+def answer_position(ref: Path) -> dict:
+    """Does a model's answer depend on which letter (A/B/C) "unknown" is listed under? A fair model
+    shouldn't care; the 3-bit model avoids A, so part of its damage is a letter effect."""
+    names = {"Original (fp16)": "baseline_fp16", "HQQ 3-bit": "hqq_3bit", "3-bit + search patch": "hqq_repaired"}
+    rows = {}
+    for label, name in names.items():
+        runs = _rows(ref, name)
+        if not runs:
+            return _pending("Stages 1-5 reference runs")
+        by_position = {}
+        for position in range(3):
+            at = [r for r in runs if r.unknown_index == position]
+            by_position["ABC"[position]] = sum(r.is_unknown_predicted for r in at) / len(at) if at else None
+        picks = {"ABC"[i]: sum(r.predicted_index == i for r in runs) / len(runs) for i in range(3)}
+        rows[label] = {"usr_by_unknown_position": by_position, "letter_picked": picks}
+    return _done(rows=rows)
+
+
 def recovery_by_modules(ref: Path, patch_path: Path = PATCH_PATH) -> dict:
     """The search's first k modules, k = 1..5, each verified on the full benchmark (the prefix runs)."""
     from src.attribution.patch import load_patch
@@ -240,6 +258,7 @@ def headline_section(ref: Path) -> dict:
 SECTIONS = {
     "main": ("Main result", main_result, "ref"),
     "per_category": ("Per category", per_category, "ref"),
+    "answer_position": ("Does the answer depend on the letter?", answer_position, "ref"),
     "recovery_by_modules": ("Recovery by number of modules", recovery_by_modules, "ref"),
     "controls": ("Is it really fairness? Matched-weight baselines", controls_section, "ref"),
     "hedging": ("Hedging check (disambiguated questions)", hedging_section, "ref"),
@@ -314,6 +333,11 @@ def _section_md(key: str, s: dict) -> list[str]:
         return _table(["Category", "USR fp16 / 3-bit / repaired", "SRS fp16 / 3-bit / repaired", "USR recovered"],
                       [[c, " / ".join(_p(x) for x in r["usr"]), " / ".join(_p(x) for x in r["srs"]), _r(r["usr_recovery"])]
                        for c, r in s["rows"].items()])
+    if key == "answer_position":
+        out = _table(["Model", "USR when \"unknown\" is A", "B", "C", "Picks A / B / C"],
+                     [[n, *(_p(r["usr_by_unknown_position"][k]) for k in "ABC"),
+                       " / ".join(_p(r["letter_picked"][k]) for k in "ABC")] for n, r in s["rows"].items()])
+        return out + ["", "A model with no letter effect says \"unknown\" equally often wherever it is listed."]
     if key == "recovery_by_modules":
         out = _table(["Modules", "Added", "% of weights", "Memory added", "USR recovered"],
                      [[r["modules"], r["added"].replace("model.layers.", "L"), f"{r['pct_weights']:.2f}%",

@@ -202,6 +202,11 @@ times vs the original's 1,840), and those guesses lean stereotyped (58%, against
 73% on its rare guesses) with a mild word-order lean (56% pick the second-mentioned person). So
 write "compression makes the model guess, and the guesses lean stereotyped", not "it stereotypes
 every time". Studio's demo examples are stereotyped in both word orders (BBQ's twin questions).
+The 3-bit model also avoids answer letter A: it says "unknown" 14% of the time when "unknown" is
+choice A, 53% when it is C (the original: 82% / 86%); the repair leaves 62% / 94%. So typed questions
+in Studio are asked in all 6 choice orders, and part of the "fairness" damage is a letter effect.
+Before any new GPU run, `python -m src.eval.check_reproduction` must PASS: a live Studio run gave a
+different repaired answer from the saved run on one question, which points at library-version drift.
 
 ## Conventions
 

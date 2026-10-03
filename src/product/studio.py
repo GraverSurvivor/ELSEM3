@@ -38,6 +38,8 @@ from .studio_core import (
     Answer,
     SavedBackend,
     answer_card_html,
+    answer_orders,
+    combine_orders,
     count_answers,
     counter_html,
     example_label,
@@ -173,6 +175,12 @@ class LiveBackend:
             for item, answer in zip(missing, scored):
                 self._cache[self._key(view, item)] = answer
         return [self._cache[self._key(view, it)] for it in items]
+
+    def answers_for(self, items, view: str) -> list[Answer] | None:
+        """One view's answers to several questions, scored together."""
+        if view == "original" and not self.has_original:
+            return None
+        return self._answers(items, view)
 
     def answers(self, item, swapped: bool) -> dict[str, Answer | None]:
         out = {}
@@ -353,24 +361,47 @@ def build_app(backend, data: StudioData):
         return f"3-bit + {len(paths)} part{'s' if len(paths) != 1 else ''} restored (+{backend.overhead_mb():.0f} MB)"
 
     # --- Ask ---------------------------------------------------------------------------------------
+    def all_orders(item):
+        """A typed question asked in all 6 answer orders: (answers per view, notes per view)."""
+        orders = answer_orders(item)
+        answers, notes = {}, {}
+        for view in VIEWS:
+            scored = backend.answers_for([o for o, _ in orders], view) if backend.live else None
+            if scored is None:
+                answers[view], notes[view] = None, ""
+            else:
+                answers[view], notes[view] = combine_orders(item, scored, [p for _, p in orders])
+        return answers, notes
+
+    def answers_and_notes(item, swapped):
+        if item.category == "Custom":
+            return all_orders(item)
+        return backend.answers(item, swapped), dict.fromkeys(VIEWS, "")
+
     def render(item, swapped, base_item=None):
         if item is None:
             return ("", "", "", "")
-        answers = backend.answers(item, swapped)
-        before = backend.answers(base_item, False) if swapped and base_item is not None else {}
+        answers, notes = answers_and_notes(item, swapped)
+        before = answers_and_notes(base_item, False)[0] if swapped and base_item is not None else {}
         cards = []
         for view in VIEWS:
-            note = ""
+            note = notes[view]
             if answers[view] is None:
                 if view == "original" and not backend.has_original:
                     note = "Not loaded in this session."
                 elif not backend.live:
                     note = "This needs the live app (GPU). Preview mode only has saved answers."
             elif swapped and base_item is not None:
-                note = swap_note(base_item, before.get(view), item, answers[view])
+                note = " ".join(n for n in (swap_note(base_item, before.get(view), item, answers[view]), note) if n)
             sub = repaired_sub() if view == "repaired" else None
             cards.append(answer_card_html(view, item, answers[view], subtitle=sub, note=note))
         return (question_html(item, swapped), *cards)
+
+    def no_change(n, message):
+        """Show a warning and leave every output as it is (no traceback in the console)."""
+        gr.Warning(message)
+        skip = getattr(gr, "skip", None)
+        return tuple(skip() if skip else gr.update() for _ in range(n))
 
     def choose_example(label):
         item = examples[labels.index(label)] if label in labels else None
@@ -378,7 +409,7 @@ def build_app(backend, data: StudioData):
 
     def toggle_swap(base_item, swapped):
         if base_item is None:
-            raise gr.Error("Pick a question first.")
+            return no_change(6, "Pick a question first.")
         if swapped:
             return (base_item, False, *render(base_item, False))
         twin = data.twins.get(base_item.question_id)
@@ -387,7 +418,7 @@ def build_app(backend, data: StudioData):
         else:
             flipped = swap_people(base_item)
             if flipped is None:
-                raise gr.Error("This question's two people can't be swapped automatically.")
+                return no_change(6, "This question's two people can't be found in the story, so they can't be swapped.")
             if flipped.category != "Custom":
                 flipped = replace(flipped, example_id=-1)  # an edited copy: no saved answers apply
         return (flipped, True, *render(flipped, True, base_item))
@@ -396,7 +427,7 @@ def build_app(backend, data: StudioData):
         try:
             item = make_question(story, question, a, b)
         except ValueError as error:
-            raise gr.Error(str(error))
+            return no_change(7, str(error))
         return (item, item, False, *render(item, False))
 
     def rerender(item, swapped, base_item):
@@ -582,10 +613,11 @@ def build_app(backend, data: StudioData):
                         b_in = gr.Textbox(label="Second person", placeholder="The mechanic")
                     gr.Markdown(
                         "A third choice, *Can't be determined*, is added automatically.\n\n"
-                        "**Good to know:** compression doesn't break every question. On the benchmark, the "
-                        "compressed model gives a stereotyped answer on about **1 in 3** questions the original "
-                        "answers fairly. A typed question with a weak stereotype, or none, usually stays fair in "
-                        "all three models, and that's a correct result. The examples above are ones where it fails."
+                        "**How your question is asked:** each model answers it **6 times, once for every order of "
+                        "the three choices**, because the compressed model avoids whatever is listed first. A "
+                        "model counts as fair only if it says *can't tell* in all 6. The bars are averages.\n\n"
+                        "**Good to know:** compression doesn't break every question. A question with a weak "
+                        "stereotype, or none, can stay fair in all three models, and that's a correct result."
                     )
                     custom_btn = gr.Button("Ask all three models", variant="primary")
                     if not backend.live:
@@ -679,6 +711,24 @@ def build_app(backend, data: StudioData):
     return app, (theme if major >= 6 else None)
 
 
+def self_check(backend, data) -> str:
+    """Do the live models give the saved runs' answers on the 50 test questions? A large gap means
+    this machine builds a different 3-bit model than the reference runs (usually library versions),
+    and the screens would show numbers that don't match the report."""
+    saved = {view: {r.question_id: r.predicted_index for r in data.runs[view]} for view in ("compressed", "repaired")}
+    parts, ok = [], True
+    for view in ("compressed", "repaired"):
+        live = backend.answers_for(data.counter_items, view)
+        same = sum(a.pick == saved[view][it.question_id] for a, it in zip(live, data.counter_items))
+        ok &= same >= 0.9 * len(data.counter_items)
+        parts.append(f"{view} {same}/{len(data.counter_items)}")
+    print("Self-check against the saved runs: " + ", ".join(parts))
+    if ok:
+        return "Live on GPU · matches the saved runs: " + ", ".join(parts)
+    return ("⚠ Live on GPU, but differs from the saved runs (" + ", ".join(parts) +
+            "). Run python -m src.eval.check_reproduction")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--offline", action="store_true", help="preview on saved results, no GPU")
@@ -695,6 +745,7 @@ def main() -> None:
     else:
         backend = LiveBackend(load_original=not args.no_original)
         backend.set_restored(list(data.patch.modules))  # open with the search's repair applied
+        backend.mode_label = self_check(backend, data)
 
     app, theme = build_app(backend, data)
     launch = {"share": args.share, "server_port": args.port}
