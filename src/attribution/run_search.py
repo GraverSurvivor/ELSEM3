@@ -27,6 +27,11 @@ Optional hedging penalty (`--penalty-sample`, `--penalty-weight`): if the fairne
 the repair works by making the model answer "unknown" everywhere, the objective becomes
     correct on the sample  -  weight x (false-"unknown" rate on a disambiguated probe set),
 so a module only scores well by recovering "unknown" where it is right. Off by default.
+
+Long searches (the penalised one is ~7 GPU-hours) resume: `--resume <run_id>` re-reads trials.csv and
+progress.json and continues where the search stopped. On Colab the machine's disk is lost with the
+session, so pass `--mirror <folder on Google Drive>`: both files are copied there after every trial,
+and a resume restores them from it.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -82,6 +88,28 @@ def _load_sample_items(sample: dict) -> list:
     return [items_by_id[qid] for qid in sample["question_ids"]]
 
 
+PROGRESS_FILE = "progress.json"
+
+
+def read_trials_csv(path: Path) -> list[Trial]:
+    with Path(path).open(newline="", encoding="utf-8") as handle:
+        return [Trial(round=int(r["round"]), path=r["path"], usr=float(r["usr"]), gain=float(r["gain"]),
+                      kept=r["kept"].strip().lower() == "true") for r in csv.DictReader(handle)]
+
+
+def resume_state(out_dir: Path, meta: dict) -> SearchResult:
+    """The checkpoint of an interrupted search, refusing one started with different settings."""
+    progress = json.loads((Path(out_dir) / PROGRESS_FILE).read_text(encoding="utf-8"))
+    if progress["meta"] != meta:
+        raise SystemExit(f"Cannot resume: that search used {progress['meta']}, this one asks for {meta}.")
+    trials = read_trials_csv(Path(out_dir) / "trials.csv") if (Path(out_dir) / "trials.csv").exists() else []
+    kept = [t.path for t in trials if t.kept]
+    if kept != progress["kept"]:
+        raise SystemExit("Cannot resume: trials.csv and progress.json disagree on the kept modules.")
+    return SearchResult(start_usr=progress["start_usr"], kept=kept,
+                        usr_after_round=list(progress["usr_after_round"]), trials=trials)
+
+
 def _write_trials(trials: list[Trial], path: Path) -> None:
     fieldnames = list(Trial.__dataclass_fields__)
 
@@ -104,6 +132,8 @@ def main() -> None:
     parser.add_argument("--candidates", default="all", choices=CANDIDATE_SETS, help="restrict to one module family")
     parser.add_argument("--penalty-sample", type=Path, help="disambiguated probe sample for the hedging penalty")
     parser.add_argument("--penalty-weight", type=float, default=1.0)
+    parser.add_argument("--resume", metavar="RUN_ID", help="continue an interrupted search")
+    parser.add_argument("--mirror", type=Path, help="folder (e.g. on Google Drive) to copy progress to after every trial")
     args = parser.parse_args()
 
     try:
@@ -142,16 +172,39 @@ def main() -> None:
             hedging = false_unknown_rate(penalty_predictions, penalty_items)
         return search_objective(correct_rate(predictions, items), hedging, args.penalty_weight)
 
-    run_id = new_run_id("search")
+    meta = {"sample": str(args.sample), "penalty_sample": str(args.penalty_sample) if args.penalty_sample else None,
+            "penalty_weight": args.penalty_weight if args.penalty_sample else None,
+            "candidates": args.candidates, "config": asdict(config)}
+    run_id = args.resume or new_run_id("search")
     out_dir = RESULTS_DIR / run_id
+    mirror = args.mirror / run_id if args.mirror else None
+    if args.resume and not (out_dir / PROGRESS_FILE).exists() and mirror and (mirror / PROGRESS_FILE).exists():
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for name in (PROGRESS_FILE, "trials.csv"):
+            if (mirror / name).exists():
+                shutil.copy2(mirror / name, out_dir / name)
+        print(f"Restored the checkpoint from {mirror}")
+    if args.resume and not (out_dir / PROGRESS_FILE).exists():
+        raise SystemExit(f"No checkpoint for {run_id} in {out_dir}" + (f" or {mirror}" if mirror else ""))
+    resume = resume_state(out_dir, meta) if args.resume else None
     out_dir.mkdir(parents=True, exist_ok=True)
     trials_path = out_dir / "trials.csv"
+
+    def checkpoint(result: SearchResult) -> None:
+        _write_trials(result.trials, trials_path)
+        progress = {"meta": meta, "start_usr": result.start_usr, "kept": list(result.kept),
+                    "usr_after_round": list(result.usr_after_round)}
+        _write_atomically(out_dir / PROGRESS_FILE, lambda handle: json.dump(progress, handle, indent=2))
+        if mirror is not None:
+            mirror.mkdir(parents=True, exist_ok=True)
+            for name in (PROGRESS_FILE, "trials.csv"):
+                shutil.copy2(out_dir / name, mirror / name)
 
     started = time.time()
     n_per_round = len(candidates)
 
     def on_progress(result: SearchResult) -> None:
-        _write_trials(result.trials, trials_path)
+        checkpoint(result)
         latest = result.trials[-1] if result.trials else None
         if latest is not None:
             done_in_round = sum(t.round == latest.round for t in result.trials)
@@ -166,7 +219,10 @@ def main() -> None:
             )
 
     print(f"\nRun ID: {run_id}  |  {len(items)} sample items x {len(candidates)} candidates  |  {config}")
-    result = greedy_search(candidates, registry, score_fn, config, on_progress=on_progress)
+    if resume is not None:
+        print(f"Resuming {run_id}: {len(resume.kept)} kept, {len(resume.trials)} trials already done")
+    result = greedy_search(candidates, registry, score_fn, config, on_progress=on_progress, resume=resume)
+    checkpoint(result)
     print()
     if result.start_usr > START_USR_WARNING:
         print(
@@ -194,6 +250,8 @@ def main() -> None:
         "deployed_overhead_bytes": registry.deployed_overhead_bytes(),
         "search_overhead_bytes": registry.search_overhead_bytes(),
         "wall_clock_seconds": round(time.time() - started, 1),
+        # A resumed search's clock covers only the last session, so it undercounts the search.
+        "resumed": bool(args.resume),
     }
     _write_trials(result.trials, trials_path)
     _write_atomically(out_dir / "summary.json", lambda handle: json.dump(summary, handle, indent=2))
@@ -201,6 +259,8 @@ def main() -> None:
         # The kept modules as a patch, so run_repair --patch, the prefix runs and the exporters all
         # read the same file instead of re-parsing this summary.
         save_patch(patch_from_search_summary(summary, name=run_id), out_dir / "patch.json")
+    if mirror is not None:
+        shutil.copytree(out_dir, mirror, dirs_exist_ok=True)
 
     print(f"\nStopped: {result.stop_reason}")
     print(f"USR on sample: {result.start_usr:.3f} -> {result.final_usr:.3f}")

@@ -151,3 +151,63 @@ python -m src.stats.final_tables
 ```
 3. Read the verdict at the end of `controls`: **claim_holds**, **baseline_matches** or **hedging**.
    `RUNBOOK.md` (Decision point 1) says what to do for each.
+
+---
+
+## The hedging fix (decision point 1 said "hedging")
+
+Account 1's runs showed the 5-module repair hedges: on questions where the story states the answer,
+it says "unknown" 20.3% of the time against the original's 7.3% (+13.0 points, CI +12.3 to +13.7).
+The fix is the plan's: run the search again with a **penalty for hedging**, so a module only scores
+well by bringing back "unknown" where it is right. The penalty is measured on a fixed probe of 200
+stated-answer questions the original answers correctly (`results/search_samples/hedging_probe_n200_seed0.json`;
+the current repair says "unknown" on 32 of them, the original on 0).
+
+Run it as **Account 4** in a fresh session: the same Google account as Account 1 is fine once its
+runs are done. About **7 GPU-hours** for the search plus **1 hour** to verify it. The search copies its
+progress to Google Drive after every trial, so a disconnect loses at most one trial.
+
+### Cells 1, 2, 2b, 3
+As above, with `ACCOUNT = 4` in Cell 2. Cell 2b must say PASS.
+
+### Cell H1: Google Drive for the search's progress
+```python
+from google.colab import drive
+drive.mount("/content/drive")
+MIRROR = "/content/drive/MyDrive/ELSEM3_search"
+os.makedirs(MIRROR, exist_ok=True)
+```
+
+### Cell H2: start the search (about 7 h)
+```python
+!python -m src.attribution.run_search --sample results/search_samples/hqq_3bit_n300_seed0.json --penalty-sample results/search_samples/hedging_probe_n200_seed0.json --penalty-weight 1.0 --batch-size 16 --mirror {MIRROR}
+```
+
+### If the session dies: run Cells 1, 2, 2b, 3 and H1 again, then this instead of H2
+```python
+RUN_ID = sorted(d for d in os.listdir(MIRROR) if d.startswith("search_"))[-1]
+print("Resuming", RUN_ID)
+!python -m src.attribution.run_search --sample results/search_samples/hqq_3bit_n300_seed0.json --penalty-sample results/search_samples/hedging_probe_n200_seed0.json --penalty-weight 1.0 --batch-size 16 --mirror {MIRROR} --resume {RUN_ID}
+```
+It must be the same command plus `--resume`: it refuses to continue with different settings.
+
+### Cell H3: save the search to GitHub
+```python
+RUN_ID = sorted(d for d in os.listdir(MIRROR) if d.startswith("search_"))[-1]
+import shutil
+shutil.copytree(f"{MIRROR}/{RUN_ID}", "results/reference/search_hedging_penalty", dirs_exist_ok=True)
+sh("git add results/reference/search_hedging_penalty && git commit -q -m 'Phase 2: hedging-penalty search'")
+sh(f"git push -q {REPO} HEAD:{BRANCH}")
+print(open("results/reference/search_hedging_penalty/summary.json").read()[:1500])
+```
+
+### Cell H4: verify the new repair on both question sets (about 1 h)
+```python
+step("repair_hedging_penalty",
+     "python -m src.attribution.run_repair --patch results/reference/search_hedging_penalty/patch.json --batch-size 16",
+     "hqq_repaired")
+step("repair_hedging_penalty_disambig",
+     "python -m src.attribution.run_repair --patch results/reference/search_hedging_penalty/patch.json --context disambig --batch-size 16",
+     "hqq_repaired_disambig")
+```
+Then open a PR for `phase2/account4`, merge it, and send the result to whoever reads the verdict.

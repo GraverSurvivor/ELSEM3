@@ -79,9 +79,10 @@ python -m src.product.fairgate report   # results/fairgate/report.html
 ### Decision point 1: everyone reads `controls.json`'s verdict
 - `claim_holds`: continue.
 - `baseline_matches`: reframe the claim (see the plan PDF); continue.
-- `hedging`: re-run the search with the penalty (about 4 h): draw a disambiguated probe sample with
-  `python -m src.attribution.search_sample --flipped results/flipped/capability_hqq_3bit.json --n 200 --out results/search_samples/hedging_probe.json`
-  (after step 6), then `run_search --sample ... --penalty-sample results/search_samples/hedging_probe.json`.
+- `hedging`: **this is what Phase 2 found** (the repair says "unknown" on 20.3% of stated-answer
+  questions against the original's 7.3%). Re-run the search with the hedging penalty: exact cells in
+  `PHASE2_COLAB.md`, "The hedging fix" (about 7 h search, resumable, plus 1 h to verify). The probe
+  sample is committed: `results/search_samples/hedging_probe_n200_seed0.json`.
 
 ---
 

@@ -55,3 +55,22 @@ def test_fairness_samples_are_unchanged_by_the_new_markers():
     payload = {"baseline_run_id": "b", "quantized_run_id": "q", "total_flipped": 2,
                "items": [{"question_id": "Age:1", "category": "Age"}, {"question_id": "Age:2", "category": "Age"}]}
     assert "context" not in draw_search_sample(payload, n=1, seed=0)
+
+
+def test_hedging_probe_is_every_disambiguated_question_the_baseline_gets_right():
+    import pytest
+
+    from src.data.safe_set import hedging_probe_payload
+    from src.experiments.schema import QuestionResult
+
+    def row(i, pick, label=1, unknown=2):
+        return QuestionResult(run_id="fp16_disambig_1", condition="fp16_disambig", question_id=f"Age:{i}",
+                              category="Age", predicted_index=pick, label=label, unknown_index=unknown,
+                              is_unknown_predicted=pick == unknown, is_correct=pick == label,
+                              is_stereotyped_predicted=False)
+
+    payload = hedging_probe_payload([row(0, 1), row(1, 2), row(2, 0), row(3, 1)])
+    assert [i["question_id"] for i in payload["items"]] == ["Age:0", "Age:3"]
+    assert payload["context"] == "disambig" and payload["kind"] == "hedging_probe"
+    with pytest.raises(ValueError, match="disambiguated"):
+        hedging_probe_payload([row(0, 2, label=2)])  # an ambiguous run: the label is "unknown"

@@ -205,6 +205,11 @@ every time". Studio's demo examples are stereotyped in both word orders (BBQ's t
 The 3-bit model also avoids answer letter A: it says "unknown" 14% of the time when "unknown" is
 choice A, 53% when it is C (the original: 82% / 86%); the repair leaves 62% / 94%. So typed questions
 in Studio are asked in all 6 choice orders, and part of the "fairness" damage is a letter effect.
+Phase 2's hedging check (Oct 2026): on stated-answer questions the 5-module repair says
+"unknown" 20.3% of the time vs the original's 7.3% (+13.0 points, CI +12.3 to +13.7) and its accuracy
+is 73.9% vs 91.5% (3-bit: 80.8%) -- decision point 1's "hedging" outcome, so part of the 92% is hedging.
+The fix is the penalised search (`--penalty-sample results/search_samples/hedging_probe_n200_seed0.json`,
+built by `safe_set --kind hedging-probe`); `run_search --resume/--mirror` makes its ~7 h survivable.
 Before any new GPU run, `python -m src.eval.check_reproduction` must PASS: a live Studio run gave a
 different repaired answer from the saved run on one question, which points at library-version drift.
 

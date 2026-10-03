@@ -215,3 +215,55 @@ def test_result_serialises_with_the_fields_the_driver_writes():
         "stop_reason": STOP_THRESHOLD,
         "n_trials": 11,
     }
+
+
+# --- resuming an interrupted search --------------------------------------------------------------
+
+class _Interrupted(Exception):
+    pass
+
+
+def _snapshot(result):
+    from src.attribution.greedy_search import SearchResult
+
+    return SearchResult(start_usr=result.start_usr, kept=list(result.kept),
+                        usr_after_round=list(result.usr_after_round), trials=list(result.trials))
+
+
+EFFECTS = {ATTN[2]: 0.10, MLP[0]: 0.40, ATTN[0]: 0.20, MLP[2]: 0.05}
+
+
+@pytest.mark.parametrize("cut", range(1, 16))
+def test_a_resumed_search_equals_an_uninterrupted_one(cut):
+    full = _run(FakeRegistry(EFFECTS))
+    calls, saved = [0], []
+
+    def stop_after(result):
+        calls[0] += 1
+        if calls[0] == cut:
+            saved.append(_snapshot(result))
+            raise _Interrupted
+
+    try:
+        _run(FakeRegistry(EFFECTS), on_progress=stop_after)
+    except _Interrupted:
+        pass
+    if not saved:  # the search finished before this cut
+        return
+    fresh = FakeRegistry(EFFECTS)
+    resumed = _run(fresh, resume=saved[0])
+    assert resumed.kept == full.kept
+    assert resumed.trials == full.trials
+    assert resumed.usr_after_round == pytest.approx(full.usr_after_round)
+    assert resumed.stop_reason == full.stop_reason
+    assert fresh.trial_count == len(full.trials) - len(saved[0].trials)  # nothing scored twice
+
+
+def test_resume_right_after_a_keep_rescored_the_model():
+    from src.attribution.greedy_search import SearchResult
+
+    full = _run(FakeRegistry(EFFECTS))
+    first_round = [t for t in full.trials if t.round == 1]
+    state = SearchResult(start_usr=full.start_usr, kept=[full.kept[0]], usr_after_round=[], trials=first_round)
+    resumed = _run(FakeRegistry(EFFECTS), resume=state)
+    assert resumed.kept == full.kept and resumed.usr_after_round == pytest.approx(full.usr_after_round)
