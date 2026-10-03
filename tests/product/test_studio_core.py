@@ -187,3 +187,13 @@ def test_saved_repairs_reads_promoted_ambiguous_runs(tmp_path):
     found = saved_repairs(tmp_path)
     assert set(found) == {frozenset(TOP5), frozenset(TOP5[:1])}
     assert found[frozenset(TOP5)].parent.name == "hqq_repaired"
+
+
+def test_probabilities_show_precision_at_the_ends():
+    from src.product.studio_core import format_prob
+
+    assert format_prob(0.70) == "70%"
+    assert format_prob(0.997) == "99.7%"
+    assert format_prob(0.9999) == ">99.9%"
+    assert format_prob(0.003) == "0.3%"
+    assert format_prob(0.0001) == "<0.1%"

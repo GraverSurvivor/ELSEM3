@@ -566,7 +566,13 @@ def build_app(backend, data: StudioData):
                     with gr.Row():
                         a_in = gr.Textbox(label="First person", placeholder="The nurse")
                         b_in = gr.Textbox(label="Second person", placeholder="The mechanic")
-                    gr.Markdown("A third choice, *Can't be determined*, is added automatically.")
+                    gr.Markdown(
+                        "A third choice, *Can't be determined*, is added automatically.\n\n"
+                        "**Good to know:** compression doesn't break every question. On the benchmark, the "
+                        "compressed model gives a stereotyped answer on about **1 in 3** questions the original "
+                        "answers fairly. A typed question with a weak stereotype, or none, usually stays fair in "
+                        "all three models, and that's a correct result. The examples above are ones where it fails."
+                    )
                     custom_btn = gr.Button("Ask all three models", variant="primary")
                     if not backend.live:
                         gr.Markdown("*Your own questions need the live app (GPU). Preview mode only has saved answers.*")

@@ -353,6 +353,18 @@ def repaired_subtitle(paths) -> str:
     return f"3-bit + {len(paths)} part{'s' if len(paths) != 1 else ''} restored (+{overhead_mb(paths):.0f} MB)"
 
 
+def format_prob(p: float) -> str:
+    """Whole percents in the middle, more precision at the ends: a confident model reads ">99.9%",
+    not a flat "100%" that looks hard-coded."""
+    if p >= 0.9995:
+        return ">99.9%"
+    if p <= 0.0005:
+        return "<0.1%"
+    if p > 0.99 or p < 0.01:
+        return f"{p:.1%}"
+    return f"{p:.0%}"
+
+
 def answer_card_html(view: str, item: BBQItem, answer: Answer | None, subtitle: str | None = None,
                      note: str = "") -> str:
     title, default_sub = MODEL_CARDS[view]
@@ -367,7 +379,8 @@ def answer_card_html(view: str, item: BBQItem, answer: Answer | None, subtitle: 
         chosen = " fg-chosen" if i == answer.pick else ""
         if answer.probs is not None:
             pct = answer.probs[i]
-            bar = f'<div class="fg-bar"><div style="width:{100 * pct:.0f}%"></div></div><span class="fg-pct">{pct:.0%}</span>'
+            bar = (f'<div class="fg-bar"><div style="width:{100 * pct:.0f}%"></div></div>'
+                   f'<span class="fg-pct">{format_prob(pct)}</span>')
         else:
             bar = '<span class="fg-pct">chosen</span>' if i == answer.pick else ""
         bars.append(f'<div class="fg-opt{chosen}"><span class="fg-optname">{html.escape(option)}</span>{bar}</div>')
