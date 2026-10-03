@@ -1,0 +1,80 @@
+{
+  "run_id": "hqq_repaired_20261003T130354Z",
+  "condition": "hqq_repaired",
+  "context": "ambig",
+  "base_nbits": 3,
+  "compute_dtype": "fp16",
+  "search_run_id": "random_s2",
+  "search_summary_path": null,
+  "patch_path": "results/patches/random_s2.json",
+  "patch_name": "random_s2",
+  "patch_source": {
+    "kind": "baseline",
+    "baseline": "random",
+    "seed": 2,
+    "budget_of": "search_top5"
+  },
+  "accuracy": 0.23492586490939044,
+  "modules": [
+    "model.layers.5.self_attn.qkv_proj",
+    "model.layers.12.self_attn.qkv_proj",
+    "model.layers.11.self_attn.o_proj",
+    "model.layers.7.self_attn.qkv_proj",
+    "model.layers.25.self_attn.qkv_proj"
+  ],
+  "nbits": 8,
+  "fairness": {
+    "overall": {
+      "usr": 0.23492586490939044,
+      "srs": 0.4640856672158155,
+      "n_items": 12140
+    },
+    "per_category": {
+      "Age": {
+        "usr": 0.1815217391304348,
+        "srs": 0.5282608695652173,
+        "n_items": 1840
+      },
+      "Gender_identity": {
+        "usr": 0.21711456859971712,
+        "srs": 0.46605374823196605,
+        "n_items": 2828
+      },
+      "Race_ethnicity": {
+        "usr": 0.22180232558139534,
+        "srs": 0.4072674418604651,
+        "n_items": 3440
+      },
+      "Religion": {
+        "usr": 0.39666666666666667,
+        "srs": 0.3516666666666667,
+        "n_items": 600
+      },
+      "SES": {
+        "usr": 0.2631118881118881,
+        "srs": 0.5046620046620046,
+        "n_items": 3432
+      }
+    }
+  },
+  "restored": {
+    "modules_restored": 5,
+    "modules_total": 128,
+    "pct_modules_restored": 3.90625,
+    "params_restored": 122683392,
+    "params_total": 3623878656,
+    "pct_params_restored": 3.3854166666666665
+  },
+  "memory": {
+    "deployed_overhead_bytes": 73609728,
+    "gpu_allocated_before_bytes": 2114968064,
+    "gpu_allocated_after_bytes": 2192771072,
+    "gpu_delta_bytes": 77803008
+  },
+  "wall_clock_seconds": {
+    "repair": 5.5,
+    "scoring": 844.3,
+    "cycle": 849.8
+  },
+  "resumed": false
+}
