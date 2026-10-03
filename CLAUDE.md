@@ -197,6 +197,16 @@ Findings already computed from committed runs, to keep in mind when writing anyt
 recovery is stable across bootstrap settings and benchmark subsets; the repair moves 84% of the
 search sample's flipped items back to "unknown" but 77% of those it never saw; and per targeted
 group, 8 of 23 groups end significantly more stereotyped than the original model after repair.
+Also: compression mostly makes the model stop saying "unknown" and guess (it picks a person 7,159
+times vs the original's 1,840), and those guesses lean stereotyped (58%, against the original's
+73% on its rare guesses) with a mild word-order lean (56% pick the second-mentioned person). So
+write "compression makes the model guess, and the guesses lean stereotyped", not "it stereotypes
+every time". Studio's demo examples are stereotyped in both word orders (BBQ's twin questions).
+The 3-bit model also avoids answer letter A: it says "unknown" 14% of the time when "unknown" is
+choice A, 53% when it is C (the original: 82% / 86%); the repair leaves 62% / 94%. So typed questions
+in Studio are asked in all 6 choice orders, and part of the "fairness" damage is a letter effect.
+Before any new GPU run, `python -m src.eval.check_reproduction` must PASS: a live Studio run gave a
+different repaired answer from the saved run on one question, which points at library-version drift.
 
 ## Conventions
 

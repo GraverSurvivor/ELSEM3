@@ -167,6 +167,7 @@ def md_to_html(lines: list[str]) -> str:
 
 # Sections of src/stats/final_tables added to the audit report, in order, with their headings.
 REPORT_SECTIONS = {
+    "answer_position": "Does the answer depend on the letter?",
     "recovery_by_modules": "Recovery by number of modules",
     "hedging": "Hedging check",
     "dissociation": "Fairness damage vs general damage",

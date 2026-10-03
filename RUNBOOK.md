@@ -23,19 +23,19 @@ downloaded, plus its `summary.json` from Drive) into `results/reference/search_f
 ```
 !nvidia-smi                                   # must show a Tesla T4
 ```
-Clone with your token, install, restart, re-enter the folder: the same cells as before. On Kaggle,
+Clone with your token, install, restart, re-enter the folder: the same cells as before. Install the
+reference runs' versions (`pip install -r requirements.txt "transformers==5.0.0" "hqq==0.2.8.post1" "accelerate==1.13.0" "tokenizers==0.22.2" "safetensors==0.7.0"`), then run
+`python -m src.eval.check_reproduction` and continue only on PASS: a machine that builds a different
+3-bit model produces runs that can't be compared with the saved ones. On Kaggle,
 first run `import os; os.environ["CUDA_VISIBLE_DEVICES"] = "0"`.
 
-Mount Google Drive and point `results/` at it, so a disconnect can't erase a run (Colab):
-```python
-from google.colab import drive; drive.mount('/content/drive')
-import os, shutil
-DRIVE = "/content/drive/MyDrive/ELSEM3_results"; os.makedirs(DRIVE, exist_ok=True)
-shutil.copytree("results", DRIVE, dirs_exist_ok=True); shutil.rmtree("results"); os.symlink(DRIVE, "results")
-```
+Don't point `results/` at Google Drive with a symlink: git refuses to commit files through a
+symlink, so the promoted runs could not be pushed. Instead, promote and push after **every** run, so
+a disconnect loses at most the run in progress (and that resumes per category with `--resume`).
 
 After each run below: `!python -m src.experiments.promote_reference <RUN_ID> --name <NAME>`, then
-commit `results/reference/<NAME>/` through a PR.
+commit `results/reference/<NAME>/` to a branch and open a PR. `PHASE2_COLAB.md` has ready-made cells
+that do this automatically for Phase 2.
 
 ---
 
