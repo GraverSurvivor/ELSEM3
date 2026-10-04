@@ -1,0 +1,78 @@
+{
+  "run_id": "hqq_repaired_disambig_20261003T123411Z",
+  "condition": "hqq_repaired_disambig",
+  "context": "disambig",
+  "base_nbits": 3,
+  "compute_dtype": "fp16",
+  "search_run_id": "search_20260926T155230Z",
+  "search_summary_path": null,
+  "patch_path": "results/patches/search_top5.json",
+  "patch_name": "search_top5",
+  "patch_source": {
+    "kind": "search",
+    "search_run_id": "search_20260926T155230Z"
+  },
+  "accuracy": 0.7390444810543657,
+  "modules": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.15.self_attn.qkv_proj",
+    "model.layers.13.self_attn.qkv_proj",
+    "model.layers.10.self_attn.o_proj"
+  ],
+  "nbits": 8,
+  "fairness": {
+    "overall": {
+      "usr": 0.2027182866556837,
+      "srs": 0.4172981878088962,
+      "n_items": 12140
+    },
+    "per_category": {
+      "Age": {
+        "usr": 0.18478260869565216,
+        "srs": 0.4152173913043478,
+        "n_items": 1840
+      },
+      "Gender_identity": {
+        "usr": 0.2195898161244696,
+        "srs": 0.41230551626591233,
+        "n_items": 2828
+      },
+      "Race_ethnicity": {
+        "usr": 0.1677325581395349,
+        "srs": 0.42180232558139535,
+        "n_items": 3440
+      },
+      "Religion": {
+        "usr": 0.24,
+        "srs": 0.4033333333333333,
+        "n_items": 600
+      },
+      "SES": {
+        "usr": 0.22698135198135197,
+        "srs": 0.42045454545454547,
+        "n_items": 3432
+      }
+    }
+  },
+  "restored": {
+    "modules_restored": 5,
+    "modules_total": 128,
+    "pct_modules_restored": 3.90625,
+    "params_restored": 122683392,
+    "params_total": 3623878656,
+    "pct_params_restored": 3.3854166666666665
+  },
+  "memory": {
+    "deployed_overhead_bytes": 73609728,
+    "gpu_allocated_before_bytes": 2114968064,
+    "gpu_allocated_after_bytes": 2192771072,
+    "gpu_delta_bytes": 77803008
+  },
+  "wall_clock_seconds": {
+    "repair": 5.3,
+    "scoring": 1000.9,
+    "cycle": 1006.1
+  },
+  "resumed": false
+}
