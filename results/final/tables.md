@@ -37,17 +37,34 @@ A model with no letter effect says "unknown" equally often wherever it is listed
 
 | Modules | Added | % of weights | Memory added | USR recovered |
 |---|---|---|---|---|
+| 1 | L1.self_attn.qkv_proj | 0.78% | 16 MB | 49% [47%, 50%] |
+| 2 | L14.self_attn.qkv_proj | 1.56% | 32 MB | 64% [63%, 66%] |
+| 3 | L15.self_attn.qkv_proj | 2.34% | 49 MB | 78% [77%, 79%] |
+| 4 | L13.self_attn.qkv_proj | 3.12% | 65 MB | 87% [86%, 89%] |
 | 5 | L10.self_attn.o_proj | 3.39% | 70 MB | 92% [91%, 94%] |
-
-Not run yet: the 1, 2, 3, 4-module versions.
 
 ## Is it really fairness? Matched-weight baselines
 
-*Pending: RUNBOOK Phase 2, Account 2 (baseline repairs).*
+| Patch | USR recovered | Search minus this |
+|---|---|---|
+| search_top5 | 92% [91%, 94%] | - |
+| largest_error | 71% [70%, 72%] | 21% [20%, 23%] |
+| positional | 54% [53%, 56%] | 38% [37%, 40%] |
+| random_s0 | -11% [-13%, -10%] | 104% [102%, 106%] |
+| random_s1 | 27% [25%, 28%] | 66% [64%, 67%] |
+| random_s2 | -27% [-29%, -26%] | 120% [118%, 122%] |
+| random_s3 | 15% [14%, 16%] | 78% [76%, 79%] |
+| random_s4 | 7% [6%, 8%] | 86% [84%, 87%] |
+
+**Verdict: hedging.** The repaired model answers 'unknown' significantly more often where the answer is stated. Re-run the search with the hedging penalty (run_search --penalty-sample).
 
 ## Hedging check (disambiguated questions)
 
-*Pending: RUNBOOK Phase 2, Account 1 (disambiguated runs).*
+| Model | n | Accuracy | False "unknown" |
+|---|---|---|---|
+| Original (fp16) | 12,140 | 91.5% | 7.3% |
+| HQQ 3-bit | 12,140 | 80.8% | 3.8% |
+| 3-bit + search patch | 12,140 | 73.9% | 20.3% |
 
 ## Concentrated vs spread out
 
@@ -67,7 +84,9 @@ Not run yet: the 1, 2, 3, 4-module versions.
 
 ## Label-free monitoring
 
-*Pending: RUNBOOK Phase 2 (flip_predictability, after baseline_fp16_confidence).*
+- Confidence predicts flips: AUROC **0.64**
+- Probing the 20% least-confident questions catches **29.3%** of all flips
+- Least-confident quarter flips **2.1x** as often as the most confident
 
 ## Robustness of the 92%
 
@@ -95,12 +114,8 @@ Not run yet: the 1, 2, 3, 4-module versions.
 
 ## Still pending
 
-- **Recovery by number of modules**: RUNBOOK Phase 2, Account 3
-- **Is it really fairness? Matched-weight baselines**: RUNBOOK Phase 2, Account 2 (baseline repairs)
-- **Hedging check (disambiguated questions)**: RUNBOOK Phase 2, Account 1 (disambiguated runs)
 - **Concentrated vs spread out**: RUNBOOK Phase 3, step 8
 - **CrowS-Pairs**: RUNBOOK Phase 4 (CrowS-Pairs runs)
 - **Open-ended answers**: RUNBOOK Phase 4 (open-ended runs)
 - **llama.cpp transfer**: RUNBOOK Week 6 (llama.cpp transfer test, stretch)
-- **Label-free monitoring**: RUNBOOK Phase 2 (flip_predictability, after baseline_fp16_confidence)
 - **Headline: three failure windows**: RUNBOOK Phase 4 (headline windows), then copy headline.json to results/reference/headline/
