@@ -137,6 +137,32 @@ def capability_flipped_payload(
     }
 
 
+def hedging_probe_payload(baseline: list[QuestionResult]) -> dict:
+    """Disambiguated questions the original model answers correctly: the probe the search's hedging
+    penalty scores. "Unknown" on any of these is a hedge, since the text states the answer and the
+    original found it. Same shape as the flipped sets, so search_sample.py draws from it unchanged.
+
+    The Phase 2 hedging check found the 5-module repair says "unknown" on 20.3% of disambiguated
+    questions against the original's 7.3%; this is the set that lets the search see that happening.
+    """
+    if any(r.label == r.unknown_index for r in baseline):
+        raise ValueError("the hedging probe must be built from a disambiguated run (--context disambig)")
+    items = [{"question_id": r.question_id, "category": r.category, "baseline_answer": r.predicted_index}
+             for r in baseline if r.is_correct]
+    return {
+        "kind": "hedging_probe",
+        "context": "disambig",
+        "baseline_run_id": baseline[0].run_id,
+        "baseline_condition": baseline[0].condition,
+        "quantized_run_id": None,
+        "quantized_condition": None,
+        "safe_set_size": len(baseline),
+        "total_flipped": len(items),
+        "flipped_per_category": dict(sorted(Counter(i["category"] for i in items).items())),
+        "items": items,
+    }
+
+
 def write_flipped_set(
     baseline: list[QuestionResult], quantized: list[QuestionResult], out_path: Path
 ) -> Path:
@@ -159,19 +185,27 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Build the flipped set from two runs.")
     parser.add_argument("--baseline", type=Path, required=True, help="baseline question_results.jsonl")
-    parser.add_argument("--quantized", type=Path, required=True, help="compressed question_results.jsonl")
+    parser.add_argument("--quantized", type=Path, help="compressed question_results.jsonl (not used by hedging-probe)")
     parser.add_argument("--out", type=Path, required=True, help="output JSON path")
     parser.add_argument(
         "--kind",
         default="fairness",
-        choices=("fairness", "capability"),
+        choices=("fairness", "capability", "hedging-probe"),
         help="fairness: safe-set items that flip to the stereotype (ambiguous runs); "
-        "capability: correct items that become wrong (disambiguated runs)",
+        "capability: correct items that become wrong (disambiguated runs); "
+        "hedging-probe: disambiguated items the baseline answers correctly",
     )
     args = parser.parse_args()
+    if args.kind != "hedging-probe" and args.quantized is None:
+        parser.error(f"--kind {args.kind} needs --quantized")
 
-    baseline_rows, quantized_rows = read_results_file(args.baseline), read_results_file(args.quantized)
-    if args.kind == "fairness":
+    baseline_rows = read_results_file(args.baseline)
+    quantized_rows = read_results_file(args.quantized) if args.quantized else None
+    if args.kind == "hedging-probe":
+        payload = hedging_probe_payload(baseline_rows)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        path = _write_atomically(args.out, lambda handle: json.dump(payload, handle, indent=2))
+    elif args.kind == "fairness":
         path = write_flipped_set(baseline_rows, quantized_rows, args.out)
     else:
         payload = capability_flipped_payload(baseline_rows, quantized_rows)

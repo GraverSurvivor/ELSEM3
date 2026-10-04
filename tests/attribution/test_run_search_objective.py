@@ -55,3 +55,25 @@ def test_filter_candidates_keeps_order_and_family():
     assert filter_candidates(paths, "all") == paths
     with pytest.raises(ValueError):
         filter_candidates(paths, "heads")
+
+
+def test_resume_state_refuses_different_settings_and_reads_the_checkpoint(tmp_path):
+    import json
+
+    import pytest
+
+    from src.attribution.greedy_search import Trial
+    from src.attribution.run_search import PROGRESS_FILE, _write_trials, resume_state
+
+    meta = {"sample": "s.json", "penalty_sample": "p.json", "penalty_weight": 1.0, "candidates": "all",
+            "config": {"threshold": 0.01, "nbits": 8, "max_rounds": 5}}
+    trials = [Trial(1, "model.layers.1.self_attn.qkv_proj", 0.5, 0.5, True),
+              Trial(2, "model.layers.2.self_attn.qkv_proj", 0.6, 0.1, False)]
+    _write_trials(trials, tmp_path / "trials.csv")
+    (tmp_path / PROGRESS_FILE).write_text(json.dumps(
+        {"meta": meta, "start_usr": 0.0, "kept": [trials[0].path], "usr_after_round": [0.5]}), encoding="utf-8")
+
+    state = resume_state(tmp_path, meta)
+    assert state.kept == [trials[0].path] and state.trials == trials and state.usr_after_round == [0.5]
+    with pytest.raises(SystemExit, match="Cannot resume"):
+        resume_state(tmp_path, {**meta, "penalty_weight": 2.0})

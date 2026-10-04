@@ -107,6 +107,7 @@ def greedy_search(
     score_fn: Callable[[], float],
     config: SearchConfig = SearchConfig(),
     on_progress: Callable[["SearchResult"], None] | None = None,
+    resume: "SearchResult | None" = None,
 ) -> SearchResult:
     """Runs the search and returns which modules to keep, in the order they were kept.
 
@@ -117,15 +118,29 @@ def greedy_search(
     `on_progress` is called with the result-so-far after every trial and after every keep -- the
     driver uses it to checkpoint the log, so an interrupted search still leaves every measurement
     it paid for on disk.
+
+    `resume` continues an interrupted search from that checkpoint: its kept modules are committed
+    again, finished rounds are not repeated, and in the unfinished round only the candidates not yet
+    tried are scored. The result is the same search as an uninterrupted one, because scoring is
+    deterministic and the tie-break walks the candidates in the same order.
     """
     candidates = list(candidates)
     if len(set(candidates)) != len(candidates):
         raise ValueError("candidate list contains duplicates")
 
-    result = SearchResult(start_usr=score_fn())
-    current_usr = result.start_usr
+    if resume is None:
+        result = SearchResult(start_usr=score_fn())
+        current_usr = result.start_usr
+    else:
+        result = SearchResult(start_usr=resume.start_usr, kept=list(resume.kept),
+                              usr_after_round=list(resume.usr_after_round), trials=list(resume.trials))
+        for path in result.kept:
+            registry.commit(path, config.nbits)
+        if len(result.usr_after_round) < len(result.kept):  # interrupted right after a keep
+            result.usr_after_round.append(score_fn())
+        current_usr = result.final_usr
 
-    for round_number in range(1, config.max_rounds + 1):
+    for round_number in range(len(result.kept) + 1, config.max_rounds + 1):
         if current_usr >= 1.0:
             result.stop_reason = STOP_RECOVERED
             return result
@@ -135,17 +150,22 @@ def greedy_search(
             result.stop_reason = STOP_EXHAUSTED
             return result
 
+        already = {t.path: i for i, t in enumerate(result.trials) if t.round == round_number}
         best_index: int | None = None
         for path in remaining:
-            with registry.trial(path, config.nbits):
-                usr = score_fn()
-            result.trials.append(
-                Trial(round=round_number, path=path, usr=usr, gain=usr - current_usr, kept=False)
-            )
+            if path in already:
+                index = already[path]
+            else:
+                with registry.trial(path, config.nbits):
+                    usr = score_fn()
+                result.trials.append(
+                    Trial(round=round_number, path=path, usr=usr, gain=usr - current_usr, kept=False)
+                )
+                index = len(result.trials) - 1
             # Strict ">" so the earliest candidate wins a tie.
-            if best_index is None or result.trials[-1].gain > result.trials[best_index].gain:
-                best_index = len(result.trials) - 1
-            if on_progress is not None:
+            if best_index is None or result.trials[index].gain > result.trials[best_index].gain:
+                best_index = index
+            if on_progress is not None and path not in already:
                 on_progress(result)
 
         best = result.trials[best_index]
