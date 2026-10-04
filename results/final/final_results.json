@@ -159,8 +159,56 @@
     }
   },
   "recovery_by_modules": {
-    "status": "partial",
+    "status": "done",
     "rows": [
+      {
+        "modules": 1,
+        "added": "model.layers.1.self_attn.qkv_proj",
+        "pct_weights": 0.78125,
+        "memory_mb": 16.199951171875,
+        "memory_measured": true,
+        "usr_recovery": {
+          "point": 0.48881567539448584,
+          "lower": 0.4745726619982817,
+          "upper": 0.5031997266331035
+        }
+      },
+      {
+        "modules": 2,
+        "added": "model.layers.14.self_attn.qkv_proj",
+        "pct_weights": 1.5625,
+        "memory_mb": 32.39990234375,
+        "memory_measured": true,
+        "usr_recovery": {
+          "point": 0.6422750130050286,
+          "lower": 0.6272580039898735,
+          "upper": 0.657192626646157
+        }
+      },
+      {
+        "modules": 3,
+        "added": "model.layers.15.self_attn.qkv_proj",
+        "pct_weights": 2.34375,
+        "memory_mb": 48.599853515625,
+        "memory_measured": true,
+        "usr_recovery": {
+          "point": 0.7797815155193342,
+          "lower": 0.7652449159576753,
+          "upper": 0.7949674093397815
+        }
+      },
+      {
+        "modules": 4,
+        "added": "model.layers.13.self_attn.qkv_proj",
+        "pct_weights": 3.125,
+        "memory_mb": 64.7998046875,
+        "memory_measured": true,
+        "usr_recovery": {
+          "point": 0.8746315241893533,
+          "lower": 0.859880794293814,
+          "upper": 0.8897253390475814
+        }
+      },
       {
         "modules": 5,
         "added": "model.layers.10.self_attn.o_proj",
@@ -174,21 +222,183 @@
         }
       }
     ],
-    "missing_prefixes": [
-      1,
-      2,
-      3,
-      4
-    ],
-    "waiting_for": "RUNBOOK Phase 2, Account 3"
+    "missing_prefixes": [],
+    "waiting_for": null
   },
   "controls": {
-    "status": "pending",
-    "waiting_for": "RUNBOOK Phase 2, Account 2 (baseline repairs)"
+    "status": "done",
+    "baselines": {
+      "search_top5": {
+        "usr_recovery": {
+          "point": 0.924397433674354,
+          "lower": 0.9102710758735211,
+          "upper": 0.9383440860069283
+        },
+        "bias_score_ambig": 0.05543657331136737
+      },
+      "largest_error": {
+        "usr_recovery": {
+          "point": 0.7105947633084794,
+          "lower": 0.6958388677550915,
+          "upper": 0.7249064178111352
+        },
+        "bias_score_ambig": 0.06639209225700164,
+        "search_minus_this": {
+          "point": 0.21380267036587464,
+          "lower": 0.20055361254463394,
+          "upper": 0.22762837047870035
+        },
+        "search_beats_this": true
+      },
+      "positional": {
+        "usr_recovery": {
+          "point": 0.5411825906016993,
+          "lower": 0.5268973770539899,
+          "upper": 0.5555198970776217
+        },
+        "bias_score_ambig": 0.08476112026359142,
+        "search_minus_this": {
+          "point": 0.38321484307265474,
+          "lower": 0.36748213507342276,
+          "upper": 0.3985472217295336
+        },
+        "search_beats_this": true
+      },
+      "random_s0": {
+        "usr_recovery": {
+          "point": -0.11409745101439224,
+          "lower": -0.1257540196327468,
+          "upper": -0.10306634426100739
+        },
+        "bias_score_ambig": 0.12257001647446462,
+        "search_minus_this": {
+          "point": 1.0384948846887463,
+          "lower": 1.0200606129011816,
+          "upper": 1.0566068387113874
+        },
+        "search_beats_this": true
+      },
+      "random_s1": {
+        "usr_recovery": {
+          "point": 0.2659961851916075,
+          "lower": 0.25455122607424663,
+          "upper": 0.27797061238191323
+        },
+        "bias_score_ambig": 0.10609555189456342,
+        "search_minus_this": {
+          "point": 0.6584012484827465,
+          "lower": 0.6417343123179073,
+          "upper": 0.6746770737740857
+        },
+        "search_beats_this": true
+      },
+      "random_s2": {
+        "usr_recovery": {
+          "point": -0.27431940350268774,
+          "lower": -0.2911404190077691,
+          "upper": -0.2570035347105655
+        },
+        "bias_score_ambig": 0.16309719934102138,
+        "search_minus_this": {
+          "point": 1.1987168371770418,
+          "lower": 1.175627841557501,
+          "upper": 1.2213510475953353
+        },
+        "search_beats_this": true
+      },
+      "random_s3": {
+        "usr_recovery": {
+          "point": 0.1479105254031559,
+          "lower": 0.13780731448819147,
+          "upper": 0.1577884251028012
+        },
+        "bias_score_ambig": 0.10321252059308071,
+        "search_minus_this": {
+          "point": 0.7764869082711982,
+          "lower": 0.7604922470302784,
+          "upper": 0.7925206031174771
+        },
+        "search_beats_this": true
+      },
+      "random_s4": {
+        "usr_recovery": {
+          "point": 0.0691867522108549,
+          "lower": 0.05890432461189691,
+          "upper": 0.07898022683770192
+        },
+        "bias_score_ambig": 0.11787479406919274,
+        "search_minus_this": {
+          "point": 0.8552106814634991,
+          "lower": 0.8386197975045699,
+          "upper": 0.872006919679098
+        },
+        "search_beats_this": true
+      }
+    },
+    "hedging": {
+      "fp16": {
+        "n": 12140,
+        "accuracy": 0.9151565074135091,
+        "false_unknown_rate": {
+          "point": 0.07314662273476112,
+          "lower": 0.0685337726523888,
+          "upper": 0.07759472817133443
+        },
+        "bias_score_disambig": 0.027195165303945945
+      },
+      "hqq_3bit": {
+        "n": 12140,
+        "accuracy": 0.8082372322899506,
+        "false_unknown_rate": {
+          "point": 0.03789126853377265,
+          "lower": 0.03451400329489292,
+          "upper": 0.04135090609555189
+        },
+        "bias_score_disambig": 0.05462328767123292
+      },
+      "repaired": {
+        "search_top5": {
+          "n": 12140,
+          "accuracy": 0.7390444810543657,
+          "false_unknown_rate": {
+            "point": 0.2027182866556837,
+            "lower": 0.1953850906095552,
+            "upper": 0.20988673805601318
+          },
+          "bias_score_disambig": 0.04680235561524948,
+          "false_unknown_change_vs_fp16": {
+            "point": 0.12957166392092256,
+            "lower": 0.12264621087314663,
+            "upper": 0.13657331136738057
+          },
+          "hedging_detected": true
+        }
+      }
+    },
+    "verdict": {
+      "outcome": "hedging",
+      "message": "The repaired model answers 'unknown' significantly more often where the answer is stated. Re-run the search with the hedging penalty (run_search --penalty-sample)."
+    }
   },
   "hedging": {
-    "status": "pending",
-    "waiting_for": "RUNBOOK Phase 2, Account 1 (disambiguated runs)"
+    "status": "done",
+    "rows": {
+      "Original (fp16)": {
+        "n": 12140,
+        "accuracy": 0.9151565074135091,
+        "false_unknown_rate": 0.07314662273476112
+      },
+      "HQQ 3-bit": {
+        "n": 12140,
+        "accuracy": 0.8082372322899506,
+        "false_unknown_rate": 0.03789126853377265
+      },
+      "3-bit + search patch": {
+        "n": 12140,
+        "accuracy": 0.7390444810543657,
+        "false_unknown_rate": 0.2027182866556837
+      }
+    }
   },
   "dissociation": {
     "status": "pending",
@@ -207,8 +417,10 @@
     "waiting_for": "RUNBOOK Week 6 (llama.cpp transfer test, stretch)"
   },
   "monitoring": {
-    "status": "pending",
-    "waiting_for": "RUNBOOK Phase 2 (flip_predictability, after baseline_fp16_confidence)"
+    "status": "done",
+    "auroc": 0.6436602923225919,
+    "flips_caught_probing_20pct": 0.29274764150943394,
+    "low_vs_high_confidence_ratio": 2.149778890279516
   },
   "robustness": {
     "status": "done",
