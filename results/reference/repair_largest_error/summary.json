@@ -1,0 +1,81 @@
+{
+  "run_id": "hqq_repaired_20261004T092352Z",
+  "condition": "hqq_repaired",
+  "context": "ambig",
+  "base_nbits": 3,
+  "compute_dtype": "fp16",
+  "search_run_id": "largest_error",
+  "search_summary_path": null,
+  "patch_path": "results/patches/largest_error.json",
+  "patch_name": "largest_error",
+  "patch_source": {
+    "kind": "baseline",
+    "baseline": "largest_error",
+    "budget_of": "search_top5"
+  },
+  "accuracy": 0.7028006589785832,
+  "modules": [
+    "model.layers.0.self_attn.qkv_proj",
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.2.self_attn.qkv_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.2.self_attn.o_proj",
+    "model.layers.7.self_attn.o_proj"
+  ],
+  "nbits": 8,
+  "fairness": {
+    "overall": {
+      "usr": 0.7028006589785832,
+      "srs": 0.18179571663920924,
+      "n_items": 12140
+    },
+    "per_category": {
+      "Age": {
+        "usr": 0.6141304347826086,
+        "srs": 0.27554347826086956,
+        "n_items": 1840
+      },
+      "Gender_identity": {
+        "usr": 0.685997171145686,
+        "srs": 0.18635077793493635,
+        "n_items": 2828
+      },
+      "Race_ethnicity": {
+        "usr": 0.6697674418604651,
+        "srs": 0.15843023255813954,
+        "n_items": 3440
+      },
+      "Religion": {
+        "usr": 0.74,
+        "srs": 0.16666666666666666,
+        "n_items": 600
+      },
+      "SES": {
+        "usr": 0.7907925407925408,
+        "srs": 0.15384615384615385,
+        "n_items": 3432
+      }
+    }
+  },
+  "restored": {
+    "modules_restored": 7,
+    "modules_total": 128,
+    "pct_modules_restored": 5.46875,
+    "params_restored": 122683392,
+    "params_total": 3623878656,
+    "pct_params_restored": 3.3854166666666665
+  },
+  "memory": {
+    "deployed_overhead_bytes": 73609472,
+    "gpu_allocated_before_bytes": 2114968064,
+    "gpu_allocated_after_bytes": 2191722496,
+    "gpu_delta_bytes": 76754432
+  },
+  "wall_clock_seconds": {
+    "repair": 4.4,
+    "scoring": 834.2,
+    "cycle": 838.6
+  },
+  "resumed": false
+}
