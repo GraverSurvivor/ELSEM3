@@ -134,10 +134,13 @@ def greedy_search(
     else:
         result = SearchResult(start_usr=resume.start_usr, kept=list(resume.kept),
                               usr_after_round=list(resume.usr_after_round), trials=list(resume.trials))
-        for path in result.kept:
+        # Re-commit the kept modules in order; any per-round score the checkpoint lacks (interrupted
+        # right after a keep, or a progress file older than the trial log) is measured at the moment
+        # that module joins, which is exactly when the uninterrupted search measured it.
+        for count, path in enumerate(result.kept, start=1):
             registry.commit(path, config.nbits)
-        if len(result.usr_after_round) < len(result.kept):  # interrupted right after a keep
-            result.usr_after_round.append(score_fn())
+            if len(result.usr_after_round) < count:
+                result.usr_after_round.append(score_fn())
         current_usr = result.final_usr
 
     for round_number in range(len(result.kept) + 1, config.max_rounds + 1):

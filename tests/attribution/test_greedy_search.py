@@ -267,3 +267,15 @@ def test_resume_right_after_a_keep_rescored_the_model():
     state = SearchResult(start_usr=full.start_usr, kept=[full.kept[0]], usr_after_round=[], trials=first_round)
     resumed = _run(FakeRegistry(EFFECTS), resume=state)
     assert resumed.kept == full.kept and resumed.usr_after_round == pytest.approx(full.usr_after_round)
+
+
+def test_resume_remeasures_every_missing_round_score():
+    from src.attribution.greedy_search import SearchResult
+
+    full = _run(FakeRegistry(EFFECTS))
+    assert len(full.kept) >= 2
+    done = [t for t in full.trials if t.round <= 2]
+    state = SearchResult(start_usr=full.start_usr, kept=full.kept[:2], usr_after_round=[], trials=done)
+    resumed = _run(FakeRegistry(EFFECTS), resume=state)
+    assert resumed.kept == full.kept and resumed.trials == full.trials
+    assert resumed.usr_after_round == pytest.approx(full.usr_after_round)

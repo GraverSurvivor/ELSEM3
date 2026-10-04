@@ -77,3 +77,50 @@ def test_resume_state_refuses_different_settings_and_reads_the_checkpoint(tmp_pa
     assert state.kept == [trials[0].path] and state.trials == trials and state.usr_after_round == [0.5]
     with pytest.raises(SystemExit, match="Cannot resume"):
         resume_state(tmp_path, {**meta, "penalty_weight": 2.0})
+
+
+def _checkpoint(tmp_path, trials, kept, usr_after_round):
+    import json
+
+    from src.attribution.run_search import PROGRESS_FILE, _write_trials
+
+    meta = {"sample": "s.json", "penalty_sample": None, "penalty_weight": None, "candidates": "all",
+            "config": {"threshold": 0.01, "nbits": 8, "max_rounds": 5}}
+    _write_trials(trials, tmp_path / "trials.csv")
+    (tmp_path / PROGRESS_FILE).write_text(json.dumps(
+        {"meta": meta, "start_usr": 0.0, "kept": kept, "usr_after_round": usr_after_round}), encoding="utf-8")
+    return meta
+
+
+A, B, C = (f"model.layers.{i}.self_attn.qkv_proj" for i in (1, 14, 15))
+
+
+def test_resume_follows_the_trial_log_when_progress_is_behind(tmp_path):
+    from src.attribution.greedy_search import Trial
+    from src.attribution.run_search import resume_state
+
+    trials = [Trial(1, A, 0.5, 0.5, True), Trial(2, B, 0.6, 0.1, True), Trial(3, C, 0.62, 0.02, False)]
+    meta = _checkpoint(tmp_path, trials, kept=[A], usr_after_round=[0.5])
+    state = resume_state(tmp_path, meta)
+    assert state.kept == [A, B] and state.usr_after_round == [0.5]  # round 2's score gets re-measured
+
+
+def test_resume_follows_the_trial_log_when_progress_is_ahead(tmp_path):
+    from src.attribution.greedy_search import Trial
+    from src.attribution.run_search import resume_state
+
+    trials = [Trial(1, A, 0.5, 0.5, True), Trial(2, C, 0.55, 0.05, False)]
+    meta = _checkpoint(tmp_path, trials, kept=[A, B], usr_after_round=[0.5, 0.6])
+    state = resume_state(tmp_path, meta)
+    assert state.kept == [A] and state.usr_after_round == [0.5]  # round 2 continues from its log
+
+
+def test_resume_refuses_files_that_contradict(tmp_path):
+    import pytest
+
+    from src.attribution.greedy_search import Trial
+    from src.attribution.run_search import resume_state
+
+    meta = _checkpoint(tmp_path, [Trial(1, A, 0.5, 0.5, True)], kept=[B], usr_after_round=[0.5])
+    with pytest.raises(SystemExit, match="Cannot resume"):
+        resume_state(tmp_path, meta)

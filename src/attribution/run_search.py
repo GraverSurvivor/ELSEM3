@@ -98,16 +98,29 @@ def read_trials_csv(path: Path) -> list[Trial]:
 
 
 def resume_state(out_dir: Path, meta: dict) -> SearchResult:
-    """The checkpoint of an interrupted search, refusing one started with different settings."""
+    """The checkpoint of an interrupted search, refusing one started with different settings.
+
+    The two files are written one after the other, and a mirror on Google Drive uploads them
+    separately, so a session killed mid-upload can leave one a trial or a keep ahead of the other.
+    trials.csv is the complete log of every measurement, so it decides which modules were kept.
+    progress.json's per-round scores are used only as far as the two agree; any missing ones are
+    re-measured by the search. Files that contradict each other (neither list of kept modules a
+    prefix of the other) are refused.
+    """
     progress = json.loads((Path(out_dir) / PROGRESS_FILE).read_text(encoding="utf-8"))
     if progress["meta"] != meta:
         raise SystemExit(f"Cannot resume: that search used {progress['meta']}, this one asks for {meta}.")
     trials = read_trials_csv(Path(out_dir) / "trials.csv") if (Path(out_dir) / "trials.csv").exists() else []
     kept = [t.path for t in trials if t.kept]
-    if kept != progress["kept"]:
-        raise SystemExit("Cannot resume: trials.csv and progress.json disagree on the kept modules.")
-    return SearchResult(start_usr=progress["start_usr"], kept=kept,
-                        usr_after_round=list(progress["usr_after_round"]), trials=trials)
+    saved_kept = list(progress["kept"])
+    shared = min(len(kept), len(saved_kept))
+    if kept[:shared] != saved_kept[:shared]:
+        raise SystemExit(f"Cannot resume: trials.csv kept {kept} but progress.json kept {saved_kept}.")
+    if kept != saved_kept:
+        print(f"Note: trials.csv kept {len(kept)} module(s), progress.json {len(saved_kept)}; "
+              "following trials.csv, the complete log.")
+    usr_after_round = list(progress["usr_after_round"])[: min(len(kept), len(saved_kept))]
+    return SearchResult(start_usr=progress["start_usr"], kept=kept, usr_after_round=usr_after_round, trials=trials)
 
 
 def _write_trials(trials: list[Trial], path: Path) -> None:
