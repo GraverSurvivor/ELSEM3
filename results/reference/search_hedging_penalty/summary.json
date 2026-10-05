@@ -1,0 +1,62 @@
+{
+  "run_id": "search_20261004T095839Z",
+  "condition": "hqq_3bit",
+  "compute_dtype": "fp16",
+  "config": {
+    "threshold": 0.01,
+    "nbits": 8,
+    "max_rounds": 5
+  },
+  "sample": {
+    "baseline_run_id": "fp16_20260921T180125Z",
+    "quantized_run_id": "hqq_3bit_20260924T175317Z",
+    "n": 300,
+    "seed": 0,
+    "per_category": {
+      "Age": 42,
+      "Gender_identity": 71,
+      "Race_ethnicity": 83,
+      "Religion": 12,
+      "SES": 92
+    }
+  },
+  "sample_path": "results/search_samples/hqq_3bit_n300_seed0.json",
+  "context": "ambig",
+  "metric": "usr",
+  "candidate_set": "all",
+  "n_candidates": 128,
+  "penalty": {
+    "sample_path": "results/search_samples/hedging_probe_n200_seed0.json",
+    "weight": 1.0,
+    "n": 200
+  },
+  "start_usr": -0.006666666666666666,
+  "final_usr": 0.7366666666666666,
+  "kept": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.8.self_attn.qkv_proj",
+    "model.layers.13.self_attn.qkv_proj",
+    "model.layers.16.self_attn.qkv_proj"
+  ],
+  "usr_after_round": [
+    0.4366666666666667,
+    0.5449999999999999,
+    0.6383333333333333,
+    0.6833333333333333,
+    0.7366666666666666
+  ],
+  "stop_reason": "reached max_rounds",
+  "n_trials": 630,
+  "kept_nbits": {
+    "model.layers.1.self_attn.qkv_proj": 8,
+    "model.layers.14.self_attn.qkv_proj": 8,
+    "model.layers.8.self_attn.qkv_proj": 8,
+    "model.layers.13.self_attn.qkv_proj": 8,
+    "model.layers.16.self_attn.qkv_proj": 8
+  },
+  "deployed_overhead_bytes": 84934400,
+  "search_overhead_bytes": 1676058624,
+  "wall_clock_seconds": 6951.1,
+  "resumed": true
+}
