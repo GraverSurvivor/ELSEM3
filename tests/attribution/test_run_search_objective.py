@@ -124,3 +124,20 @@ def test_resume_refuses_files_that_contradict(tmp_path):
     meta = _checkpoint(tmp_path, [Trial(1, A, 0.5, 0.5, True)], kept=[B], usr_after_round=[0.5])
     with pytest.raises(SystemExit, match="Cannot resume"):
         resume_state(tmp_path, meta)
+
+
+def test_resume_refuses_a_missing_empty_or_stale_trial_log(tmp_path):
+    import pytest
+
+    from src.attribution.greedy_search import Trial
+    from src.attribution.run_search import resume_state
+
+    meta = _checkpoint(tmp_path, [], kept=[A, B, C], usr_after_round=[0.5, 0.6, 0.7])
+    with pytest.raises(SystemExit, match="empty"):
+        resume_state(tmp_path, meta)
+    (tmp_path / "trials.csv").unlink()
+    with pytest.raises(SystemExit, match="missing"):
+        resume_state(tmp_path, meta)
+    meta = _checkpoint(tmp_path, [Trial(1, A, 0.5, 0.5, True)], kept=[A, B, C], usr_after_round=[0.5, 0.6, 0.7])
+    with pytest.raises(SystemExit, match="older copy"):
+        resume_state(tmp_path, meta)
