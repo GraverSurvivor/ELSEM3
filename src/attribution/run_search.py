@@ -110,9 +110,19 @@ def resume_state(out_dir: Path, meta: dict) -> SearchResult:
     progress = json.loads((Path(out_dir) / PROGRESS_FILE).read_text(encoding="utf-8"))
     if progress["meta"] != meta:
         raise SystemExit(f"Cannot resume: that search used {progress['meta']}, this one asks for {meta}.")
-    trials = read_trials_csv(Path(out_dir) / "trials.csv") if (Path(out_dir) / "trials.csv").exists() else []
+    trials_path = Path(out_dir) / "trials.csv"
+    trials = read_trials_csv(trials_path) if trials_path.exists() else []
     kept = [t.path for t in trials if t.kept]
     saved_kept = list(progress["kept"])
+    print(f"Checkpoint: trials.csv has {len(trials)} trials and {len(kept)} kept; "
+          f"progress.json has {len(saved_kept)} kept.")
+    if saved_kept and not trials:
+        raise SystemExit(f"Cannot resume: progress.json says {len(saved_kept)} module(s) were kept but "
+                         f"{trials_path} is {'empty' if trials_path.exists() else 'missing'}. Upload the "
+                         "search's trials.csv under exactly that name; starting over would redo every trial.")
+    if len(saved_kept) - len(kept) > 1:
+        raise SystemExit(f"Cannot resume: progress.json is {len(saved_kept) - len(kept)} keeps ahead of trials.csv. "
+                         "The two files can only drift one step apart; this trials.csv looks like an older copy.")
     shared = min(len(kept), len(saved_kept))
     if kept[:shared] != saved_kept[:shared]:
         raise SystemExit(f"Cannot resume: trials.csv kept {kept} but progress.json kept {saved_kept}.")

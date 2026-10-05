@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "sample": "results/search_samples/hqq_3bit_n300_seed0.json",
+    "penalty_sample": "results/search_samples/hedging_probe_n200_seed0.json",
+    "penalty_weight": 1.0,
+    "candidates": "all",
+    "config": {
+      "threshold": 0.01,
+      "nbits": 8,
+      "max_rounds": 5
+    }
+  },
+  "start_usr": -0.006666666666666666,
+  "kept": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.8.self_attn.qkv_proj",
+    "model.layers.13.self_attn.qkv_proj",
+    "model.layers.16.self_attn.qkv_proj"
+  ],
+  "usr_after_round": [
+    0.4366666666666667,
+    0.5449999999999999,
+    0.6383333333333333,
+    0.6833333333333333,
+    0.7366666666666666
+  ]
+}

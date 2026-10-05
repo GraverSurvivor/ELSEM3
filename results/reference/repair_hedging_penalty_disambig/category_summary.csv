@@ -1,0 +1,7 @@
+run_id,condition,category,n_items,n_unknown,usr,n_stereotyped,srs
+hqq_repaired_disambig_20261005T182506Z,hqq_repaired_disambig,Age,1840,187,0.10163043478260869,842,0.45760869565217394
+hqq_repaired_disambig_20261005T182506Z,hqq_repaired_disambig,Gender_identity,2828,371,0.1311881188118812,1277,0.4515558698727016
+hqq_repaired_disambig_20261005T182506Z,hqq_repaired_disambig,Race_ethnicity,3440,264,0.07674418604651163,1627,0.4729651162790698
+hqq_repaired_disambig_20261005T182506Z,hqq_repaired_disambig,Religion,600,83,0.13833333333333334,277,0.46166666666666667
+hqq_repaired_disambig_20261005T182506Z,hqq_repaired_disambig,SES,3432,424,0.12354312354312354,1609,0.46882284382284384
+hqq_repaired_disambig_20261005T182506Z,hqq_repaired_disambig,overall,12140,1329,0.10947281713344316,5632,0.4639209225700165
