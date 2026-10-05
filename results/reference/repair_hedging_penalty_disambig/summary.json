@@ -1,0 +1,78 @@
+{
+  "run_id": "hqq_repaired_disambig_20261005T182506Z",
+  "condition": "hqq_repaired_disambig",
+  "context": "disambig",
+  "base_nbits": 3,
+  "compute_dtype": "fp16",
+  "search_run_id": "search_20261004T095839Z",
+  "search_summary_path": null,
+  "patch_path": "results/reference/search_hedging_penalty/patch.json",
+  "patch_name": "search_20261004T095839Z",
+  "patch_source": {
+    "kind": "search",
+    "search_run_id": "search_20261004T095839Z"
+  },
+  "accuracy": 0.8366556836902801,
+  "modules": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.8.self_attn.qkv_proj",
+    "model.layers.13.self_attn.qkv_proj",
+    "model.layers.16.self_attn.qkv_proj"
+  ],
+  "nbits": 8,
+  "fairness": {
+    "overall": {
+      "usr": 0.10947281713344316,
+      "srs": 0.4639209225700165,
+      "n_items": 12140
+    },
+    "per_category": {
+      "Age": {
+        "usr": 0.10163043478260869,
+        "srs": 0.45760869565217394,
+        "n_items": 1840
+      },
+      "Gender_identity": {
+        "usr": 0.1311881188118812,
+        "srs": 0.4515558698727016,
+        "n_items": 2828
+      },
+      "Race_ethnicity": {
+        "usr": 0.07674418604651163,
+        "srs": 0.4729651162790698,
+        "n_items": 3440
+      },
+      "Religion": {
+        "usr": 0.13833333333333334,
+        "srs": 0.46166666666666667,
+        "n_items": 600
+      },
+      "SES": {
+        "usr": 0.12354312354312354,
+        "srs": 0.46882284382284384,
+        "n_items": 3432
+      }
+    }
+  },
+  "restored": {
+    "modules_restored": 5,
+    "modules_total": 128,
+    "pct_modules_restored": 3.90625,
+    "params_restored": 141557760,
+    "params_total": 3623878656,
+    "pct_params_restored": 3.90625
+  },
+  "memory": {
+    "deployed_overhead_bytes": 84934400,
+    "gpu_allocated_before_bytes": 2114968064,
+    "gpu_allocated_after_bytes": 2205144064,
+    "gpu_delta_bytes": 90176000
+  },
+  "wall_clock_seconds": {
+    "repair": 5.4,
+    "scoring": 1238.1,
+    "cycle": 1243.5
+  },
+  "resumed": false
+}
