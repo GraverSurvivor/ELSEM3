@@ -209,7 +209,9 @@ def provenance_html(patch: Patch | None, reference_dir: Path = REFERENCE_DIR) ->
                  ("Patch", f"{patch.name}: {len(patch.modules)} modules at {patch.nbits}-bit, "
                            f"{patch.params:,} weights ({patch.pct_params:.2f}%)"),
                  ("Patch source", ", ".join(f"{k}: {v}" for k, v in patch.source.items()))]
-    for name in ("baseline_fp16", "hqq_3bit", "hqq_repaired"):
+    from src.experiments.main_repair import main_repair
+
+    for name in ("baseline_fp16", "hqq_3bit", main_repair(Path(reference_dir) / "MAIN_REPAIR.json").ambig):
         results_path = Path(reference_dir) / name / "question_results.jsonl"
         run_id = "not committed"
         if results_path.exists():
@@ -363,8 +365,10 @@ def main() -> None:
     rep = sub.add_parser("report", help="write the HTML audit report")
     rep.add_argument("--reference", type=Path, default=REFERENCE_DIR / "baseline_fp16")
     rep.add_argument("--compressed", type=Path, default=REFERENCE_DIR / "hqq_3bit")
-    rep.add_argument("--repaired", type=Path, default=REFERENCE_DIR / "hqq_repaired")
-    rep.add_argument("--patch", type=Path, default=Path("results/patches/search_top5.json"))
+    from src.experiments.main_repair import main_repair
+
+    rep.add_argument("--repaired", type=Path, default=main_repair().ambig_dir(), help="default: the main repair")
+    rep.add_argument("--patch", type=Path, default=main_repair().patch, help="default: the main repair's patch")
     rep.add_argument("--out", type=Path, default=OUT_DIR / "report.html")
     args = parser.parse_args()
 

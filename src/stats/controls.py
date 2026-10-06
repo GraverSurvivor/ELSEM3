@@ -165,6 +165,11 @@ def main() -> None:
     dis_paths = _named_paths(args.repaired_disambig)
     if not dis_paths and (REFERENCE_DIR / "hqq_repaired_disambig").exists():
         dis_paths = {SEARCH_NAME: REFERENCE_DIR / "hqq_repaired_disambig"}
+        from src.experiments.main_repair import main_repair
+
+        main = main_repair()
+        if main.disambig_dir().exists() and main.name != SEARCH_NAME:
+            dis_paths[main.name] = main.disambig_dir()  # the main repair's hedging, shown alongside
     fp16_dis_dir, q3_dis_dir = REFERENCE_DIR / "baseline_fp16_disambig", REFERENCE_DIR / "hqq_3bit_disambig"
     if fp16_dis_dir.exists() and q3_dis_dir.exists() and dis_paths:
         controls["hedging"] = hedging_block(

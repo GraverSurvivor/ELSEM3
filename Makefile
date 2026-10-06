@@ -38,7 +38,7 @@ search:
 	python -m src.attribution.run_search --sample $(SAMPLE) --threshold $(THRESHOLD) --batch-size $(BATCH_SIZE)
 
 # Stage 5 (Person B): verify any patch on the full benchmark. GPU. CONTEXT=disambig for the control set.
-PATCH ?= results/patches/search_top5.json
+PATCH ?= results/patches/hedging_penalty.json
 CONTEXT ?= ambig
 repair:
 	python -m src.attribution.run_repair --patch $(PATCH) --context $(CONTEXT) --batch-size $(BATCH_SIZE)

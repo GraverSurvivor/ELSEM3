@@ -53,7 +53,7 @@ fixes it?
 
 ```bash
 python -m src.product.fairgate check      # PASS/FAIL: original vs compressed
-python -m src.product.fairgate export --patch results/patches/search_top5.json --format llamacpp
+python -m src.product.fairgate export --patch results/patches/hedging_penalty.json --format llamacpp
 python -m src.product.fairgate report     # results/fairgate/report.html
 ```
 

@@ -79,10 +79,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--min-n", type=int, default=DEFAULT_MIN_N, help="skip groups with fewer questions")
     parser.add_argument("--out", type=Path, default=Path("results/stats/groups.json"))
+    parser.add_argument("--repaired", help="folder under results/reference/ (default: the main repair)")
     args = parser.parse_args()
 
+    from src.experiments.main_repair import main_repair
+
+    repaired = args.repaired or main_repair().ambig
+    print(f"Repair: {repaired}")
     load = lambda name: read_results_file(REFERENCE_DIR / name / "question_results.jsonl")
-    runs = {"baseline": load("baseline_fp16"), "hqq_3bit": load("hqq_3bit"), "hqq_repaired": load("hqq_repaired")}
+    runs = {"baseline": load("baseline_fp16"), "hqq_3bit": load("hqq_3bit"), "hqq_repaired": load(repaired)}
     rows = breakdown(load_group_labels(), runs, args.min_n)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")

@@ -66,14 +66,33 @@ def describe(rows: list) -> dict:
     return {"n": len(rows), "usr": usr(rows), "srs": srs(rows), "bias_score_ambig": bias_score_ambig(rows)}
 
 
+# --- which repairs ----------------------------------------------------------------------------------
+
+def repairs(ref: Path) -> tuple:
+    """(main, previous) from the main-repair pointer in this reference folder (see
+    src/experiments/main_repair.py). previous is None when there is no earlier main repair."""
+    from src.experiments.main_repair import main_repair, previous_repair
+
+    pointer = Path(ref) / "MAIN_REPAIR.json"
+    return main_repair(pointer), previous_repair(pointer)
+
+
 # --- sections -------------------------------------------------------------------------------------
 
 def main_result(ref: Path) -> dict:
-    base, q3, rep = _rows(ref, "baseline_fp16"), _rows(ref, "hqq_3bit"), _rows(ref, "hqq_repaired")
+    main, previous = repairs(ref)
+    base, q3, rep = _rows(ref, "baseline_fp16"), _rows(ref, "hqq_3bit"), _rows(ref, main.ambig)
     if not (base and q3 and rep):
         return _pending("Stages 1-5 reference runs")
-    rows = {"Original (fp16)": describe(base), "HQQ 3-bit": describe(q3), "3-bit + search patch": describe(rep)}
-    out = {"rows": rows, "usr_recovery": _recovery(base, q3, rep)}
+    rows = {"Original (fp16)": describe(base), "HQQ 3-bit": describe(q3)}
+    out = {"rows": rows, "main": main.label}
+    prev = _rows(ref, previous.ambig) if previous else None
+    if prev:
+        rows[previous.label] = describe(prev)
+        out["previous"] = previous.label
+        out["usr_recovery_previous"] = _recovery(base, q3, prev)
+    rows[main.label] = describe(rep)
+    out["usr_recovery"] = _recovery(base, q3, rep)
     q4, rep4 = _rows(ref, "hqq_4bit"), _rows(ref, "repair_4bit")
     if q4:
         rows["HQQ 4-bit"] = describe(q4)
@@ -84,7 +103,8 @@ def main_result(ref: Path) -> dict:
 
 
 def per_category(ref: Path) -> dict:
-    base, q3, rep = _rows(ref, "baseline_fp16"), _rows(ref, "hqq_3bit"), _rows(ref, "hqq_repaired")
+    main, _ = repairs(ref)
+    base, q3, rep = _rows(ref, "baseline_fp16"), _rows(ref, "hqq_3bit"), _rows(ref, main.ambig)
     if not (base and q3 and rep):
         return _pending("Stages 1-5 reference runs")
     out = {}
@@ -100,7 +120,11 @@ def per_category(ref: Path) -> dict:
 def answer_position(ref: Path) -> dict:
     """Does a model's answer depend on which letter (A/B/C) "unknown" is listed under? A fair model
     shouldn't care; the 3-bit model avoids A, so part of its damage is a letter effect."""
-    names = {"Original (fp16)": "baseline_fp16", "HQQ 3-bit": "hqq_3bit", "3-bit + search patch": "hqq_repaired"}
+    main, previous = repairs(ref)
+    names = {"Original (fp16)": "baseline_fp16", "HQQ 3-bit": "hqq_3bit"}
+    if previous and _rows(ref, previous.ambig):
+        names[previous.label] = previous.ambig
+    names[main.label] = main.ambig
     rows = {}
     for label, name in names.items():
         runs = _rows(ref, name)
@@ -116,7 +140,8 @@ def answer_position(ref: Path) -> dict:
 
 
 def recovery_by_modules(ref: Path, patch_path: Path = PATCH_PATH) -> dict:
-    """The search's first k modules, k = 1..5, each verified on the full benchmark (the prefix runs)."""
+    """The first search's first k modules, k = 1..5, each verified on the full benchmark (the prefix
+    runs). Built for search_top5, the first repair: the prefix runs exist for that patch."""
     from src.attribution.patch import load_patch
     from src.product.studio_core import overhead_mb, saved_repairs
 
@@ -151,29 +176,50 @@ def recovery_by_modules(ref: Path, patch_path: Path = PATCH_PATH) -> dict:
 def controls_section(ref: Path) -> dict:
     from .controls import baselines_block, discover_repairs, hedging_block, verdict, SEARCH_NAME
 
+    main, _ = repairs(ref)
     base, q3 = _rows(ref, "baseline_fp16"), _rows(ref, "hqq_3bit")
-    repairs = discover_repairs(ref)
-    if not (base and q3) or len(repairs) < 2:
+    # The baselines match the first repair's size, so the comparison is about that repair; the main
+    # (hedging-aware) repair is a different size and isn't one of the alternatives.
+    found = {n: p for n, p in discover_repairs(ref).items() if Path(p).name != main.ambig}
+    if not (base and q3) or len(found) < 2:
         return _pending("RUNBOOK Phase 2, Account 2 (baseline repairs)")
     block = {"baselines": baselines_block(base, q3, {n: read_results_file(p / "question_results.jsonl")
-                                                     for n, p in repairs.items()})}
+                                                     for n, p in found.items()})}
     fp_dis, q3_dis, rep_dis = (_rows(ref, n) for n in ("baseline_fp16_disambig", "hqq_3bit_disambig",
                                                         "hqq_repaired_disambig"))
     if fp_dis and q3_dis and rep_dis:
-        block["hedging"] = hedging_block(fp_dis, q3_dis, {SEARCH_NAME: rep_dis})
+        repaired = {SEARCH_NAME: rep_dis}
+        main_dis = _rows(ref, main.disambig) if main.disambig != "hqq_repaired_disambig" else None
+        if main_dis:
+            repaired[main.name] = main_dis
+        block["hedging"] = hedging_block(fp_dis, q3_dis, repaired)
+        block["main_repair"] = main.name if main_dis else None
     block["verdict"] = verdict(block)
     return _done(**block)
 
 
 def hedging_section(ref: Path) -> dict:
-    names = ("baseline_fp16_disambig", "hqq_3bit_disambig", "hqq_repaired_disambig")
-    runs = {n: _rows(ref, n) for n in names}
-    if not all(runs.values()):
+    """On stated-answer questions: accuracy and how often each model hedges ("unknown" anyway), plus
+    a combined score -- the mean of ambiguous USR and stated-answer accuracy -- and its recovery,
+    which a repair can't raise by hedging, since hedging costs it on the second half."""
+    main, previous = repairs(ref)
+    labels = {"Original (fp16)": ("baseline_fp16", "baseline_fp16_disambig"),
+              "HQQ 3-bit": ("hqq_3bit", "hqq_3bit_disambig")}
+    if previous and _rows(ref, previous.disambig):
+        labels[previous.label] = (previous.ambig, previous.disambig)
+    labels[main.label] = (main.ambig, main.disambig)
+    runs = {label: (_rows(ref, a), _rows(ref, d)) for label, (a, d) in labels.items()}
+    if not all(a and d for a, d in runs.values()):
         return _pending("RUNBOOK Phase 2, Account 1 (disambiguated runs)")
-    labels = {"baseline_fp16_disambig": "Original (fp16)", "hqq_3bit_disambig": "HQQ 3-bit",
-              "hqq_repaired_disambig": "3-bit + search patch"}
-    return _done(rows={labels[n]: {"n": len(r), "accuracy": accuracy(r), "false_unknown_rate": false_unknown_rate(r)}
-                       for n, r in runs.items()})
+    combined = {label: (usr(a) + accuracy(d)) / 2 for label, (a, d) in runs.items()}
+    top, bottom = combined["Original (fp16)"], combined["HQQ 3-bit"]
+    rows = {}
+    for label, (a, d) in runs.items():
+        rows[label] = {"n": len(d), "accuracy": accuracy(d), "false_unknown_rate": false_unknown_rate(d),
+                       "combined": combined[label],
+                       "combined_recovery": (combined[label] - bottom) / (top - bottom) if label not in
+                       ("Original (fp16)", "HQQ 3-bit") else None}
+    return _done(rows=rows)
 
 
 def dissociation_section(stats: Path) -> dict:
@@ -260,14 +306,14 @@ SECTIONS = {
     "per_category": ("Per category", per_category, "ref"),
     "answer_position": ("Does the answer depend on the letter?", answer_position, "ref"),
     "recovery_by_modules": ("Recovery by number of modules", recovery_by_modules, "ref"),
-    "controls": ("Is it really fairness? Matched-weight baselines", controls_section, "ref"),
+    "controls": ("Is it really fairness? Same-size baselines", controls_section, "ref"),
     "hedging": ("Hedging check (disambiguated questions)", hedging_section, "ref"),
     "dissociation": ("Concentrated vs spread out", dissociation_section, "stats"),
     "crows_pairs": ("CrowS-Pairs", crows_section, "ref"),
     "open_ended": ("Open-ended answers", open_ended_section, "ref"),
     "llamacpp": ("llama.cpp transfer", llamacpp_section, "ref"),
     "monitoring": ("Label-free monitoring", monitoring_section, "stats"),
-    "robustness": ("Robustness of the 92%", robustness_section, "stats"),
+    "robustness": ("Robustness of the recovery", robustness_section, "stats"),
     "groups": ("Per targeted group", groups_section, "stats"),
     "headline": ("Headline: three failure windows", headline_section, "ref"),
 }
@@ -325,7 +371,10 @@ def _section_md(key: str, s: dict) -> list[str]:
     header = ["Model", "n", "USR", "SRS", "BBQ bias score"]
     if key == "main":
         out = _table(header, _metric_rows(s["rows"]))
-        out += ["", f"USR recovered by the search patch: **{_r(s['usr_recovery'])}**"]
+        out += ["", f"USR recovered by the main repair ({s.get('main', 'search patch')}): **{_r(s['usr_recovery'])}**"]
+        if s.get("usr_recovery_previous"):
+            out.append(f"By the previous repair ({s['previous']}): {_r(s['usr_recovery_previous'])}. "
+                       "It hedged: see the hedging check.")
         if s.get("usr_recovery_4bit"):
             out.append(f"Same patch on the 4-bit model: **{_r(s['usr_recovery_4bit'])}**")
         return out
@@ -339,7 +388,7 @@ def _section_md(key: str, s: dict) -> list[str]:
                        " / ".join(_p(r["letter_picked"][k]) for k in "ABC")] for n, r in s["rows"].items()])
         return out + ["", "A model with no letter effect says \"unknown\" equally often wherever it is listed."]
     if key == "recovery_by_modules":
-        out = _table(["Modules", "Added", "% of weights", "Memory added", "USR recovered"],
+        out = ["The first repair (search_top5), restored one module at a time.", ""] + _table(["Modules", "Added", "% of weights", "Memory added", "USR recovered"],
                      [[r["modules"], r["added"].replace("model.layers.", "L"), f"{r['pct_weights']:.2f}%",
                        f"{r['memory_mb']:.0f} MB" + ("" if r["memory_measured"] else " (est.)"), _r(r["usr_recovery"])]
                       for r in s["rows"]])
@@ -347,12 +396,26 @@ def _section_md(key: str, s: dict) -> list[str]:
             out += ["", f"Not run yet: the {', '.join(map(str, s['missing_prefixes']))}-module versions."]
         return out
     if key == "controls":
-        out = _table(["Patch", "USR recovered", "Search minus this"],
-                     [[n, _r(r["usr_recovery"]), _r(r.get("search_minus_this"))] for n, r in s["baselines"].items()])
-        return out + ["", f"**Verdict: {s['verdict']['outcome']}.** {s['verdict']['message']}"]
+        out = ["Each alternative restores the same number of weights as the first repair (search_top5).", ""]
+        out += _table(["Patch", "USR recovered", "Search minus this"],
+                      [[n, _r(r["usr_recovery"]), _r(r.get("search_minus_this"))] for n, r in s["baselines"].items()])
+        out += ["", f"**Verdict for the first repair: {s['verdict']['outcome']}.** {s['verdict']['message']}"]
+        main = s.get("main_repair")
+        if main and main in s.get("hedging", {}).get("repaired", {}):
+            first = s["hedging"]["repaired"]["search_top5"]["false_unknown_change_vs_fp16"]
+            now = s["hedging"]["repaired"][main]["false_unknown_change_vs_fp16"]
+            out.append(f"The main repair, found with the hedging penalty, cuts the extra \"unknown\" on stated-answer "
+                       f"questions from {100 * first['point']:+.1f} points [{100 * first['lower']:+.1f}, "
+                       f"{100 * first['upper']:+.1f}] to {100 * now['point']:+.1f} points [{100 * now['lower']:+.1f}, "
+                       f"{100 * now['upper']:+.1f}] above the original.")
+        return out
     if key == "hedging":
-        return _table(["Model", "n", "Accuracy", "False \"unknown\""],
-                      [[n, f"{r['n']:,}", _p(r["accuracy"]), _p(r["false_unknown_rate"])] for n, r in s["rows"].items()])
+        out = _table(["Model", "n", "Accuracy", "False \"unknown\"", "Combined score", "Combined recovery"],
+                     [[n, f"{r['n']:,}", _p(r["accuracy"]), _p(r["false_unknown_rate"]), _p(r.get("combined")),
+                       _p(r.get("combined_recovery")) if r.get("combined_recovery") is not None else "-"]
+                      for n, r in s["rows"].items()])
+        return out + ["", "Combined score = mean of USR on ambiguous questions and accuracy on stated-answer questions. "
+                          "Hedging can't raise it: what it gains on the first it loses on the second."]
     if key == "dissociation":
         conc = s.get("concentration", {})
         out = _table(["Search", "Parts that help", "Top-5 share of the gain"],

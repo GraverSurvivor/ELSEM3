@@ -132,8 +132,8 @@ Is fairness damage more concentrated than general-ability damage? That sets the 
 | Command | Time | Promote / commit as |
 |---|---|---|
 | `!python -m src.eval.run_quantized --nbits 4 --batch-size 16` | ~30 min | `hqq_4bit` |
-| `!python -m src.attribution.run_repair --patch results/patches/search_top5.json --base-nbits 4 --batch-size 16` | ~30 min | `repair_4bit` |
-| `!python -m src.eval.run_crows_pairs --model fp16` (then `hqq_3bit`, then `patch --patch results/patches/search_top5.json`) | ~10 min each | copy to `results/reference/crows_<condition>/` |
+| `!python -m src.attribution.run_repair --patch results/patches/hedging_penalty.json --base-nbits 4 --batch-size 16` | ~30 min | `repair_4bit` |
+| `!python -m src.eval.run_crows_pairs --model fp16` (then `hqq_3bit`, then `patch --patch results/patches/hedging_penalty.json`) | ~10 min each | copy to `results/reference/crows_<condition>/` |
 | `!python -m src.eval.run_open_ended run --model fp16` (then `hqq_3bit`, then `patch --patch ...`) | ~20 min each | copy to `results/reference/open_ended_<condition>/` |
 
 Fill in the `human_label` column of each `handcheck.csv` (stereotype / anti_stereotype / unknown /
@@ -153,7 +153,7 @@ Does the patch, found with HQQ, still help in llama.cpp's own 3-bit format? One 
 from huggingface_hub import snapshot_download; HF = snapshot_download("microsoft/Phi-3.5-mini-instruct")
 !python /content/llama.cpp/convert_hf_to_gguf.py {HF} --outtype f16 --outfile /content/phi35-f16.gguf
 !/content/llama.cpp/build/bin/llama-quantize /content/phi35-f16.gguf /content/phi35-q3km.gguf Q3_K_M
-!python -m src.product.fairgate export --patch results/patches/search_top5.json --format llamacpp --gguf-in /content/phi35-f16.gguf --gguf-out /content/phi35-q3km-fairgate.gguf --binary /content/llama.cpp/build/bin/llama-quantize --out /content/quantize_fairgate.sh
+!python -m src.product.fairgate export --patch results/patches/hedging_penalty.json --format llamacpp --gguf-in /content/phi35-f16.gguf --gguf-out /content/phi35-q3km-fairgate.gguf --binary /content/llama.cpp/build/bin/llama-quantize --out /content/quantize_fairgate.sh
 !bash /content/quantize_fairgate.sh
 ```
 Then score each one (about 20 minutes each) and promote under the printed condition name:

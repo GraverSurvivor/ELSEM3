@@ -70,3 +70,16 @@ def test_markdown_lists_what_is_pending(tmp_path):
     assert "| Original (fp16) | 200 |" in text
     assert "## Still pending" in text and "CrowS-Pairs" in text.split("## Still pending")[1]
     assert "Not run yet: the 2, 3, 4-module versions." in text
+
+
+def test_main_result_follows_the_pointer_and_shows_the_previous_repair(tmp_path):
+    ref, stats = _setup(tmp_path)
+    _write_run(ref / "repair_new", "hqq_repaired", [UNKNOWN] * 160 + [STEREO] * 40, TOP5[:2])
+    (ref / "MAIN_REPAIR.json").write_text(json.dumps({
+        "name": "new", "label": "New repair", "patch": "x.json", "ambig": "repair_new", "disambig": "repair_new_disambig",
+        "previous": {"name": "search_top5", "label": "First repair", "patch": "y.json", "ambig": "hqq_repaired",
+                     "disambig": "hqq_repaired_disambig"}}), encoding="utf-8")
+    main = collect(ref, stats, only={"main"})["main"]
+    assert list(main["rows"])[-2:] == ["First repair", "New repair"]
+    assert main["usr_recovery"]["point"] == pytest.approx(0.8)            # (160 - 80) / (180 - 80)
+    assert main["usr_recovery_previous"]["point"] == pytest.approx(0.9)
