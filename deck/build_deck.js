@@ -27,8 +27,11 @@ function readCsv(file) {
 const overall = (run) => readCsv(path.join(REF, run, "category_summary.csv")).find((r) => r.category === "overall");
 const baseline = overall("baseline_fp16");
 const quant = overall("hqq_3bit");
-const repaired = overall("hqq_repaired");
-const repairSummary = JSON.parse(fs.readFileSync(path.join(REF, "hqq_repaired", "summary.json"), "utf8"));
+// The project's main repair, from the pointer every tool reads (src/experiments/main_repair.py).
+const mainRepairFile = path.join(REF, "MAIN_REPAIR.json");
+const MAIN = fs.existsSync(mainRepairFile) ? JSON.parse(fs.readFileSync(mainRepairFile, "utf8")) : { ambig: "hqq_repaired" };
+const repaired = overall(MAIN.ambig);
+const repairSummary = JSON.parse(fs.readFileSync(path.join(REF, MAIN.ambig, "summary.json"), "utf8"));
 const flipped = JSON.parse(fs.readFileSync(path.join(ROOT, "results", "flipped", "hqq_3bit.json"), "utf8"));
 
 const pct = (x, d = 1) => `${(100 * Number(x)).toFixed(d)}%`;
@@ -218,7 +221,7 @@ function bullets(slide, items, opts) {
   s.addNotes(
     "How we differ: Rath & Maliakkal (arXiv 2605.15208) detect the same damage on our exact setup but don't repair it. " +
     "Critical Weight Protection (arXiv 2601.12033) is the closest method: per-weight gradient scores, static, at quantization " +
-    "time, 60% of weights kept in FP16 -- ours repairs after compression, from the failing examples, 3.4% of weights, no " +
+    "time, 60% of weights kept in FP16 -- ours repairs after compression, from the failing examples, " + restored.pct_params_restored.toFixed(1) + "% of weights, no " +
     "retraining. Q-resafe (arXiv 2506.20251) repairs after compression but for safety and with DPO/LoRA training. Accuracy-" +
     "oriented mixed precision (LLM.int8, SpQR, AWQ) protects weights for accuracy, not fairness. Hu & Ramachandran (arXiv " +
     "2609.01587) show general-ability damage is diffuse -- the basis for our concentrated-vs-diffuse comparison. " +
@@ -264,16 +267,22 @@ function bullets(slide, items, opts) {
   });
   s.addText(`${restored.modules_restored} modules · ${restored.pct_params_restored.toFixed(1)}% of weights · +${memMb.toFixed(0)} MB`,
     { x, y: 4.4, w: 2.6, h: 0.5, fontFace: BODY, fontSize: 12, bold: true, color: C.navy, margin: 0, isTextBox: true });
-  s.addText("Limitation: Gender identity recovers least (85%).",
+  const catUsr = (run, cat) => Number(readCsv(path.join(REF, run, "category_summary.csv")).find((r) => r.category === cat).usr);
+  const genderRec = (catUsr(MAIN.ambig, "Gender_identity") - catUsr("hqq_3bit", "Gender_identity")) /
+    (catUsr("baseline_fp16", "Gender_identity") - catUsr("hqq_3bit", "Gender_identity"));
+  s.addText(`Limitation: Gender identity recovers least (${pct(genderRec, 0)}).`,
     { x, y: 4.85, w: 2.6, h: 0.3, fontFace: BODY, fontSize: 10, color: C.red, margin: 0, isTextBox: true });
   draft(s, "Person C, update after headline run");
   s.addNotes(
     "Figure: results/figures/conditions_usr.png. Full per-category table with CIs: results/figures/results_table.md. " +
-    "Honest caveats for Q&A: (1) repair overshoots baseline on Age but leaves Gender_identity ~8 points short (85% recovered). " +
-    "(2) Per targeted group (python -m src.stats.groups), 8 of 23 groups end significantly MORE stereotyped than the original " +
-    "model after repair, e.g. women 11.8% -> 17.0%, Hispanic/Latino 5.4% -> 11.0%. (3) The repair moves 84% of the 300 " +
-    "flipped questions the search saw back to 'unknown' vs 77% of the 3,092 it never saw: real, modest fitting to the sample. " +
-    "(4) If a chi-squared p-value is shown, write p < 10^-300, never p = 0.",
+    "Honest caveats for Q&A: (0) This is the hedging-aware repair. The first search's repair recovered 92% but said " +
+    "'unknown' on 20.3% of questions whose story states the answer (original 7.3%); re-running the search with a hedging " +
+    "penalty gives 86% with 10.9%, and better accuracy there than plain 3-bit (83.7% vs 80.8%). (1) Gender_identity recovers " +
+    "least (80%), Age most (97%). (2) Per targeted group (python -m src.stats.groups), 9 of 23 groups end significantly MORE " +
+    "stereotyped than the original model after repair, e.g. women 11.8% -> 18.9%, Hispanic/Latino 5.4% -> 12.5%. (3) The " +
+    "repair moves 77% of the 300 flipped questions the search saw back to 'unknown' vs 72% of the 3,092 it never saw: real, " +
+    "modest fitting to the sample. (4) The FairGate gate still FAILS: 'unknown' 6.7 points below the original, stereotyped " +
+    "answers 2.5 points above. (5) If a chi-squared p-value is shown, write p < 10^-300, never p = 0.",
   );
 }
 

@@ -355,7 +355,8 @@ def read_trials(path: Path) -> list[dict]:
 
 
 def find_trials(reference_dir: Path) -> Path | None:
-    for name in ("search_fairness", "search_fairness_round1"):
+    # The main (hedging-aware) search first: its full log is what the Diagnose replay should show.
+    for name in ("search_hedging_penalty", "search_fairness", "search_fairness_round1"):
         path = Path(reference_dir) / name / "trials.csv"
         if path.exists():
             return path

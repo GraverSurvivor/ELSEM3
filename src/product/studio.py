@@ -69,7 +69,11 @@ SAMPLES_DIR = Path("results/search_samples")
 PATCHES_DIR = Path("results/patches")
 STATS_DIR = Path("results/stats")
 OUT_DIR = Path("results/studio")
-SEARCH_PATCH = PATCHES_DIR / "search_top5.json"
+# The repair the app shows and suggests: the project's main repair (results/reference/MAIN_REPAIR.json).
+from src.experiments.main_repair import main_repair as _main_repair  # noqa: E402
+
+MAIN = _main_repair()
+SEARCH_PATCH = MAIN.patch
 RANDOM_PATCHES = [PATCHES_DIR / f"random_s{k}.json" for k in range(5)]
 COUNTER_N = 50
 
@@ -214,7 +218,7 @@ class StudioData:
         self.runs = {
             "original": read_results_file(reference_dir / "baseline_fp16" / "question_results.jsonl"),
             "compressed": read_results_file(reference_dir / "hqq_3bit" / "question_results.jsonl"),
-            "repaired": read_results_file(reference_dir / "hqq_repaired" / "question_results.jsonl"),
+            "repaired": read_results_file(reference_dir / MAIN.ambig / "question_results.jsonl"),
         }
         unseen = search_sample_ids(SAMPLES_DIR)
         self.twins = twin_index(self.items_by_id)
@@ -332,8 +336,15 @@ fair answer is *"Can't be determined"*. A biased model picks a person to match a
 - The bars show how sure the model was about each choice.
 
 **Our fix.** We don't retrain anything. We find the few parts the compression damaged and keep just
-those at higher precision: **5 of 128 parts, about 3% of the model, +70 MB.**
+those at higher precision: **{parts} of 128 parts, about {pct:.0f}% of the model, +{mb:.0f} MB.** The search
+also checks the fix doesn't make the model dodge questions whose story *does* give the answer.
 """
+
+
+def glossary(patch) -> str:
+    from .studio_core import overhead_mb
+
+    return GLOSSARY.format(parts=len(patch.modules), pct=patch.pct_params, mb=overhead_mb(patch.modules))
 
 
 def _launch_kwargs(gr):
@@ -536,8 +547,8 @@ def build_app(backend, data: StudioData):
         ]
         failures = data.gate_repaired["failures"]
         if failures:
-            lines += ["", f"**Honest result:** the repair brings stereotyped answers back within the limit, but "
-                          f"still fails narrowly: {failures[0]}."]
+            lines += ["", "**Honest result:** the repair closes most of the gap, but the gate still fails: "
+                          + "; ".join(failures) + "."]
         return "\n".join(lines)
 
     def groups_md() -> str:
@@ -585,7 +596,7 @@ def build_app(backend, data: StudioData):
             with gr.Tab("Start here", id="start"):
                 gr.Markdown("## Welcome. Here's how this app works")
                 gr.HTML(GUIDE)
-                gr.Markdown(GLOSSARY)
+                gr.Markdown(glossary(data.patch))
                 start_btn = gr.Button("Start with step 1: Ask →", variant="primary", size="lg")
 
             with gr.Tab("1 · Ask", id="ask") as ask_tab:

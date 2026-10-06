@@ -9,19 +9,21 @@ Recovery = share of the fairness ("unknown" answers) that compression lost and t
 |---|---|---|---|---|
 | Original (fp16) | 12,140 | 84.0% | 11.7% | +0.074 |
 | HQQ 3-bit | 12,140 | 36.5% | 37.3% | +0.111 |
-| 3-bit + search patch | 12,140 | 80.4% | 12.6% | +0.055 |
+| 3-bit + first repair (no hedging penalty) | 12,140 | 80.4% | 12.6% | +0.055 |
+| 3-bit + hedging-aware repair | 12,140 | 77.3% | 14.2% | +0.057 |
 
-USR recovered by the search patch: **92% [91%, 94%]**
+USR recovered by the main repair (3-bit + hedging-aware repair): **86% [84%, 87%]**
+By the previous repair (3-bit + first repair (no hedging penalty)): 92% [91%, 94%]. It hedged: see the hedging check.
 
 ## Per category
 
 | Category | USR fp16 / 3-bit / repaired | SRS fp16 / 3-bit / repaired | USR recovered |
 |---|---|---|---|
-| Age | 72.0% / 31.4% / 75.4% | 24.7% / 43.3% / 18.3% | 108% [103%, 114%] |
-| Gender_identity | 83.9% / 33.2% / 76.1% | 11.2% / 37.9% / 14.7% | 85% [82%, 87%] |
-| Race_ethnicity | 85.9% / 34.5% / 80.6% | 6.7% / 33.6% / 9.9% | 90% [87%, 92%] |
-| Religion | 87.5% / 48.3% / 83.8% | 9.7% / 30.2% / 10.0% | 91% [84%, 99%] |
-| SES | 88.1% / 41.9% / 86.0% | 10.5% / 38.5% / 10.8% | 95% [93%, 98%] |
+| Age | 72.0% / 31.4% / 70.5% | 24.7% / 43.3% / 20.9% | 97% [91%, 102%] |
+| Gender_identity | 83.9% / 33.2% / 73.8% | 11.2% / 37.9% / 15.9% | 80% [77%, 83%] |
+| Race_ethnicity | 85.9% / 34.5% / 76.1% | 6.7% / 33.6% / 12.0% | 81% [79%, 84%] |
+| Religion | 87.5% / 48.3% / 82.2% | 9.7% / 30.2% / 11.8% | 86% [79%, 94%] |
+| SES | 88.1% / 41.9% / 84.3% | 10.5% / 38.5% / 11.7% | 92% [89%, 95%] |
 
 ## Does the answer depend on the letter?
 
@@ -29,11 +31,14 @@ USR recovered by the search patch: **92% [91%, 94%]**
 |---|---|---|---|---|
 | Original (fp16) | 81.6% | 84.8% | 85.7% | 29.8% / 35.8% / 34.4% |
 | HQQ 3-bit | 14.4% | 42.2% | 52.6% | 13.5% / 46.3% / 40.1% |
-| 3-bit + search patch | 61.6% | 85.3% | 94.2% | 21.3% / 39.9% / 38.8% |
+| 3-bit + first repair (no hedging penalty) | 61.6% | 85.3% | 94.2% | 21.3% / 39.9% / 38.8% |
+| 3-bit + hedging-aware repair | 55.6% | 85.6% | 90.3% | 20.1% / 43.3% / 36.6% |
 
 A model with no letter effect says "unknown" equally often wherever it is listed.
 
 ## Recovery by number of modules
+
+The first repair (search_top5), restored one module at a time.
 
 | Modules | Added | % of weights | Memory added | USR recovered |
 |---|---|---|---|---|
@@ -43,7 +48,9 @@ A model with no letter effect says "unknown" equally often wherever it is listed
 | 4 | L13.self_attn.qkv_proj | 3.12% | 65 MB | 87% [86%, 89%] |
 | 5 | L10.self_attn.o_proj | 3.39% | 70 MB | 92% [91%, 94%] |
 
-## Is it really fairness? Matched-weight baselines
+## Is it really fairness? Same-size baselines
+
+Each alternative restores the same number of weights as the first repair (search_top5).
 
 | Patch | USR recovered | Search minus this |
 |---|---|---|
@@ -56,15 +63,19 @@ A model with no letter effect says "unknown" equally often wherever it is listed
 | random_s3 | 15% [14%, 16%] | 78% [76%, 79%] |
 | random_s4 | 7% [6%, 8%] | 86% [84%, 87%] |
 
-**Verdict: hedging.** The repaired model answers 'unknown' significantly more often where the answer is stated. Re-run the search with the hedging penalty (run_search --penalty-sample).
+**Verdict for the first repair: hedging.** The repaired model answers 'unknown' significantly more often where the answer is stated. Re-run the search with the hedging penalty (run_search --penalty-sample).
+The main repair, found with the hedging penalty, cuts the extra "unknown" on stated-answer questions from +13.0 points [+12.3, +13.7] to +3.6 points [+3.1, +4.2] above the original.
 
 ## Hedging check (disambiguated questions)
 
-| Model | n | Accuracy | False "unknown" |
-|---|---|---|---|
-| Original (fp16) | 12,140 | 91.5% | 7.3% |
-| HQQ 3-bit | 12,140 | 80.8% | 3.8% |
-| 3-bit + search patch | 12,140 | 73.9% | 20.3% |
+| Model | n | Accuracy | False "unknown" | Combined score | Combined recovery |
+|---|---|---|---|---|---|
+| Original (fp16) | 12,140 | 91.5% | 7.3% | 87.8% | - |
+| HQQ 3-bit | 12,140 | 80.8% | 3.8% | 58.7% | - |
+| 3-bit + first repair (no hedging penalty) | 12,140 | 73.9% | 20.3% | 77.2% | 63.6% |
+| 3-bit + hedging-aware repair | 12,140 | 83.7% | 10.9% | 80.5% | 75.0% |
+
+Combined score = mean of USR on ambiguous questions and accuracy on stated-answer questions. Hedging can't raise it: what it gains on the first it loses on the second.
 
 ## Concentrated vs spread out
 
@@ -88,25 +99,26 @@ A model with no letter effect says "unknown" equally often wherever it is listed
 - Probing the 20% least-confident questions catches **29.3%** of all flips
 - Least-confident quarter flips **2.1x** as often as the most confident
 
-## Robustness of the 92%
+## Robustness of the recovery
 
-- 95% CI bounds across bootstrap seeds: lower 90.8%-91.1%, upper 93.8%-94.2%
-- Flipped questions the search saw: 84.3% fixed; never saw: 77.0% fixed (gap +7.3 points)
+- 95% CI bounds across bootstrap seeds: lower 84.3%-84.5%, upper 87.3%-87.6%
+- Flipped questions the search saw: 77.3% fixed; never saw: 72.2% fixed (gap +5.1 points)
 
 ## Per targeted group
 
-**8 of 23** targeted groups end up significantly more stereotyped than with the original model after the repair.
+**9 of 23** targeted groups end up significantly more stereotyped than with the original model after the repair.
 
 | Group | Category | SRS fp16 | 3-bit | Repaired |
 |---|---|---|---|---|
-| Transgender women / transgender men / trans | Gender_identity | 7.7% | 46.7% | 15.1% |
+| Native American / African American / Hispanic / Latino / Black | Race_ethnicity | 6.3% | 51.7% | 17.0% |
+| Muslim | Religion | 7.5% | 38.8% | 15.0% |
+| Hispanic / Latino | Race_ethnicity | 5.4% | 31.7% | 12.5% |
+| F | Gender_identity | 11.8% | 39.4% | 18.9% |
 | Atheist | Religion | 0.0% | 23.3% | 6.7% |
-| Native American / African American / Hispanic / Latino / Black | Race_ethnicity | 6.3% | 51.7% | 12.3% |
-| Hispanic / Latino | Race_ethnicity | 5.4% | 31.7% | 11.0% |
-| F | Gender_identity | 11.8% | 39.4% | 17.0% |
-| Middle Eastern / Arab | Race_ethnicity | 4.6% | 34.2% | 9.6% |
-| Muslim / Mormon / Orthodox / Catholic | Religion | 0.0% | 14.2% | 5.0% |
-| Black / African American | Race_ethnicity | 7.2% | 32.9% | 10.0% |
+| Muslim / Mormon / Orthodox / Catholic | Religion | 0.0% | 14.2% | 6.7% |
+| Transgender women / transgender men / trans | Gender_identity | 7.7% | 46.7% | 13.2% |
+| Middle Eastern / Arab | Race_ethnicity | 4.6% | 34.2% | 9.8% |
+| Black / African American | Race_ethnicity | 7.2% | 32.9% | 12.3% |
 
 ## Headline: three failure windows
 

@@ -1,0 +1,25 @@
+{
+  "name": "hedging_penalty",
+  "modules": [
+    "model.layers.1.self_attn.qkv_proj",
+    "model.layers.14.self_attn.qkv_proj",
+    "model.layers.8.self_attn.qkv_proj",
+    "model.layers.13.self_attn.qkv_proj",
+    "model.layers.16.self_attn.qkv_proj"
+  ],
+  "nbits": 8,
+  "source": {
+    "kind": "search",
+    "search_run_id": "search_20261004T095839Z",
+    "penalty_sample": "results/search_samples/hedging_probe_n200_seed0.json",
+    "penalty_weight": 1.0
+  },
+  "base": {
+    "method": "hqq",
+    "nbits": 3,
+    "group_size": 64,
+    "compute_dtype": "fp16"
+  },
+  "model_id": "microsoft/Phi-3.5-mini-instruct",
+  "params": 141557760
+}

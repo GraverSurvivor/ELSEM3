@@ -85,9 +85,14 @@ def sample_representativeness(flipped_ids: list[str], sample_ids: set[str], repa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--repaired", type=Path, default=REFERENCE_DIR / "hqq_repaired")
+    parser.add_argument("--repaired", type=Path, help="repair run folder (default: the main repair)")
     parser.add_argument("--out", type=Path, default=Path("results/stats/sensitivity.json"))
     args = parser.parse_args()
+    if args.repaired is None:
+        from src.experiments.main_repair import main_repair
+
+        args.repaired = main_repair().ambig_dir()
+    print(f"Repair: {args.repaired}")
 
     load = lambda d: read_results_file(Path(d) / "question_results.jsonl")
     base, q3, rep = load(REFERENCE_DIR / "baseline_fp16"), load(REFERENCE_DIR / "hqq_3bit"), load(args.repaired)

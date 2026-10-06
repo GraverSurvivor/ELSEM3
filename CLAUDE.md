@@ -193,6 +193,17 @@ additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in
   flipped-set items no search sample contains. `--offline` runs on saved results and shows only
   states a promoted run measured. The replay reads `results/reference/search_fairness*/trials.csv`.
 
+**The main repair (since Phase 2) is the hedging-aware one**, named in
+`results/reference/MAIN_REPAIR.json` and read through `src/experiments/main_repair.py` by the final
+tables, FairGate, Studio, groups, sensitivity, figures and the deck. It restores 5 attention-input
+modules (layers 1, 14, 8, 13, 16; `results/patches/hedging_penalty.json`, 3.91% of weights, +81 MB):
+86% [84, 87] of the lost "unknown" back, false "unknown" on stated-answer questions 10.9% (original
+7.3%, +3.6 points [+3.1, +4.2]), stated-answer accuracy 83.7% (3-bit 80.8%), combined recovery 75%.
+The first repair (search_top5, 92%, but 20.3% false "unknown", combined 64%) stays as `previous` and
+as the patch the same-size baselines and prefix runs were built for; it beats every baseline (best:
+largest-error, 71%). With the main repair, 9 of 23 targeted groups end more stereotyped than the
+original. Numbers below about "the 92%" refer to the first repair.
+
 Findings already computed from committed runs, to keep in mind when writing anything up: the 92%
 recovery is stable across bootstrap settings and benchmark subsets; the repair moves 84% of the
 search sample's flipped items back to "unknown" but 77% of those it never saw; and per targeted

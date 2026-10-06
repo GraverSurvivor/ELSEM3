@@ -1,0 +1,16 @@
+{
+  "_why": "The project's main repair. Phase 2 found the first search's patch (search_top5) hedges: it says 'unknown' on 20.3% of stated-answer questions vs the original's 7.3%. The search re-run with a hedging penalty gives this patch: 86% of lost fairness back with 10.9% false 'unknown'. Every tool reads this file, so switching the main repair is a one-line change.",
+  "name": "hedging_penalty",
+  "label": "3-bit + hedging-aware repair",
+  "patch": "results/patches/hedging_penalty.json",
+  "ambig": "repair_hedging_penalty",
+  "disambig": "repair_hedging_penalty_disambig",
+  "search": "search_hedging_penalty",
+  "previous": {
+    "name": "search_top5",
+    "label": "3-bit + first repair (no hedging penalty)",
+    "patch": "results/patches/search_top5.json",
+    "ambig": "hqq_repaired",
+    "disambig": "hqq_repaired_disambig"
+  }
+}

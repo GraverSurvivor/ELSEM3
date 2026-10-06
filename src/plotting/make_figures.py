@@ -37,7 +37,10 @@ from src.plotting.usr_chart import plot_usr_per_category  # noqa: E402
 
 REFERENCE_DIR = Path("results/reference")
 # Reference directory -> the condition label used on charts (and in CONDITION_PALETTE).
-DEFAULT_RUNS = {"baseline_fp16": "baseline", "hqq_3bit": "hqq_3bit", "hqq_repaired": "hqq_repaired"}
+# The repaired run is the project's main repair (results/reference/MAIN_REPAIR.json).
+from src.experiments.main_repair import main_repair  # noqa: E402
+
+DEFAULT_RUNS = {"baseline_fp16": "baseline", "hqq_3bit": "hqq_3bit", main_repair().ambig: "hqq_repaired"}
 
 
 def _save(fig: plt.Figure, name: str) -> Path:
