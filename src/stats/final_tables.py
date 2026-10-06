@@ -293,9 +293,10 @@ def groups_section(stats: Path) -> dict:
 
 
 def headline_section(ref: Path) -> dict:
-    data = _json(Path(ref) / "headline" / "headline.json")
+    data = (_json(Path(ref) / "headline" / "headline.json")
+            or _json(Path(ref) / "headline_runs" / "headline_combined" / "report" / "headline.json"))
     if not data:
-        return _pending("RUNBOOK Phase 4 (headline windows), then copy headline.json to results/reference/headline/")
+        return _pending("RUNBOOK Phase 4 (headline windows, see REMAINING_COLAB.md)")
     windows = {name: {"kept": w["kept"], "usr_recovery": w["bundle"]["fairness_recovered"]["usr"]["recovery"]}
                for name, w in data.get("windows", {}).items()}
     return _done(windows=windows, overlap=data.get("overlap"), skipped=data.get("skipped", {}))

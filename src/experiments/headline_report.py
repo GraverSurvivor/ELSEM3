@@ -15,6 +15,11 @@ Writes under results/<headline_id>/report/:
     conditions_usr.png             baseline vs 3-bit vs each window's repair, per category
 
     python -m src.experiments.headline_report headline_<ts>
+
+When the windows ran as separate experiments (one per account, in parallel), name them all and say
+where their folders are; their windows are combined into one report under `headline_combined/`:
+
+    python -m src.experiments.headline_report headline_a headline_b headline_c --results-dir results/reference/headline_runs
 """
 
 from __future__ import annotations
@@ -156,7 +161,35 @@ def build_report(headline_id: str, results_dir: Path = RESULTS_DIR) -> dict:
     return report
 
 
-def write_report(report: dict, out_dir: Path) -> None:
+def combine_manifests(headline_ids: list[str], results_dir: Path, combined_id: str = "headline_combined") -> str:
+    """One manifest holding every window of several experiments, so one report covers them. Refuses
+    experiments run with different search settings, or the same window twice."""
+    combined = None
+    for headline_id in headline_ids:
+        manifest = _load_json(results_dir / headline_id / "manifest.json")
+        config = {k: v for k, v in manifest["config"].items() if k != "mirror"}
+        if combined is None:
+            combined = {**manifest, "headline_id": combined_id, "config": config, "windows": {}, "combined_from": []}
+        elif config != combined["config"]:
+            raise SystemExit(f"{headline_id} used different settings ({config}) from the others ({combined['config']})")
+        for name, state in manifest["windows"].items():
+            if name in combined["windows"] and state.get("repair_run_id"):
+                raise SystemExit(f"window {name} appears in more than one experiment")
+            if state.get("repair_run_id") or name not in combined["windows"]:
+                combined["windows"][name] = state
+        combined["combined_from"].append(headline_id)
+    out = results_dir / combined_id
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "manifest.json").write_text(json.dumps(combined, indent=2), encoding="utf-8")
+    return combined_id
+
+
+def _run_ref(results_dir: Path, run_id: str) -> str:
+    """A run id as read_category_summary resolves it: relative to results/."""
+    return Path(results_dir, run_id).resolve().relative_to(RESULTS_DIR.resolve()).as_posix()
+
+
+def write_report(report: dict, out_dir: Path, results_dir: Path = RESULTS_DIR) -> None:
     windows = report.pop("_windows")
     out_dir.mkdir(parents=True, exist_ok=True)
     if not windows:
@@ -178,7 +211,7 @@ def write_report(report: dict, out_dir: Path) -> None:
     runs = {"baseline": read_category_summary("reference/baseline_fp16"),
             "hqq_3bit": read_category_summary("reference/hqq_3bit")}
     for n, w in windows.items():
-        runs[f"repaired ({n})"] = read_category_summary(w["state"]["repair_run_id"])
+        runs[f"repaired ({n})"] = read_category_summary(_run_ref(results_dir, w["state"]["repair_run_id"]))
     figures["conditions_usr"] = plot_conditions_per_category(
         runs, "usr", title="USR per category: baseline vs 3-bit vs each window's repair",
         colors={f"repaired ({n})": c for n, c in colors.items()},
@@ -190,12 +223,16 @@ def write_report(report: dict, out_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("headline_id", help="e.g. headline_20261020T101500Z")
+    parser.add_argument("headline_ids", nargs="+", help="e.g. headline_20261020T101500Z (several are combined)")
+    parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR,
+                        help="where the experiment and run folders are (default: results/)")
     args = parser.parse_args()
 
-    report = build_report(args.headline_id)
-    out_dir = RESULTS_DIR / args.headline_id / "report"
-    write_report(report, out_dir)
+    headline_id = (combine_manifests(args.headline_ids, args.results_dir) if len(args.headline_ids) > 1
+                   else args.headline_ids[0])
+    report = build_report(headline_id, args.results_dir)
+    out_dir = args.results_dir / headline_id / "report"
+    write_report(report, out_dir, args.results_dir)
 
     print((out_dir / "headline_table.md").read_text(encoding="utf-8"))
     print((out_dir / "per_category_recovery.md").read_text(encoding="utf-8"))

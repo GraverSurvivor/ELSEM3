@@ -169,3 +169,94 @@ def test_overlap_partial():
 def test_overlap_needs_two_windows():
     with pytest.raises(ValueError):
         localization_overlap({"a": [Q.format(1)]})
+
+
+# --- hedging penalty, search resume, mirror ------------------------------------------------------
+
+def _penalised_manifest(mirror=None):
+    config = {"n": 20, "seed": 0, "threshold": 0.01, "nbits": 8, "max_rounds": 5, "batch_size": 16,
+              "penalty_sample": "results/search_samples/hedging_probe_n200_seed0.json", "penalty_weight": 1.0,
+              "mirror": mirror}
+    return Manifest(Path("results/headline_x/manifest.json"), {"headline_id": "headline_x", "config": config, "windows": {}})
+
+
+def test_search_gets_the_hedging_penalty(in_tmp):
+    from src.experiments.headline import search_argv
+
+    manifest, runner = _penalised_manifest(), FakeRunner()
+    run_window(manifest, "age_heavy", _flipped(), Path("results"), runner=runner)
+    search = runner.calls[0]
+    assert search[search.index("--penalty-sample") + 1] == "results/search_samples/hedging_probe_n200_seed0.json"
+    assert search[search.index("--penalty-weight") + 1] == "1.0"
+    old = search_argv({"threshold": 0.01, "nbits": 8, "max_rounds": 5, "batch_size": 16}, "s.json")
+    assert "--penalty-sample" not in old  # manifests from before the penalty keep running the old search
+
+
+class DyingSearch(FakeRunner):
+    """The first search dies after checkpointing; the next call must resume it."""
+
+    def __call__(self, argv):
+        if argv[1] == "src.attribution.run_search" and "--resume" not in argv and not self.calls:
+            self.calls.append(argv)
+            self.n += 1
+            out = Path("results") / f"search_{self.n}"
+            out.mkdir(parents=True)
+            (out / "progress.json").write_text("{}", encoding="utf-8")
+            raise subprocess.CalledProcessError(1, argv)
+        if argv[1] == "src.attribution.run_search" and "--resume" in argv:
+            self.calls.append(argv)
+            out = Path("results") / argv[argv.index("--resume") + 1]
+            (out / "summary.json").write_text(json.dumps({"kept": self.kept}), encoding="utf-8")
+            return
+        super().__call__(argv)
+
+
+def test_interrupted_search_is_resumed_not_restarted(in_tmp):
+    manifest, runner = _penalised_manifest(), DyingSearch()
+    with pytest.raises(subprocess.CalledProcessError):
+        run_window(manifest, "balanced", _flipped(), Path("results"), runner=runner)
+    assert manifest.data["windows"]["balanced"]["search_run_id"] == "search_1"
+    run_window(manifest, "balanced", _flipped(), Path("results"), runner=runner)
+    assert runner.calls[1][-2:] == ["--resume", "search_1"]
+    assert manifest.data["windows"]["balanced"]["search_run_id"] == "search_1"
+    assert manifest.data["windows"]["balanced"]["repair_run_id"] is not None
+
+
+def test_mirror_restores_what_a_dead_session_lost(in_tmp):
+    import shutil
+
+    mirror = Path("drive")
+    manifest, runner = _penalised_manifest(mirror.as_posix()), FakeRunner()
+    run_window(manifest, "ses_heavy", _flipped(), Path("results"), runner=runner)
+    state = dict(manifest.data["windows"]["ses_heavy"])
+    assert (mirror / "headline_x" / "manifest.json").exists()
+    assert (mirror / state["search_run_id"] / "summary.json").exists()
+    assert (mirror / state["repair_run_id"] / "summary.json").exists()
+
+    shutil.rmtree("results")  # the session died and took its disk with it
+    run_window(manifest, "ses_heavy", _flipped(), Path("results"), runner=runner)
+    assert len(runner.calls) == 2  # nothing re-run: both runs came back from the mirror
+    assert (Path("results") / state["repair_run_id"] / "summary.json").exists()
+
+
+def test_separate_window_experiments_combine_into_one_report(tmp_path):
+    from src.experiments.headline_report import combine_manifests
+
+    config = {"n": 300, "seed": 0, "threshold": 0.01, "nbits": 8, "max_rounds": 5, "batch_size": 16,
+              "penalty_sample": "p.json", "penalty_weight": 1.0}
+    for hid, window, mirror in (("headline_a", "age_heavy", "/drive/a"), ("headline_b", "ses_heavy", "/drive/b")):
+        (tmp_path / hid).mkdir()
+        (tmp_path / hid / "manifest.json").write_text(json.dumps(
+            {"headline_id": hid, "config": {**config, "mirror": mirror},
+             "windows": {window: {"search_run_id": f"search_{window}", "repair_run_id": f"hqq_repaired_{window}"}}}),
+            encoding="utf-8")
+    combined_id = combine_manifests(["headline_a", "headline_b"], tmp_path)
+    combined = json.loads((tmp_path / combined_id / "manifest.json").read_text(encoding="utf-8"))
+    assert set(combined["windows"]) == {"age_heavy", "ses_heavy"}  # different Drive paths don't matter
+    assert combined["combined_from"] == ["headline_a", "headline_b"]
+
+    (tmp_path / "headline_c").mkdir()
+    (tmp_path / "headline_c" / "manifest.json").write_text(json.dumps(
+        {"headline_id": "headline_c", "config": {**config, "penalty_sample": None}, "windows": {}}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="different settings"):
+        combine_manifests(["headline_a", "headline_c"], tmp_path)
