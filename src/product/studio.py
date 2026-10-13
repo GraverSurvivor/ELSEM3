@@ -39,6 +39,8 @@ from .studio_core import (
     SavedBackend,
     answer_card_html,
     answer_orders,
+    repair_has_no_effect,
+    verified_examples,
     combine_orders,
     count_answers,
     counter_html,
@@ -302,6 +304,9 @@ class StudioData:
         unseen = search_sample_ids(SAMPLES_DIR)
         self.twins = twin_index(self.items_by_id)
         self.examples = pick_examples(self.items_by_id, flipped_ids, self.runs["repaired"], unseen, twins=self.twins)
+        # A larger pool for the live app, which keeps only the questions its own models reproduce.
+        self.example_pool = pick_examples(self.items_by_id, flipped_ids, self.runs["repaired"], unseen,
+                                          per_category=12, twins=self.twins)
         self.counter_items = [self.items_by_id[q] for q in pick_counter_set(flipped_ids, unseen, n=COUNTER_N)]
         self.patch = load_patch(SEARCH_PATCH)
         self.random_patches = [load_patch(p) for p in RANDOM_PATCHES if p.exists()]
@@ -680,7 +685,9 @@ def build_app(backend, data: StudioData):
 
             with gr.Tab("1 · Ask", id="ask") as ask_tab:
                 gr.HTML(_help(
-                    "Pick a question from the list. The three cards show each model's answer.",
+                    "Pick a question from the list. The three cards show each model's answer. "
+                    + ("Every example was checked on these live models when the app started, in both word orders."
+                       if backend.live else "Examples come from the saved full-benchmark runs."),
                     "Press <b>Swap the two people</b> to tell the story in the other order. Each card then says "
                     "whether its answer follows <i>who</i> the person is (a stereotype) or <i>where</i> they "
                     "appear (word order).",
@@ -813,10 +820,43 @@ def self_check(backend, data) -> str:
         ok &= same >= 0.9 * len(data.counter_items)
         parts.append(f"{view} {same}/{len(data.counter_items)}")
     print("Self-check against the saved runs: " + ", ".join(parts))
-    if ok:
+    warnings = []
+    if repair_has_no_effect(backend.answers_for(data.counter_items, "compressed"),
+                            backend.answers_for(data.counter_items, "repaired")):
+        warnings.append("the repair is not taking effect (repaired answers = compressed answers)")
+    try:
+        from src.eval.check_reproduction import installed_vs_locked
+
+        drift = [f"{name} {have} (runs used {locked})" for name, have, locked in installed_vs_locked()
+                 if locked != "not in lock" and have != locked]
+    except Exception:  # noqa: BLE001 -- a missing lock file shouldn't stop the app
+        drift = []
+    if drift:
+        warnings.append("library versions differ from the reference runs: " + "; ".join(drift))
+    for warning in warnings:
+        print("WARNING:", warning)
+    if ok and not warnings:
         return "Live on GPU · matches the saved runs: " + ", ".join(parts)
-    return ("⚠ Live on GPU, but differs from the saved runs (" + ", ".join(parts) +
-            "). Run python -m src.eval.check_reproduction")
+    head = "Live on GPU · matches the saved runs" if ok else "⚠ Live on GPU, but differs from the saved runs"
+    return f"{head} ({', '.join(parts)})" + "".join(f" · ⚠ {w}" for w in warnings)
+
+
+def verify_examples_live(backend, data) -> int:
+    """Replace the example questions with the ones the live models reproduce (see
+    studio_core.verified_examples). Returns how many passed; keeps the saved-run picks if none do."""
+    pool = data.example_pool
+    twins = {it.question_id: data.items_by_id[data.twins[it.question_id]] for it in pool if it.question_id in data.twins}
+    questions = pool + list(twins.values())
+    answers = {}
+    for view in VIEWS:
+        scored = backend.answers_for(questions, view)
+        if scored is not None:
+            answers[view] = {it.question_id: a for it, a in zip(questions, scored)}
+    verified = verified_examples(pool, twins, answers)
+    print(f"{len(verified)} of {len(pool)} candidate example questions show the effect on the live models")
+    if verified:
+        data.examples = verified
+    return len(verified)
 
 
 def main() -> None:
@@ -842,6 +882,9 @@ def main() -> None:
             backend.set_restored(list(data.patch.modules))  # open with the search's repair applied
         with timed("self-check against the saved runs"):
             backend.mode_label = self_check(backend, data)
+        with timed("check the example questions on the live models"):
+            if verify_examples_live(backend, data) == 0:
+                backend.mode_label += " · ⚠ no example question reproduces on these models"
         if backend.model_source == "saved copy" and "differs" in backend.mode_label:
             print(f"The saved 3-bit model may be stale: delete {args.cache_dir} and launch again.")
     print(f"[start-up] ready in {time.perf_counter() - started:.0f} s")
