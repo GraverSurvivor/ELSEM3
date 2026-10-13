@@ -16,13 +16,17 @@ fresh process and so a freshly loaded model -- one window's promotions can never
 next window's search.
 
 Everything is recorded in results/headline_<ts>/manifest.json after every step. A full run is
-3 x (search ~2-2.5 h + repair ~20 min) on a T4 -- longer than one Kaggle session is safe for -- so
-`--resume` skips finished steps and continues an interrupted repair in place. (An interrupted
-*search* restarts, since run_search has no resume; its partial trials.csv stays on disk.)
+3 x (search ~6-7 h with the hedging penalty + repair ~20 min) on a T4 -- longer than one session is
+safe for -- so `--resume` skips finished steps, continues an interrupted search where it stopped
+(run_search --resume) and an interrupted repair in place.
 
-    python -m src.experiments.headline
-    python -m src.experiments.headline --windows age_heavy          # one window per session
-    python -m src.experiments.headline --resume headline_<ts>
+The searches use the hedging penalty by default, like the project's main repair (Phase 2 found the
+unpenalised search's repair hedges); `--no-penalty` runs the original search. On Colab, pass
+`--mirror <folder on Google Drive>`: the manifest, every search's progress and every finished run are
+copied there, and `--resume` restores whatever the dead session's disk lost.
+
+    python -m src.experiments.headline --windows age_heavy --mirror /content/drive/MyDrive/ELSEM3_headline
+    python -m src.experiments.headline --resume headline_<ts> --mirror /content/drive/MyDrive/ELSEM3_headline
     python -m src.experiments.headline --dry-run                    # print the plan, run nothing
 
 Don't run two of these (or a separate run_search/run_repair) at once in the same results/: each
@@ -35,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -48,6 +53,7 @@ from src.experiments.windows import WINDOWS, ensure_window_sample
 
 REFERENCE_DIR = Path("results/reference")
 DEFAULT_FLIPPED = Path("results/flipped/hqq_3bit.json")
+DEFAULT_PENALTY_SAMPLE = Path("results/search_samples/hedging_probe_n200_seed0.json")
 
 Runner = Callable[[list[str]], None]
 
@@ -93,6 +99,13 @@ class Manifest:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         _write_atomically(self.path, lambda handle: json.dump(self.data, handle, indent=2))
+        mirror = self.data.get("config", {}).get("mirror")
+        if mirror:
+            target = Path(mirror) / self.path.parent.name
+            target.mkdir(parents=True, exist_ok=True)
+            for file in self.path.parent.iterdir():
+                if file.is_file():
+                    shutil.copy2(file, target / file.name)
 
     def window(self, name: str) -> dict:
         return self.data["windows"].setdefault(
@@ -102,6 +115,31 @@ class Manifest:
 
 def _finished(results_dir: Path, run_id: str | None) -> bool:
     return run_id is not None and (results_dir / run_id / "summary.json").exists()
+
+
+def _restore(results_dir: Path, mirror: str | None, run_id: str | None) -> None:
+    """Bring a run back from the mirror when this machine's disk no longer has it."""
+    if mirror and run_id and not (results_dir / run_id).exists() and (Path(mirror) / run_id).exists():
+        shutil.copytree(Path(mirror) / run_id, results_dir / run_id)
+        print(f"Restored {run_id} from {mirror}")
+
+
+def _save_to_mirror(results_dir: Path, mirror: str | None, run_id: str | None) -> None:
+    if mirror and run_id and (results_dir / run_id).exists():
+        shutil.copytree(results_dir / run_id, Path(mirror) / run_id, dirs_exist_ok=True)
+
+
+def search_argv(config: dict, sample_path: str, resume_id: str | None = None) -> list[str]:
+    argv = ["-m", "src.attribution.run_search", "--sample", sample_path,
+            "--threshold", str(config["threshold"]), "--nbits", str(config["nbits"]),
+            "--max-rounds", str(config["max_rounds"]), "--batch-size", str(config["batch_size"])]
+    if config.get("penalty_sample"):
+        argv += ["--penalty-sample", config["penalty_sample"], "--penalty-weight", str(config["penalty_weight"])]
+    if config.get("mirror"):
+        argv += ["--mirror", config["mirror"]]
+    if resume_id:
+        argv += ["--resume", resume_id]
+    return argv
 
 
 def run_window(
@@ -123,24 +161,27 @@ def run_window(
         manifest.save()
 
     # 2. Search
+    mirror = config.get("mirror")
+    _restore(results_dir, mirror, state["search_run_id"])
     if _finished(results_dir, state["search_run_id"]):
         print(f"[{name}] search {state['search_run_id']} already finished, skipping")
     else:
-        argv = ["-m", "src.attribution.run_search", "--sample", state["sample_path"],
-                "--threshold", str(config["threshold"]), "--nbits", str(config["nbits"]),
-                "--max-rounds", str(config["max_rounds"]), "--batch-size", str(config["batch_size"])]
+        previous = state["search_run_id"]
+        places = [results_dir] + ([Path(mirror)] if mirror else [])
+        checkpoint = bool(previous) and any((d / previous / "progress.json").exists() for d in places)
+        argv = search_argv(config, state["sample_path"], resume_id=previous if checkpoint else None)
         print(f"[{name}] search: python {' '.join(argv)}")
         if dry_run:
             return
-        if state["search_run_id"]:
-            print(f"[{name}] previous search {state['search_run_id']} never finished; starting it over")
+        if previous and not checkpoint:
+            print(f"[{name}] previous search {previous} left no checkpoint; starting it over")
         run_id, error = _run_step(argv, results_dir, "search", runner)
-        state["search_run_id"] = run_id
+        state["search_run_id"] = run_id or (previous if checkpoint else None)  # a resume makes no new directory
         manifest.save()
         if error is not None:
             raise error
-        if not _finished(results_dir, run_id):
-            raise RuntimeError(f"[{name}] search did not produce a summary.json (run {run_id})")
+        if not _finished(results_dir, state["search_run_id"]):
+            raise RuntimeError(f"[{name}] search did not produce a summary.json (run {state['search_run_id']})")
 
     summary_path = results_dir / state["search_run_id"] / "summary.json"
     search_summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -152,6 +193,7 @@ def run_window(
         return
 
     # 3. Repair
+    _restore(results_dir, mirror, state["repair_run_id"])
     if _finished(results_dir, state["repair_run_id"]):
         print(f"[{name}] repair {state['repair_run_id']} already finished, skipping")
         return
@@ -169,6 +211,8 @@ def run_window(
         raise error
     if not _finished(results_dir, state["repair_run_id"]):
         raise RuntimeError(f"[{name}] repair did not produce a summary.json (run {state['repair_run_id']})")
+    _save_to_mirror(results_dir, mirror, state["repair_run_id"])
+    _save_to_mirror(results_dir, mirror, state["search_run_id"])
 
 
 def write_detection(out_path: Path) -> None:
@@ -195,6 +239,11 @@ def main() -> None:
     parser.add_argument("--nbits", type=int, default=SearchConfig.nbits)
     parser.add_argument("--max-rounds", type=int, default=SearchConfig.max_rounds)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--penalty-sample", type=Path, default=DEFAULT_PENALTY_SAMPLE,
+                        help="hedging probe for the search's penalty (default: the committed probe)")
+    parser.add_argument("--penalty-weight", type=float, default=1.0)
+    parser.add_argument("--no-penalty", action="store_true", help="run the search without the hedging penalty")
+    parser.add_argument("--mirror", type=Path, help="folder (e.g. on Google Drive) to keep a copy of everything in")
     parser.add_argument("--dry-run", action="store_true", help="draw samples and print the plan; run no GPU step")
     args = parser.parse_args()
 
@@ -202,7 +251,13 @@ def main() -> None:
     flipped = json.loads(args.flipped.read_text(encoding="utf-8"))
 
     if args.resume:
-        manifest = Manifest.load(results_dir / args.resume / "manifest.json")
+        local = results_dir / args.resume / "manifest.json"
+        if not local.exists() and args.mirror and (args.mirror / args.resume / "manifest.json").exists():
+            shutil.copytree(args.mirror / args.resume, results_dir / args.resume, dirs_exist_ok=True)
+            print(f"Restored {args.resume} from {args.mirror}")
+        manifest = Manifest.load(local)
+        if args.mirror:  # a new session's Drive path can differ; the recorded settings otherwise stand
+            manifest.data["config"]["mirror"] = args.mirror.as_posix()
         print(f"Resuming {args.resume} with its recorded config {manifest.data['config']}")
     else:
         SearchConfig(threshold=args.threshold, nbits=args.nbits, max_rounds=args.max_rounds)  # validates
@@ -213,7 +268,10 @@ def main() -> None:
             "flipped_path": args.flipped.as_posix(),
             "flipped_quantized_run_id": flipped["quantized_run_id"],
             "config": {"n": args.n, "seed": args.seed, "threshold": args.threshold, "nbits": args.nbits,
-                       "max_rounds": args.max_rounds, "batch_size": args.batch_size},
+                       "max_rounds": args.max_rounds, "batch_size": args.batch_size,
+                       "penalty_sample": None if args.no_penalty else args.penalty_sample.as_posix(),
+                       "penalty_weight": None if args.no_penalty else args.penalty_weight,
+                       "mirror": args.mirror.as_posix() if args.mirror else None},
             "windows": {},
         })
         if not args.dry_run:

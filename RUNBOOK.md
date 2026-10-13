@@ -1,5 +1,9 @@
 # ELSEM3 runbook: the GPU runs for the revised plan
 
+**Status (Oct 2026):** Phase 2 is done; the main repair is the hedging-aware one. The ready-to-paste
+Colab cells for everything still left (headline, beyond BBQ, concentrated vs spread out) are in
+`REMAINING_COLAB.md`; this file keeps the background and the full list.
+
 All the code for the revised plan's Weeks 1–5 is on `main`. What's left is running it: the steps
 below need a GPU (Colab or Kaggle T4), and the analyses after them run on any laptop.
 
