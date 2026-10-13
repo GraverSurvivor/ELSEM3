@@ -336,6 +336,45 @@ def pick_counter_set(flipped_ids: list[str], exclude: set[str], n: int = 50, see
     return chosen
 
 
+def shows_the_effect(item: BBQItem, answers: dict[str, dict[str, "Answer"]]) -> bool:
+    """The demo's claim for one question: the original says "unknown", the compressed model gives
+    the stereotype, the repaired model says "unknown" again. A view missing from `answers` (the
+    original, when it isn't loaded) isn't checked; a question missing from a view fails."""
+    want = {"original": item.unknown_index, "compressed": item.stereotype_index, "repaired": item.unknown_index}
+    for view, pick in want.items():
+        if view not in answers:
+            continue
+        answer = answers[view].get(item.question_id)
+        if answer is None or answer.pick != pick:
+            return False
+    return True
+
+
+def verified_examples(candidates: list[BBQItem], twins_of: dict[str, BBQItem],
+                      answers: dict[str, dict[str, "Answer"]], per_category: int = 2) -> list[BBQItem]:
+    """Example questions that show the effect on the models actually running, in both word orders.
+
+    The saved runs pick good candidates, but what the audience sees comes from the live models, which
+    can differ on single questions. So the live app scores a pool of candidates and their other-order
+    twins at start-up and keeps only those that behave as the demo says, `per_category` per category,
+    in the pool's order (shortest story first)."""
+    picked, taken = [], {}
+    for item in candidates:
+        twin = twins_of.get(item.question_id)
+        if twin is None or taken.get(item.category, 0) >= per_category:
+            continue
+        if shows_the_effect(item, answers) and shows_the_effect(twin, answers):
+            picked.append(item)
+            taken[item.category] = taken.get(item.category, 0) + 1
+    return picked
+
+
+def repair_has_no_effect(compressed: list["Answer"], repaired: list["Answer"]) -> bool:
+    """True when the repaired model answers exactly like the compressed one, probabilities and all,
+    on every question: the restored modules aren't in the model that answers."""
+    return bool(compressed) and all(c.pick == r.pick and c.probs == r.probs for c, r in zip(compressed, repaired))
+
+
 def count_answers(items: list[BBQItem], picks: list[int]) -> dict:
     stereotyped = sum(p == it.stereotype_index for it, p in zip(items, picks))
     unknown = sum(p == it.unknown_index for it, p in zip(items, picks))

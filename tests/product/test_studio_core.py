@@ -265,3 +265,34 @@ def test_combined_answer_is_fair_only_if_fair_in_every_order():
     combined, note = combine_orders(item, answering(avoids_a), perms)
     assert combined.pick == item.stereotype_index
     assert "2 of 6" in note and "other 4" in note
+
+
+def test_only_examples_that_show_the_effect_live_in_both_orders_are_kept():
+    from src.product.studio_core import shows_the_effect, verified_examples
+
+    a, a_twin = _item(1), _item(2, context=SWAPPED)
+    b, b_twin = _item(3, context="A 24 year old and a 85 year old met up."), _item(4, context="A 85 year old and a 24 year old met up.")
+    good = {"original": Answer(0), "compressed": Answer(2), "repaired": Answer(0)}  # unknown 0, stereotype 2
+    answers = {view: {} for view in good}
+    for item in (a, a_twin, b):
+        for view, ans in good.items():
+            answers[view][item.question_id] = ans
+    for view, ans in good.items():
+        answers[view][b_twin.question_id] = ans
+    answers["repaired"][b_twin.question_id] = Answer(2)  # the repair fails on b's other word order
+
+    assert shows_the_effect(a, answers) and not shows_the_effect(b_twin, answers)
+    twins = {a.question_id: a_twin, b.question_id: b_twin}
+    assert verified_examples([a, b], twins, answers) == [a]
+    no_original = {v: answers[v] for v in ("compressed", "repaired")}  # app run without the 16-bit model
+    assert verified_examples([a, b], twins, no_original) == [a]
+    assert verified_examples([a, b], twins, answers, per_category=0) == []
+
+
+def test_a_repair_that_changes_nothing_is_caught():
+    from src.product.studio_core import repair_has_no_effect
+
+    same = [Answer(2, (0.005, 0.0, 0.995)), Answer(0, (0.9, 0.05, 0.05))]
+    assert repair_has_no_effect(same, list(same))
+    assert not repair_has_no_effect(same, [same[0], Answer(0, (0.8, 0.1, 0.1))])  # one probability moved
+    assert not repair_has_no_effect([], [])
