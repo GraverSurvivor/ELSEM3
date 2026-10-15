@@ -132,7 +132,8 @@ def _save_to_mirror(results_dir: Path, mirror: str | None, run_id: str | None) -
 def search_argv(config: dict, sample_path: str, resume_id: str | None = None) -> list[str]:
     argv = ["-m", "src.attribution.run_search", "--sample", sample_path,
             "--threshold", str(config["threshold"]), "--nbits", str(config["nbits"]),
-            "--max-rounds", str(config["max_rounds"]), "--batch-size", str(config["batch_size"])]
+            "--max-rounds", str(config["max_rounds"]), "--batch-size", str(config["batch_size"]),
+            "--log-items"]  # per-question results (contract C1): the data Fast Scan is validated on
     if config.get("penalty_sample"):
         argv += ["--penalty-sample", config["penalty_sample"], "--penalty-weight", str(config["penalty_weight"])]
     if config.get("mirror"):

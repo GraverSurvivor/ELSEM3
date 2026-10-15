@@ -141,3 +141,22 @@ def test_resume_refuses_a_missing_empty_or_stale_trial_log(tmp_path):
     meta = _checkpoint(tmp_path, [Trial(1, A, 0.5, 0.5, True)], kept=[A, B, C], usr_after_round=[0.5, 0.6, 0.7])
     with pytest.raises(SystemExit, match="older copy"):
         resume_state(tmp_path, meta)
+
+
+def test_a_fast_scan_checkpoint_resumes_with_its_pool(tmp_path):
+    import json
+
+    from src.attribution.fast_scan import FastScanResult
+    from src.attribution.greedy_search import Trial
+    from src.attribution.run_search import PROGRESS_FILE, _write_trials, resume_state
+
+    meta = {"sample": "s.json", "penalty_sample": None, "penalty_weight": None, "candidates": "all",
+            "config": {"threshold": 0.01, "nbits": 8, "max_rounds": 5}, "fast": {"mode": "exact"}}
+    _write_trials([Trial(1, A, 0.5, 0.5, True)], tmp_path / "trials.csv")
+    (tmp_path / PROGRESS_FILE).write_text(json.dumps(
+        {"meta": meta, "start_usr": 0.0, "kept": [A], "usr_after_round": [0.5], "survivors": [A, B], "pool": [A, B]}),
+        encoding="utf-8")
+    state = resume_state(tmp_path, meta)
+    assert isinstance(state, FastScanResult) and state.pool == [A, B] and state.kept == [A]
+    with pytest.raises(SystemExit, match="Cannot resume"):  # a full-search resume must not pick up a Fast Scan run
+        resume_state(tmp_path, {k: v for k, v in meta.items() if k != "fast"})
