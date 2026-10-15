@@ -53,3 +53,43 @@ def test_label_token_ids_decode_back_to_the_letters(item, tokenizer):
     label_ids = _label_token_ids(prompt, tokenizer)
     decoded = [tokenizer.decode([token_id]).strip() for token_id in label_ids]
     assert decoded == list(LABELS)
+
+
+def test_last_position_logits_uses_logits_to_keep_and_matches_the_full_logits():
+    from types import SimpleNamespace
+
+    import torch
+
+    from src.eval.option_scorer import last_position_logits
+
+    full = torch.randn(3, 7, 11)
+    calls = []
+
+    class Modern:
+        def __call__(self, input_ids, logits_to_keep=0, **_):
+            calls.append(logits_to_keep)
+            return SimpleNamespace(logits=full[:, -logits_to_keep:, :] if logits_to_keep else full)
+
+    out = last_position_logits(Modern(), {"input_ids": None})
+    assert calls == [1] and torch.equal(out, full[:, -1, :])
+
+
+def test_last_position_logits_falls_back_once_for_models_without_the_argument():
+    from types import SimpleNamespace
+
+    import torch
+
+    from src.eval.option_scorer import last_position_logits
+
+    full = torch.randn(2, 5, 4)
+    calls = []
+
+    class Old:
+        def __call__(self, input_ids, attention_mask=None):
+            calls.append("call")
+            return SimpleNamespace(logits=full)
+
+    model = Old()
+    for _ in range(3):
+        assert torch.equal(last_position_logits(model, {"input_ids": None}), full[:, -1, :])
+    assert len(calls) == 3  # the rejected logits_to_keep call raised before running; it is not retried
