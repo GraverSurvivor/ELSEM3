@@ -77,6 +77,22 @@ def _resolve_label_token_ids(prompts: list[str], tokenizer: PreTrainedTokenizerB
     return first
 
 
+def last_position_logits(model: PreTrainedModel, inputs) -> torch.Tensor:
+    """Next-token logits at the final position, shape (batch, vocab).
+
+    Asks the model for only that position (`logits_to_keep=1`), so lm_head runs on one token per row
+    instead of the whole prompt -- the same numbers, a fraction of the memory and time. Models whose
+    forward doesn't take the argument (older transformers) fall back to the full logits, and the
+    fallback is remembered so the failed call isn't repeated for every batch.
+    """
+    if getattr(model, "_elsem_last_logits_only", True):
+        try:
+            return model(**inputs, logits_to_keep=1).logits[:, -1, :]
+        except TypeError:
+            model._elsem_last_logits_only = False
+    return model(**inputs).logits[:, -1, :]
+
+
 @torch.no_grad()
 def score_items_with_confidence(
     model: PreTrainedModel,
@@ -121,7 +137,7 @@ def score_items_with_confidence(
             [prompts[i] for i in positions], return_tensors="pt", padding=True, add_special_tokens=True
         ).to(device)
 
-        label_logits = model(**inputs).logits[:, -1, :][:, label_ids].float()
+        label_logits = last_position_logits(model, inputs)[:, label_ids].float()
         probs = torch.softmax(label_logits, dim=-1)
         batch_confidence, batch_predictions = probs.max(dim=-1)
 
