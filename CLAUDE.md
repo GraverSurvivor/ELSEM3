@@ -192,6 +192,13 @@ additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in
   objects for the duration (instant and exact, like SwapRegistry's revert). Demo questions are
   flipped-set items no search sample contains. `--offline` runs on saved results and shows only
   states a promoted run measured. The replay reads `results/reference/search_fairness*/trials.csv`.
+- **Studio tab 5, "Your model"** (`src/product/byom.py`, Person 3, sprint Oct 2026): type a Hugging Face
+  model, Diagnose, watch the 8 stages, get the before/after cards, the kept parts on a grid for any
+  model, patch.json and llama.cpp settings. It starts the fast-repair pipeline as a subprocess (one job
+  at a time, Cancel) and reads only its files (contract C4: events.jsonl, report.json, patch.json), so
+  it is reload- and restart-safe. `--byom` keeps the GPU for that model (tabs 1-4 use saved results);
+  `--byom-pipeline fake` and `--byom-replay <run>` use `src/product/byom_fake.py`, a stand-in that
+  writes the same files without a GPU; its reports carry `synthetic`/`replayed_from`, shown as a banner.
 
 **Fast Repair (sprint, Oct 2026; contracts in docs/CONTRACTS.md).** `src/models/adapter.py`
 (Person 1) gives any supported model's parts (phi3, qwen2, llama, mistral), their shapes and GGUF

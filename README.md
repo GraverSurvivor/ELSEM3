@@ -67,6 +67,8 @@ live) and **Ship** (the verdict on the full benchmark, and the patch to download
 ```bash
 python -m src.product.studio --share     # live, on a Colab T4: notebooks/fairgate_studio.ipynb
 python -m src.product.studio --offline   # preview on saved results, any laptop (needs gradio)
+python -m src.product.studio --byom --share   # tab 5: diagnose any Hugging Face model (GPU)
+python -m src.product.studio --byom --byom-pipeline fake   # tab 5 with a stand-in pipeline, any laptop
 ```
 
 ## Fast Repair (any model)
