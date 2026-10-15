@@ -28,7 +28,7 @@ DEFAULT_DTYPE = "fp16"
 
 
 def load_model(
-    dtype: str = DEFAULT_DTYPE, device_map: str = "auto"
+    dtype: str = DEFAULT_DTYPE, device_map: str = "auto", model_id: str = MODEL_ID
 ) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
     """Loads the full-precision baseline model + tokenizer at the named dtype.
 
@@ -46,9 +46,9 @@ def load_model(
     if dtype not in DTYPES:
         raise ValueError(f"Unknown dtype {dtype!r}; expected one of {list(DTYPES)}")
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID,
+        model_id,
         torch_dtype=DTYPES[dtype],
         device_map=device_map,
     )

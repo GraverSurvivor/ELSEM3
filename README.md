@@ -69,6 +69,14 @@ python -m src.product.studio --share     # live, on a Colab T4: notebooks/fairga
 python -m src.product.studio --offline   # preview on saved results, any laptop (needs gradio)
 ```
 
+## Fast Repair (any model)
+
+```bash
+python -m src.product.fast_repair --model Qwen/Qwen2.5-3B-Instruct --mode fast --out results/fast_repair_qwen
+```
+Compress, find the fairness damage, scan for the parts to keep at 8-bit and check the repair, on any
+Phi-3 / Qwen2 / Llama / Mistral model up to ~4B parameters on a T4 (GPU). Contracts: docs/CONTRACTS.md.
+
 ## Deck
 
 `deck/ELSEM3_deck.pptx` is generated, not hand-edited: every number on it is read from the committed

@@ -193,6 +193,17 @@ additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in
   flipped-set items no search sample contains. `--offline` runs on saved results and shows only
   states a promoted run measured. The replay reads `results/reference/search_fairness*/trials.csv`.
 
+**Fast Repair (sprint, Oct 2026; contracts in docs/CONTRACTS.md).** `src/models/adapter.py`
+(Person 1) gives any supported model's parts (phi3, qwen2, llama, mistral), their shapes and GGUF
+names; for Phi-3.5 it equals the 128 candidates exactly, and `candidate_paths_for_model`,
+`filter_candidates` and patch files (optional `part_shapes`/`n_layers`) now work for the others.
+`python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
+original/3-bit on a seeded BBQ sample → find damage → scan (Person 2's `fast_scan` if present, else a
+built-in screen + `greedy_search` on the best parts, with the hedging penalty) → check on held-out
+questions → report.json / patch.json / events.jsonl. The model work sits behind a backend interface:
+`tests/product/test_fast_repair.py` runs it with a rule-based stand-in, and
+`test_fast_repair_tiny_model.py` with real HQQ, SwapRegistry and Qwen's tokenizer on a tiny model.
+
 **The main repair (since Phase 2) is the hedging-aware one**, named in
 `results/reference/MAIN_REPAIR.json` and read through `src/experiments/main_repair.py` by the final
 tables, FairGate, Studio, groups, sensitivity, figures and the deck. It restores 5 attention-input
