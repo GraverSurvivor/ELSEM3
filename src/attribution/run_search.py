@@ -46,7 +46,9 @@ from pathlib import Path
 
 import torch
 
+from src.attribution.fast_scan import FastScanConfig, FastScanResult, ScanScore, fast_scan
 from src.attribution.greedy_search import SearchConfig, SearchResult, Trial, greedy_search
+from src.attribution.item_log import ITEMS_FILE, ItemLog, SearchItemLogger, probe_bits, sample_bits
 from src.attribution.patch import patch_from_search_summary, save_patch
 from src.quant.candidates import CANDIDATE_SETS, filter_candidates
 from src.data.bbq_loader import load_all_categories
@@ -130,6 +132,9 @@ def resume_state(out_dir: Path, meta: dict) -> SearchResult:
         print(f"Note: trials.csv kept {len(kept)} module(s), progress.json {len(saved_kept)}; "
               "following trials.csv, the complete log.")
     usr_after_round = list(progress["usr_after_round"])[: min(len(kept), len(saved_kept))]
+    if "pool" in progress:  # a Fast Scan checkpoint also remembers round 1's screening outcome
+        return FastScanResult(start_usr=progress["start_usr"], kept=kept, usr_after_round=usr_after_round,
+                              trials=trials, survivors=list(progress["survivors"]), pool=list(progress["pool"]))
     return SearchResult(start_usr=progress["start_usr"], kept=kept, usr_after_round=usr_after_round, trials=trials)
 
 
@@ -157,12 +162,32 @@ def main() -> None:
     parser.add_argument("--penalty-weight", type=float, default=1.0)
     parser.add_argument("--resume", metavar="RUN_ID", help="continue an interrupted search")
     parser.add_argument("--mirror", type=Path, help="folder (e.g. on Google Drive) to copy progress to after every trial")
+    parser.add_argument("--fast", choices=("fast", "exact"),
+                        help="Fast Scan instead of the full greedy search (default: off = the full search)")
+    parser.add_argument("--screen-sample", type=int, default=FastScanConfig.screen_sample)
+    parser.add_argument("--screen-probe", type=int, default=FastScanConfig.screen_probe)
+    parser.add_argument("--survivors", type=int, default=FastScanConfig.survivors)
+    parser.add_argument("--pool", type=int, default=FastScanConfig.pool)
+    parser.add_argument("--seed", type=int, default=FastScanConfig.seed, help="Fast Scan's subset seed")
+    parser.add_argument("--log-items", action="store_true",
+                        help="also write items.jsonl: which sample/probe questions each trial answered right (contract C1)")
     args = parser.parse_args()
 
     try:
         config = SearchConfig(threshold=args.threshold, nbits=args.nbits, max_rounds=args.max_rounds)
     except ValueError as exc:
         parser.error(str(exc))
+    fast_config = None
+    if args.fast:
+        if args.log_items:
+            parser.error("--log-items records every question per trial; Fast Scan scores subsets, so log a full search")
+        try:
+            fast_config = FastScanConfig(mode=args.fast, screen_sample=args.screen_sample, screen_probe=args.screen_probe,
+                                         survivors=args.survivors, pool=args.pool, max_rounds=args.max_rounds,
+                                         threshold=args.threshold, nbits=args.nbits, penalty_weight=args.penalty_weight,
+                                         seed=args.seed)
+        except ValueError as exc:
+            parser.error(str(exc))
     sample = json.loads(args.sample.read_text(encoding="utf-8"))
     penalty = json.loads(args.penalty_sample.read_text(encoding="utf-8")) if args.penalty_sample else None
     if penalty is not None and penalty.get("context") != "disambig":
@@ -187,23 +212,42 @@ def main() -> None:
     registry = SwapRegistry(model, CheckpointWeightSource(MODEL_ID), device=device)
     candidates = filter_candidates(candidate_paths_for_model(model), args.candidates)
 
-    def score_fn() -> float:
-        predictions = score_items(model, tokenizer, items, device, batch_size=args.batch_size)
+    def score_fn(bits: dict | None = None, sample_items: list | None = None, probe_items: list | None = None) -> float:
+        """Objective for the model as it stands; fills `bits` with the per-question results (--log-items).
+
+        Scores the whole sample and probe unless a subset is given (Fast Scan)."""
+        bits = {} if bits is None else bits
+        sample_items = items if sample_items is None else sample_items
+        probe_items = penalty_items if probe_items is None else probe_items
+        predictions = score_items(model, tokenizer, sample_items, device, batch_size=args.batch_size)
+        bits["sample"] = sample_bits(predictions, sample_items)
         hedging = None
-        if penalty_items is not None:
-            penalty_predictions = score_items(model, tokenizer, penalty_items, device, batch_size=args.batch_size)
-            hedging = false_unknown_rate(penalty_predictions, penalty_items)
-        return search_objective(correct_rate(predictions, items), hedging, args.penalty_weight)
+        if probe_items is not None:
+            penalty_predictions = score_items(model, tokenizer, probe_items, device, batch_size=args.batch_size)
+            hedging = false_unknown_rate(penalty_predictions, probe_items)
+            bits["probe"] = probe_bits(penalty_predictions, probe_items)
+        return search_objective(correct_rate(predictions, sample_items), hedging, args.penalty_weight)
+
+    sample_by_id = {item.question_id: item for item in items}
+    probe_by_id = {item.question_id: item for item in penalty_items or []}
+
+    def scan_scorer(sample_ids, probe_ids) -> ScanScore:
+        """Fast Scan's scorer: the same objective as score_fn, on the questions asked for."""
+        bits: dict = {"sample": "", "probe": ""}
+        objective = score_fn(bits, [sample_by_id[q] for q in sample_ids], [probe_by_id[q] for q in probe_ids])
+        return ScanScore(objective, bits["sample"], bits["probe"])
 
     meta = {"sample": str(args.sample), "penalty_sample": str(args.penalty_sample) if args.penalty_sample else None,
             "penalty_weight": args.penalty_weight if args.penalty_sample else None,
             "candidates": args.candidates, "config": asdict(config)}
+    if fast_config is not None:  # only Fast Scan runs carry this, so resuming a full search's meta is unchanged
+        meta["fast"] = asdict(fast_config)
     run_id = args.resume or new_run_id("search")
     out_dir = RESULTS_DIR / run_id
     mirror = args.mirror / run_id if args.mirror else None
     if args.resume and not (out_dir / PROGRESS_FILE).exists() and mirror and (mirror / PROGRESS_FILE).exists():
         out_dir.mkdir(parents=True, exist_ok=True)
-        for name in (PROGRESS_FILE, "trials.csv"):
+        for name in (PROGRESS_FILE, "trials.csv", ITEMS_FILE):
             if (mirror / name).exists():
                 shutil.copy2(mirror / name, out_dir / name)
         print(f"Restored the checkpoint from {mirror}")
@@ -212,19 +256,32 @@ def main() -> None:
     resume = resume_state(out_dir, meta) if args.resume else None
     out_dir.mkdir(parents=True, exist_ok=True)
     trials_path = out_dir / "trials.csv"
+    item_logger = (SearchItemLogger(ItemLog(out_dir / ITEMS_FILE), resumed_trials=len(resume.trials) if resume else 0,
+                                    fresh=resume is None) if args.log_items else None)
+    mirrored = (PROGRESS_FILE, "trials.csv") + ((ITEMS_FILE,) if item_logger else ())
 
     def checkpoint(result: SearchResult) -> None:
+        if item_logger:
+            item_logger.on_trial(result)  # before the checkpoint: a trial is never in trials.csv without its items
         _write_trials(result.trials, trials_path)
         progress = {"meta": meta, "start_usr": result.start_usr, "kept": list(result.kept),
                     "usr_after_round": list(result.usr_after_round)}
+        if isinstance(result, FastScanResult) and result.pool:
+            progress.update(survivors=list(result.survivors), pool=list(result.pool))
         _write_atomically(out_dir / PROGRESS_FILE, lambda handle: json.dump(progress, handle, indent=2))
         if mirror is not None:
             mirror.mkdir(parents=True, exist_ok=True)
-            for name in (PROGRESS_FILE, "trials.csv"):
-                shutil.copy2(out_dir / name, mirror / name)
+            for name in mirrored:
+                if (out_dir / name).exists():  # items.jsonl is absent when a resumed search adds no trial
+                    shutil.copy2(out_dir / name, mirror / name)
 
     started = time.time()
     n_per_round = len(candidates)
+
+    def round_size(round_number: int) -> int:
+        """Trials a round makes: every candidate not yet kept; after round 1, Fast Scan only tries its pool."""
+        tried = n_per_round if fast_config is None or round_number == 1 else min(fast_config.pool, n_per_round)
+        return tried - (round_number - 1)
 
     def on_progress(result: SearchResult) -> None:
         checkpoint(result)
@@ -234,7 +291,7 @@ def main() -> None:
             print(
                 # Round r tries every candidate except the r - 1 kept before it. Not len(kept):
                 # after a keep, kept already includes this round's winner, which read 124/123.
-                f"\rround {latest.round}  {done_in_round}/{n_per_round - (latest.round - 1)}  "
+                f"\rround {latest.round}  {done_in_round}/{round_size(latest.round)}  "
                 f"best gain so far {max(t.gain for t in result.trials if t.round == latest.round):+.3f}  "
                 f"({(time.time() - started) / 60:.0f} min)",
                 end="",
@@ -244,7 +301,13 @@ def main() -> None:
     print(f"\nRun ID: {run_id}  |  {len(items)} sample items x {len(candidates)} candidates  |  {config}")
     if resume is not None:
         print(f"Resuming {run_id}: {len(resume.kept)} kept, {len(resume.trials)} trials already done")
-    result = greedy_search(candidates, registry, score_fn, config, on_progress=on_progress, resume=resume)
+    if fast_config is not None:
+        result = fast_scan(candidates, registry, scan_scorer, [i.question_id for i in items],
+                           [i.question_id for i in penalty_items or []], fast_config,
+                           on_progress=on_progress, resume=resume)
+    else:
+        result = greedy_search(candidates, registry, item_logger.wrap(score_fn) if item_logger else score_fn, config,
+                               on_progress=on_progress, resume=resume)
     checkpoint(result)
     print()
     if result.start_usr > START_USR_WARNING:

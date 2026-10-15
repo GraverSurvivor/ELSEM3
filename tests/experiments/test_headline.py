@@ -190,6 +190,7 @@ def test_search_gets_the_hedging_penalty(in_tmp):
     assert search[search.index("--penalty-weight") + 1] == "1.0"
     old = search_argv({"threshold": 0.01, "nbits": 8, "max_rounds": 5, "batch_size": 16}, "s.json")
     assert "--penalty-sample" not in old  # manifests from before the penalty keep running the old search
+    assert "--log-items" in old  # every search logs per-question results (contract C1)
 
 
 class DyingSearch(FakeRunner):
