@@ -40,6 +40,7 @@ def load_hqq_3bit_model(
     nbits: int = DEFAULT_NBITS,
     group_size: int = DEFAULT_GROUP_SIZE,
     dtype: str = DEFAULT_DTYPE,
+    model_id: str = MODEL_ID,
 ) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
     """Loads Phi-3.5-mini-Instruct quantized to `nbits` (default 3-bit) via HQQ.
 
@@ -58,8 +59,8 @@ def load_hqq_3bit_model(
         raise ValueError(f"Unknown dtype {dtype!r}; expected one of {list(DTYPES)}")
     torch_dtype = DTYPES[dtype]
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch_dtype)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype)
 
     quant_config = build_quant_config(nbits=nbits, group_size=group_size)
     AutoHQQHFModel.quantize_model(model, quant_config=quant_config, compute_dtype=torch_dtype, device=device)

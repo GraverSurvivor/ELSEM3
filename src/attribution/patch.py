@@ -56,19 +56,24 @@ def module_layer(path: str) -> int:
     return int(path.split(".")[2])
 
 
-def module_params(path: str) -> int:
-    """Weights in one candidate module, from Phi-3.5-mini's fixed shapes."""
+def module_params(path: str, part_shapes: dict | None = None, n_layers: int | None = None) -> int:
+    """Weights in one candidate module: from Phi-3.5-mini's fixed shapes by default, or from the
+    shapes a non-Phi patch carries (written by src/models/adapter.py)."""
+    shapes = MODULE_SHAPES if part_shapes is None else part_shapes
+    layers = N_LAYERS if n_layers is None else n_layers
     suffix = module_suffix(path)
-    if suffix not in MODULE_SHAPES:
-        raise ValueError(f"{path!r} is not one of the four candidate module types")
-    if not 0 <= module_layer(path) < N_LAYERS:
-        raise ValueError(f"{path!r} names a layer outside 0-{N_LAYERS - 1}")
-    out_features, in_features = MODULE_SHAPES[suffix]
+    if suffix not in shapes:
+        raise ValueError(f"{path!r} is not one of the candidate module types ({', '.join(shapes)})")
+    if not 0 <= module_layer(path) < layers:
+        raise ValueError(f"{path!r} names a layer outside 0-{layers - 1}")
+    out_features, in_features = shapes[suffix]
     return out_features * in_features
 
 
-def total_candidate_params() -> int:
-    return N_LAYERS * sum(o * i for o, i in MODULE_SHAPES.values())
+def total_candidate_params(part_shapes: dict | None = None, n_layers: int | None = None) -> int:
+    shapes = MODULE_SHAPES if part_shapes is None else part_shapes
+    layers = N_LAYERS if n_layers is None else n_layers
+    return layers * sum(o * i for o, i in shapes.values())
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,10 @@ class Patch:
     source: dict = field(default_factory=dict)
     base: dict = field(default_factory=lambda: dict(DEFAULT_BASE))
     model_id: str = MODEL_ID
+    # For models other than Phi-3.5 (fast_repair): part type -> [out, in], and the layer count.
+    # None means Phi-3.5's fixed shapes, so every existing patch file reads and writes unchanged.
+    part_shapes: dict | None = None
+    n_layers: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -88,7 +97,7 @@ class Patch:
         if len(set(self.modules)) != len(self.modules):
             raise ValueError(f"patch {self.name!r} lists a module twice: {self.modules}")
         for path in self.modules:
-            module_params(path)  # raises on anything that isn't a real candidate
+            module_params(path, self.part_shapes, self.n_layers)  # raises on anything that isn't a candidate
         if self.nbits <= self.base.get("nbits", 0):
             raise ValueError(
                 f"patch {self.name!r} restores to {self.nbits}-bit, which isn't above the base "
@@ -100,11 +109,11 @@ class Patch:
 
     @property
     def params(self) -> int:
-        return sum(module_params(path) for path in self.modules)
+        return sum(module_params(path, self.part_shapes, self.n_layers) for path in self.modules)
 
     @property
     def pct_params(self) -> float:
-        return 100 * self.params / total_candidate_params()
+        return 100 * self.params / total_candidate_params(self.part_shapes, self.n_layers)
 
     def prefix(self, k: int, name: str | None = None) -> "Patch":
         """The first `k` modules, in restore order -- a search's state after round k."""
@@ -117,11 +126,18 @@ class Patch:
             source={**self.source, "kind": "prefix", "prefix_of": self.name, "k": k},
             base=dict(self.base),
             model_id=self.model_id,
+            part_shapes=self.part_shapes,
+            n_layers=self.n_layers,
         )
 
     def to_dict(self) -> dict:
         data = asdict(self)
         data["modules"] = list(self.modules)
+        for key in ("part_shapes", "n_layers"):  # Phi-3.5 patches keep their original format
+            if data[key] is None:
+                del data[key]
+        if self.part_shapes is not None:
+            data["part_shapes"] = {part: list(shape) for part, shape in self.part_shapes.items()}
         data["params"] = self.params
         return data
 
@@ -134,6 +150,8 @@ def patch_from_dict(data: dict) -> Patch:
         source=dict(data.get("source", {})),
         base=dict(data.get("base", DEFAULT_BASE)),
         model_id=data.get("model_id", MODEL_ID),
+        part_shapes={k: tuple(v) for k, v in data["part_shapes"].items()} if data.get("part_shapes") else None,
+        n_layers=int(data["n_layers"]) if data.get("n_layers") else None,
     )
     if "params" in data and int(data["params"]) != patch.params:
         raise ValueError(
