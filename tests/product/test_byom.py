@@ -277,3 +277,20 @@ def test_the_real_pipeline_is_required_unless_a_stand_in_is_chosen(tmp_path, mon
     with pytest.raises(ValueError):
         JobRunner(tmp_path, pipeline="fake").start("bad name", "fast")
     assert not any(tmp_path.iterdir())  # nothing was created for a refused start
+
+
+@pytest.mark.parametrize("mode", ["fast", "exact"])
+def test_the_stand_in_scan_matches_the_real_pipeline(mode):
+    """The stand-in's scan steps come from the real pipeline's settings, so the screen shown in a demo
+    is the screen a real run produces: same steps, same words, same question total."""
+    from src.product.byom_fake import SEARCH_QUESTIONS, scan_message, scan_steps
+    from src.product.fast_repair import FastRepairConfig, plan_questions, scan_config
+
+    cfg = scan_config(FastRepairConfig(model_id="Qwen/Qwen2.5-3B-Instruct", mode=mode), 252)
+    steps = scan_steps(mode, 252)
+    assert sum(size for size, _ in steps) == plan_questions(cfg, 252, *SEARCH_QUESTIONS)
+    assert steps[0][1].endswith("Quick look at every part") and steps[-1][1].endswith("Choosing among the best 16")
+    assert len(steps) == (2 if mode == "fast" else 3)
+    assert scan_message(mode, 252, 0, 600).startswith(steps[0][1] + ": 0 of 252 · about 10 min left")
+    late = scan_message(mode, 252, sum(size for size, _ in steps) - 1, 30)
+    assert ", round 5 of 5: 4 parts kept so far · under a minute left" in late

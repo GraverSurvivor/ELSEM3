@@ -44,8 +44,8 @@ STAGES = (
 STAGE_LABELS = dict(STAGES)
 
 MODES = {
-    "fast": "Fast: about 30-35 min on a T4 (20 of them scanning), very likely the same parts as the full search",
-    "exact": "Exact: 2-3 hours on a T4 (about 30 min on an A100), the same parts as the full search",
+    "fast": "Fast: about 35 min on a T4 (about 25 of them scanning), very likely the same parts as the full search",
+    "exact": "Exact: 1.5-2 hours on a T4 (about 20 min on an A100), the same parts as the full search",
 }
 DEFAULT_QUESTIONS = 1000
 

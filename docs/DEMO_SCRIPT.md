@@ -21,8 +21,9 @@ from 50 to 8 stereotyped answers.
 Type `Qwen/Qwen2.5-3B-Instruct`, choose **Fast**, press **Diagnose**. While it runs, explain the stages:
 - *Ask the original / compressed model*: the same [1,000 + 1,000] questions to both.
 - *Find the damage*: "[N] of [M] fair answers flipped to the stereotype."
-- *Scan the parts*: "Qwen has [252] parts. We screen all of them, then run our search on the best
-  [12]. Our replay of the 7-hour Phi-3.5 search showed this keeps the same parts."
+- *Scan the parts*: "Qwen has [252] parts. We take a quick look at every one, then run our search
+  among the best 16. Replaying our 7-hour Phi-3.5 search, choosing among round 1's best 10 or more
+  keeps exactly the same parts." The screen says which step it is in and how many minutes are left.
 - *Check the repair*: on [~500 + ~500] questions the scan never saw.
 
 If the live run won't finish in the slot, switch to the recorded run (it says so on screen).
@@ -35,4 +36,4 @@ If the live run won't finish in the slot, switch to the recorded run (it says so
 
 ## 5. Limits, said out loud (30 s)
 Up to ~4B parameters on a free T4; fast mode is "very likely the same parts", exact mode takes
-~45 min; BBQ only; the repair needs the original weights (open models).
+1.5-2 hours on a T4; BBQ only; the repair needs the original weights (open models).

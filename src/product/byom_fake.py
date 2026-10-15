@@ -31,9 +31,9 @@ from src.product.byom import STAGES, check_mode, check_model_id, format_duration
 # Seconds each stage takes on a T4 for a ~3B model (estimates from ~11.6-14 questions a second), per mode.
 DURATIONS = {
     "fast": {"download": 120, "quantize": 120, "score_original": 170, "score_3bit": 150, "find_damage": 5,
-             "scan": 1200, "verify": 90, "report": 5},
+             "scan": 1500, "verify": 90, "report": 5},
     "exact": {"download": 120, "quantize": 120, "score_original": 170, "score_3bit": 150, "find_damage": 5,
-              "scan": 9000, "verify": 90, "report": 5},
+              "scan": 6000, "verify": 90, "report": 5},
 }
 PROGRESS_STEPS = 12
 
@@ -109,16 +109,28 @@ def synthetic_report(model_id: str, mode: str, questions: int) -> tuple[dict, di
     return report, patch
 
 
+SEARCH_QUESTIONS = (300, 200)  # flipped + probe questions a real run usually has (fast_repair's caps)
+
+
 def scan_steps(mode: str, n_parts: int) -> list[tuple[int, str]]:
-    """Fast Scan's questions per step and its words for them (src/attribution/fast_scan.py's sizes):
-    fast looks at every part on 30 questions, re-checks 16 on 150, then chooses among 12 on 150;
-    exact looks at every part on 500, then chooses among 16."""
+    """The real scan's questions per step and its words for them, from the pipeline's own settings
+    (src/product/fast_repair.py: scan_config, plan_questions), so the stand-in can't drift from it."""
+    from src.product.fast_repair import FastRepairConfig, plan_questions, scan_config
+
+    cfg = scan_config(FastRepairConfig(model_id="stand/in", mode=mode), n_parts)
+    n_sample, n_probe = SEARCH_QUESTIONS
+    screen, full = cfg.screen_sample + cfg.screen_probe, n_sample + n_probe
+    total = plan_questions(cfg, n_parts, n_sample, n_probe)
+    pool = min(cfg.pool, n_parts)
     if mode == "fast":
-        return [(30 * (n_parts + 1), "Step 1 of 3 · Quick look at every part"),
-                (150 * 17, "Step 2 of 3 · Re-checking the 16 most promising"),
-                (150 * (11 + 10 + 9 + 8 + 5), "Step 3 of 3 · Choosing among the best 12")]
-    return [(500 * (n_parts + 1), "Step 1 of 2 · Quick look at every part"),
-            (500 * (15 + 14 + 13 + 12 + 5), "Step 2 of 2 · Choosing among the best 16")]
+        look = screen * (n_parts + 1)
+        return [(look, "Step 1 of 2 · Quick look at every part"),
+                (total - look, f"Step 2 of 2 · Choosing among the best {pool}")]
+    look = full + screen * (n_parts + 1)
+    survivors = min(cfg.survivors, n_parts)
+    return [(look, "Step 1 of 3 · Quick look at every part"),
+            (survivors * full, f"Step 2 of 3 · Re-checking the {survivors} most promising on every question"),
+            (total - look - survivors * full, f"Step 3 of 3 · Choosing among the best {pool}")]
 
 
 def scan_message(mode: str, n_parts: int, done: int, seconds_left: float) -> str:
@@ -130,9 +142,10 @@ def scan_message(mode: str, n_parts: int, done: int, seconds_left: float) -> str
             if "Quick look" in words:
                 detail = f": {min(n_parts, int(share * n_parts))} of {n_parts}"
             elif "Re-checking" in words:
-                detail = f": {min(16, int(share * 16))} of 16"
+                survivors = int(words.split("the ")[1].split(" ")[0])
+                detail = f": {min(survivors, int(share * survivors))} of {survivors}"
             else:
-                round_number = min(5, 1 + int(share * 5))
+                round_number = min(5, 2 + int(share * 4))  # round 1 is the quick look
                 kept = round_number - 1
                 detail = f", round {round_number} of 5: {kept} part{'s' * (kept != 1)} kept so far"
             minutes = seconds_left / 60

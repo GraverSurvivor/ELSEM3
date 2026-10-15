@@ -1,7 +1,8 @@
 # Sprint contracts: FairGate Fast Repair (16-20 Oct 2026)
 
 The four sprint workstreams build against these, so they can run in parallel. Changes go through
-Person 1. Status as of this file: C3, C4 and C5 implemented; C1 and C2 are Person 2's.
+Person 1. Status as of this file: all five implemented and wired together (C1, C2 merged in
+PRs #45-47; C3-C5 merged with the pipeline fitted to C2's `ScanScore`).
 
 ## C1. Per-item logging (Person 2)
 `run_search --log-items` appends one JSON line per trial to `results/<run_id>/items.jsonl`:
@@ -20,19 +21,22 @@ Person 1. Status as of this file: C3, C4 and C5 implemented; C1 and C2 are Perso
 ## C2. Fast Scan (Person 2): `src/attribution/fast_scan.py`
 ```python
 fast_scan(candidates, registry, scorer, sample_ids, probe_ids, config,
-          on_progress=None, resume=None) -> SearchResult      # greedy_search.SearchResult
-scorer(sample_ids, probe_ids) -> objective                   # see note
+          on_progress=None, resume=None) -> FastScanResult    # a SearchResult with survivors, pool
+scorer(sample_ids, probe_ids) -> ScanScore(objective, sample_bits, probe_bits)
+on_progress(result)                            # after every trial and every keep, like greedy_search
 FastScanConfig(mode="fast"|"exact", screen_sample=60, screen_probe=40, survivors=40, pool=16,
                max_rounds=5, threshold=0.01, nbits=8, penalty_weight=1.0, seed=0)
 ```
 * objective = correct rate − penalty_weight × false-"unknown" rate (as `run_search`).
 * With `survivors = pool = len(candidates)` and full subsets it must equal `greedy_search` step for
   step (same tie-break: the earliest candidate wins).
-* Note: `fast_repair` passes a scorer that returns the objective as a float. The draft contract
-  said `ScanScore(objective, sample_bits, probe_bits)`; if Fast Scan needs the bits, return that
-  object and `fast_repair.run_scan` will be updated in the same PR.
-* Until this file exists, `fast_repair` uses a built-in scan with the same idea: screen every part
-  on a subset, then `greedy_search` on the best `pool` parts with the full search questions.
+* "fast" scores everything on the screening subset; "exact" re-checks round 1's best `survivors` on
+  every question and runs rounds 2+ on all of them. Rounds 2+ try only the `pool` best of round 1.
+* `fast_repair` (C4) returns a `ScanScore` with each question's result (`item_log.sample_bits` /
+  `probe_bits`), counts the questions it asks for the progress bar, and sets the sizes per run:
+  Fast Scan's defaults for a 128-part model like Phi-3.5 (18,800 questions in fast mode); for a model
+  with more parts, fewer screening questions (at least 60) so the scan asks about as many.
+  `plan_questions()` is that count, tested equal to what Fast Scan asks.
 
 ## C3. Model adapter (Person 1): `src/models/adapter.py` (done)
 ```python
@@ -71,13 +75,17 @@ python -m src.product.fast_repair --model <HF id> --mode fast|exact --questions 
  "memory_mb", "gate": "PASS"|"FAIL", "gate_failures": [...], "patch": "patch.json" | null,
  "n_layers": 36, "part_types": ["self_attn.q_proj", ...],
  "checked_on": {"ambiguous": 503, "stated_answer": 497},
- "scan": {"engine", "candidates", "screen_sample", "screen_probe", "pool", "search_probe",
-          "penalty_weight", "seed"}}
+ "scan": {"engine": "fast_scan"|"none", "candidates", "screen_sample", "screen_probe",
+          "survivors", "pool", "search_sample", "search_probe", "penalty_weight", "seed",
+          "pool_parts", "trials", "stop_reason"}}     # the last three only when the scan ran
 ```
 * The three cards and the recovery are measured on held-out questions the scan never used.
 * `recovery` values are `null` when compression changed nothing to recover.
 * `kept` is `[]` and `patch` is `null` when compression flipped too few answers to repair.
 * `n_layers` and `part_types` (display order) were added for the Studio grid (Person 3's request).
+* The scan stage's `done`/`total` count questions asked against the plan, so the bar moves with time;
+  its `started` message carries the estimate ("252 parts · about 25 min") and every progress message
+  the step and time left ("Step 1 of 2 · Quick look at every part: 37 of 252 · about 21 min left").
 
 `<dir>/patch.json`: the project's patch format, with `part_shapes` and `n_layers` for non-Phi models.
 

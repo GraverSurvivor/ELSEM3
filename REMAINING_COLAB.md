@@ -163,7 +163,7 @@ Then copy its folder to `results/reference/search_mlp_only` the same way as in C
 
 ---
 
-## E. Fast Repair on Qwen2.5-3B (sprint, ~25-50 min, one account)
+## E. Fast Repair on Qwen2.5-3B (sprint, ~35 min fast, ~2 h exact, one account)
 
 After Cells 1, 2 (pick an ACCOUNT number not used above, e.g. `ACCOUNT = 11`), 2b and 3:
 
@@ -175,7 +175,7 @@ After Cells 1, 2 (pick an ACCOUNT number not used above, e.g. `ACCOUNT = 11`), 2
 It should end with `"stage": "report", "status": "done"`. If a stage says `failed`, its `message`
 says why: send it to Person 1 before running E2.
 
-### E2. The real run (fast mode ~20-25 min; then exact mode if time allows, ~45-50 min)
+### E2. The real run (fast mode ~35 min, ~25 of them scanning; exact mode only with time to spare, ~2 h)
 ```python
 !python -m src.product.fast_repair --model Qwen/Qwen2.5-3B-Instruct --mode fast --questions 1000 --out results/fast_repair_qwen_fast
 ```

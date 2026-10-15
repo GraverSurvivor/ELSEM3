@@ -226,3 +226,124 @@ def test_question_sets_that_share_ids_stay_apart(tmp_path):
     config = FastRepairConfig(model_id="Qwen/Qwen2.5-3B-Instruct", questions=200, out=tmp_path / "job")
     report = run(config, FakeBackend(), load_questions=lambda: (AMBIG, shared))
     assert report["safe"] > 0 and set(report["kept"]) == {A, B}
+
+
+# --- the scan: Fast Scan (src/attribution/fast_scan.py) as the pipeline drives it ------------------------
+
+def test_the_scan_tells_the_screen_what_it_is_doing_in_plain_words(tmp_path, monkeypatch):
+    monkeypatch.setattr(fast_repair.Events, "min_interval", 0.0)  # every update, not two a second
+    report, _, out = _run(tmp_path)
+    scan = [e for e in _events(out) if e["stage"] == "scan"]
+    started, progress, done = scan[0], [e for e in scan if e["status"] == "progress"], scan[-1]
+    assert started["message"].startswith("28 parts · ") and started["total"] > 0
+    assert all(e["total"] == started["total"] for e in progress)
+    assert progress[0]["message"].startswith("Step 1 of 2 · Quick look at every part: 1 of 28")
+    assert any(e["message"].startswith("Step 2 of 2 · Choosing among the best ") for e in progress)
+    assert all(e["message"].endswith(" left") for e in progress if e["done"] < e["total"])
+    assert [e["done"] for e in progress] == sorted(e["done"] for e in progress)
+    assert done["message"] == "Kept 2 of 28 parts" and done["done"] == done["total"]
+    block = report["scan"]
+    assert block["engine"] == "fast_scan" and block["pool"] == 16 and set(report["kept"]) <= set(block["pool_parts"])
+    assert block["trials"] >= 28 and block["stop_reason"]
+    damage = [e for e in _events(out) if e["stage"] == "find_damage"][-1]["message"]
+    assert "fair answers flipped to the stereotype" in damage and "kept back to check the repair" in damage
+
+
+def test_exact_mode_rechecks_the_most_promising_on_every_question(tmp_path, monkeypatch):
+    monkeypatch.setattr(fast_repair.Events, "min_interval", 0.0)
+    report, backend, out = _run(tmp_path, mode="exact", questions=400)
+    messages = [e["message"] for e in _events(out) if e["stage"] == "scan" and e["status"] == "progress"]
+    assert messages[0].startswith("Step 1 of 3 · Quick look at every part")
+    assert any(m.startswith("Step 2 of 3 · Re-checking the 28 most promising on every question") for m in messages)
+    assert any(m.startswith("Step 3 of 3 · Choosing among the best 16") for m in messages)
+    assert set(report["kept"]) == {A, B}
+
+
+class _Always:
+    """A registry and scorer where every part fixes its own questions, so every round keeps one and the
+    scan runs all five rounds: the case the plan counts."""
+
+    def __init__(self, parts):
+        self.active, self.trying, self.parts, self.asked = {}, None, parts, 0
+
+    @contextmanager
+    def trial(self, path, nbits):
+        self.trying = path
+        try:
+            yield
+        finally:
+            self.trying = None
+
+    def commit(self, path, nbits):
+        self.active[path] = nbits
+
+    def scorer(self, sample_ids, probe_ids):
+        from src.attribution.fast_scan import ScanScore
+
+        self.asked += len(sample_ids) + len(probe_ids)
+        on = set(self.active) | ({self.trying} if self.trying else set())
+        fixed = sum(1 for q in sample_ids if any(int(q[1:]) % len(self.parts) == self.parts.index(p) for p in on))
+        return ScanScore(fixed / len(sample_ids))
+
+
+@pytest.mark.parametrize("mode,n_parts,n_sample,n_probe", [
+    ("fast", 28, 300, 200), ("fast", 252, 300, 200), ("exact", 28, 300, 200), ("exact", 40, 50, 30),
+    ("fast", 20, 30, 10)])
+def test_the_progress_total_is_exactly_what_the_scan_asks(mode, n_parts, n_sample, n_probe):
+    from src.attribution.fast_scan import fast_scan
+    from src.product.fast_repair import plan_questions, scan_config
+
+    parts = [f"model.layers.{i}.mlp.down_proj" for i in range(n_parts)]
+    world = _Always(parts)
+    cfg = scan_config(FastRepairConfig(model_id="x/y", mode=mode), n_parts)
+    result = fast_scan(parts, world, world.scorer, [f"s{i}" for i in range(n_sample)],
+                       [f"p{i}" for i in range(n_probe)], cfg)
+    assert result.stop_reason == "reached max_rounds"
+    assert world.asked == plan_questions(cfg, n_parts, n_sample, n_probe)
+
+
+def test_fast_mode_costs_the_same_whatever_the_number_of_parts():
+    from src.product.fast_repair import SCAN_BUDGET, plan_questions, scan_config
+
+    phi = scan_config(FastRepairConfig(model_id="x/y"), 128)
+    assert (phi.screen_sample, phi.screen_probe, phi.pool) == (60, 40, 16)  # Fast Scan's own defaults
+    assert plan_questions(phi, 128, 300, 200) == SCAN_BUDGET
+    for parts in (196, 252):
+        cfg = scan_config(FastRepairConfig(model_id="x/y"), parts)
+        assert cfg.screen_sample + cfg.screen_probe >= fast_repair.MIN_SCREEN
+        assert plan_questions(cfg, parts, 300, 200) <= SCAN_BUDGET * 1.01
+    exact = scan_config(FastRepairConfig(model_id="x/y", mode="exact"), 252)
+    assert (exact.mode, exact.screen_sample, exact.screen_probe, exact.survivors) == ("exact", 60, 40, 40)
+
+
+def test_the_scorer_gives_fast_scan_the_objective_and_each_answer(tmp_path):
+    from src.product.fast_repair import run_scan, scan_config
+
+    backend = FakeBackend()
+    events = fast_repair.Events(tmp_path)
+    events.stage = "scan"
+    flipped = [it for it in AMBIG if it.example_id % 3 == 0 and it.example_id % 10 != 0][:40]
+    seen = []
+    real = backend.score
+
+    def spy(view, items, on_progress=None):
+        picks = real(view, items, on_progress)
+        seen.append((list(items), picks))
+        return picks
+
+    backend.score = spy
+    result, cfg, total = run_scan(backend, adapter_for(TINY).candidates(), flipped, DISAMBIG[:30],
+                                  FastRepairConfig(model_id="x/y"), events, speed=10.0)
+    assert set(result.kept) == {A, B} and cfg == scan_config(FastRepairConfig(model_id="x/y"), 28)
+    assert 0 < sum(len(items) for items, _ in seen) <= total  # every question asked went through the scorer
+
+
+def test_search_questions_are_a_random_sample_not_the_first_categories():
+    from src.product.fast_repair import seeded_subset
+
+    items = sorted(AMBIG, key=lambda it: it.category)  # grouped by category, like the real lists
+    picked = seeded_subset(items, 100, seed=0)
+    assert len(picked) == 100 and {it.category for it in picked} == {"Age", "SES"}
+    assert picked == [it for it in items if it in picked]  # original order kept
+    assert picked == seeded_subset(items, 100, seed=0) != seeded_subset(items, 100, seed=1)
+    assert seeded_subset(items[:5], 100, seed=0) == items[:5]

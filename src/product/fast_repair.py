@@ -13,12 +13,18 @@ questions the scan never saw. It writes, as it goes (sprint contract C4, docs/CO
     DIR/report.json    before/after numbers, recovery with its interval, the kept parts, the verdict
     DIR/patch.json     the repair, in the project's patch format (with the model's part shapes)
 
-The scan: if Person 2's Fast Scan (src/attribution/fast_scan.py, contract C2) is present it is used;
-otherwise a built-in version of the same idea runs. It screens every part on a small subset of the
-search questions, then runs the existing greedy search (src/attribution/greedy_search.py) on the best
-`pool` parts with the full search questions. "exact" mode screens on the full search questions, so
-it is the full greedy search restricted to round 1's top `pool`, which replaying our 7-hour Phi-3.5
-search showed picks the identical parts from a pool of 10 upward.
+The scan is Fast Scan (src/attribution/fast_scan.py, contract C2), the greedy search's own trial
+(restore a part to 8-bit, re-ask, objective with the hedging penalty) on the parts that can win:
+every part is tried once on a small seeded subset of the search questions, then later rounds only
+try round 1's best `pool`. "fast" works on that subset throughout; "exact" re-checks round 1's best
+on every search question and runs the later rounds on all of them. Replaying our 7-hour Phi-3.5
+search, choosing among round 1's best 10 or more keeps exactly its parts (src/attribution/replay.py).
+
+Fast mode is sized by time, not by a fixed question count: Fast Scan's defaults (60 + 40 screening
+questions, pool 16) are what is being validated on Phi-3.5's 128 parts, ~18,800 questions; a model
+with more parts gets proportionally fewer screening questions (never under 60), so every model's
+scan asks about the same number of questions. The scan reports questions asked against that plan,
+the step it is in, and an "about N min left" estimate from the GPU's measured speed.
 
 The model-running part sits behind a small backend interface, so the whole pipeline is tested on a
 CPU with a stand-in (tests/product/test_fast_repair.py); TorchBackend is the real one.
@@ -42,13 +48,10 @@ from typing import Callable, Iterator, Protocol
 STAGES = ("download", "quantize", "score_original", "score_3bit", "find_damage", "scan", "verify", "report")
 MODES = ("fast", "exact")
 
-# Per-mode scan settings. "fast" screens on a subset to fit ~20 min on a T4; "exact" screens on the
-# full search questions (the greedy search's own round 1) and keeps a wider pool.
-SCAN_SETTINGS = {
-    "fast": {"screen_sample": 60, "screen_probe": 40, "pool": 12, "search_probe": 120},
-    "exact": {"screen_sample": None, "screen_probe": None, "pool": 16, "search_probe": 200},
-}
-SEARCH_CAP = 300          # flipped questions the scan uses, at most (like the Phi-3.5 search sample)
+SEARCH_CAP = 300          # flipped questions the scan uses, at most (the Phi-3.5 search sample's size)
+PROBE_CAP = 200           # stated-answer probe questions, at most (the Phi-3.5 hedging probe's size)
+SCAN_BUDGET = 18_800      # questions fast mode asks for Phi-3.5 with Fast Scan's defaults (see plan_questions)
+MIN_SCREEN = 60           # fast mode never screens a part on fewer questions than this
 MIN_FLIPPED = 10          # fewer flipped search questions than this: nothing meaningful to repair
 CHUNK = 128               # questions per progress update while scoring
 
@@ -79,6 +82,8 @@ class FastRepairConfig:
 class Events:
     """Writes events.jsonl (contract C4): one complete JSON line per update, flushed immediately."""
 
+    min_interval = 0.5  # seconds between progress lines; the Studio reads the file every 1.5 s
+
     def __init__(self, out: Path):
         out.mkdir(parents=True, exist_ok=True)
         self.path = out / "events.jsonl"
@@ -107,7 +112,7 @@ class Events:
 
     def progress(self, done: int, total: int, message: str = "", force: bool = False) -> None:
         now = time.monotonic()
-        if force or now - self._last_progress >= 0.5 or done >= total:
+        if force or now - self._last_progress >= self.min_interval or done >= total:
             self._last_progress = now
             self.write(self.stage, "progress", done, total, message)
 
@@ -125,6 +130,8 @@ def plain_error(error: BaseException) -> str:
         return "This model needs a Hugging Face login or licence acceptance; it can't be downloaded anonymously."
     if "404" in lowered or ("not found" in lowered and "repository" in lowered):
         return "No model with this name exists on Hugging Face."
+    if "no gpu found" in lowered:
+        return str(error)
     if isinstance(error, KeyboardInterrupt):
         return "Stopped."
     return text[:400]
@@ -272,75 +279,115 @@ def rows(items: list, picks: list[int], condition: str) -> list:
 
 # --- the scan ----------------------------------------------------------------------------------------
 
-def make_scorer(backend: Backend, penalty_weight: float):
-    """objective(sample, probe) = share of the flipped questions answered "unknown" again minus
-    penalty_weight x share of the stated-answer probe answered "unknown" -- run_search's objective."""
+def seeded_subset(items: list, n: int, seed: int) -> list:
+    """`n` of the items chosen at random with `seed`, in their original order (all of them if fewer).
+    Random, not the first `n`: the question lists are grouped by category."""
+    if len(items) <= n:
+        return list(items)
+    keep = sorted(random.Random(seed).sample(range(len(items)), n))
+    return [items[i] for i in keep]
+
+
+def scan_config(config: FastRepairConfig, n_parts: int):
+    """Fast Scan's settings for this run: its defaults, with fast mode's screening questions scaled so
+    the scan asks about SCAN_BUDGET questions whatever the model's number of parts."""
+    from src.attribution.fast_scan import FastScanConfig
+
+    base = FastScanConfig()
+    screen = base.screen_sample + base.screen_probe
+    if config.mode == "fast":
+        pool = min(base.pool, n_parts)
+        passes = n_parts + 1 + sum(max(0, pool - r) for r in range(1, config.max_rounds)) + config.max_rounds
+        screen = max(MIN_SCREEN, min(screen, SCAN_BUDGET // passes))
+    n_sample = round(screen * base.screen_sample / (base.screen_sample + base.screen_probe))
+    return FastScanConfig(mode=config.mode, screen_sample=n_sample, screen_probe=screen - n_sample,
+                          survivors=base.survivors, pool=base.pool, max_rounds=config.max_rounds,
+                          threshold=config.threshold, nbits=config.nbits, penalty_weight=config.penalty_weight,
+                          seed=config.seed)
+
+
+def plan_questions(cfg, n_parts: int, n_sample: int, n_probe: int) -> int:
+    """How many questions Fast Scan asks if it runs every round (src/attribution/fast_scan.py, step by
+    step): the progress bar's total, and the basis of the time estimate."""
+    screen = min(cfg.screen_sample, n_sample) + min(cfg.screen_probe, n_probe)
+    full = n_sample + n_probe
+    rounds = min(cfg.max_rounds, n_parts)
+    if cfg.mode == "fast":
+        pool = min(cfg.pool, n_parts)
+        later = sum(max(0, pool - r) for r in range(1, cfg.max_rounds))
+        return screen * (1 + n_parts + later + rounds)
+    full_screen = screen == full
+    survivors = n_parts if full_screen else min(cfg.survivors, n_parts)
+    pool = min(cfg.pool, survivors)
+    later = sum(max(0, pool - r) for r in range(1, cfg.max_rounds))
+    return (full + (0 if full_screen else screen) + n_parts * screen + (0 if full_screen else survivors * full)
+            + (later + rounds) * full)
+
+
+def scan_steps(cfg, n_sample: int, n_probe: int) -> int:
+    full_screen = min(cfg.screen_sample, n_sample) + min(cfg.screen_probe, n_probe) == n_sample + n_probe
+    return 3 if cfg.mode == "exact" and not full_screen else 2
+
+
+def minutes_text(seconds: float) -> str:
+    minutes = seconds / 60
+    return "under a minute" if minutes < 1 else f"about {round(minutes)} min"
+
+
+def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list, config: FastRepairConfig,
+             events: Events, speed: float):
+    """Fast Scan over the model's parts, with the hedging penalty. Returns (result, its config, the
+    planned number of questions). `speed` (questions a second, measured while asking the compressed
+    model) estimates the time left until the scan has measured its own pace."""
+    from src.attribution.fast_scan import ScanScore, fast_scan
+    from src.attribution.item_log import probe_bits, sample_bits
     from src.attribution.run_search import correct_rate, false_unknown_rate, search_objective
 
-    def objective(sample: list, probe: list) -> float:
-        score = correct_rate(backend.score("compressed", sample), sample)
-        hedging = false_unknown_rate(backend.score("compressed", probe), probe) if probe else None
-        return search_objective(score, hedging, penalty_weight)
-
-    return objective
-
-
-def builtin_scan(backend: Backend, candidates: list[str], sample: list, probe: list, mode: str,
-                 config: FastRepairConfig, events: Events, seed: int):
-    """Screen every part on a subset, then the existing greedy search on the best `pool`. Returns the
-    greedy SearchResult plus the screening gains."""
-    from src.attribution.greedy_search import SearchConfig, greedy_search
-
-    settings = SCAN_SETTINGS[mode]
-    rng = random.Random(seed)
-    screen_sample = sample if settings["screen_sample"] is None else rng.sample(sample, min(settings["screen_sample"], len(sample)))
-    screen_probe = probe if settings["screen_probe"] is None else rng.sample(probe, min(settings["screen_probe"], len(probe)))
-    search_probe = probe[: settings["search_probe"]]
-    objective = make_scorer(backend, config.penalty_weight)
-    nbits, pool_size = config.nbits, settings["pool"]
-    total = len(candidates) + pool_size * config.max_rounds  # an upper bound for the progress bar
-    done = 0
-
-    base = objective(screen_sample, screen_probe)
-    gains = {}
-    for path in candidates:
-        with backend.registry.trial(path, nbits):
-            gains[path] = objective(screen_sample, screen_probe) - base
-        done += 1
-        events.progress(done, total, f"screening every part: {done} of {len(candidates)}")
-    # Ties go to the earlier candidate, like the greedy search's own tie-break.
-    pool = sorted(candidates, key=lambda p: (-gains[p], candidates.index(p)))[:pool_size]
-    pool = [p for p in candidates if p in set(pool)]  # keep the search's candidate order
-
-    def on_progress(result):
-        events.progress(done + len(result.trials), total,
-                        f"round {result.trials[-1].round if result.trials else 1} of {config.max_rounds}")
-
-    result = greedy_search(pool, backend.registry, lambda: objective(sample, search_probe),
-                           SearchConfig(threshold=config.threshold, nbits=nbits, max_rounds=config.max_rounds),
-                           on_progress=on_progress)
-    return result, gains, pool
-
-
-def run_scan(backend, candidates, sample, probe, config, events):
-    """Person 2's Fast Scan when it exists (contract C2), otherwise the built-in scan. Returns
-    (kept module paths in keep order, a short name of the engine used)."""
-    try:
-        from src.attribution.fast_scan import FastScanConfig, fast_scan  # noqa: PLC0415 -- optional, Person 2
-    except ImportError:
-        result, _, _ = builtin_scan(backend, candidates, sample, probe, config.mode, config, events, config.seed)
-        return list(result.kept), "built-in screen + greedy"
-    scorer = make_scorer(backend, config.penalty_weight)
+    cfg = scan_config(config, len(candidates))
+    total = plan_questions(cfg, len(candidates), len(sample), len(probe))
+    steps = scan_steps(cfg, len(sample), len(probe))
     sample_by_id = {it.question_id: it for it in sample}
     probe_by_id = {it.question_id: it for it in probe}
+    asked = {"questions": 0, "round_one": 0}
+    started = time.monotonic()
 
-    def scan_scorer(sample_ids, probe_ids):
-        return scorer([sample_by_id[q] for q in sample_ids], [probe_by_id[q] for q in probe_ids])
+    def scorer(sample_ids, probe_ids) -> ScanScore:
+        """The objective run_search ranks trials by, plus each question's result (contract C2)."""
+        items = [sample_by_id[q] for q in sample_ids]
+        stated = [probe_by_id[q] for q in probe_ids]
+        picks = backend.score("compressed", items)
+        stated_picks = backend.score("compressed", stated) if stated else []
+        asked["questions"] += len(items) + len(stated)
+        hedging = false_unknown_rate(stated_picks, stated) if stated else None
+        return ScanScore(search_objective(correct_rate(picks, items), hedging, config.penalty_weight),
+                         sample_bits(picks, items), probe_bits(stated_picks, stated))
 
-    result = fast_scan(candidates, backend.registry, scan_scorer, list(sample_by_id), list(probe_by_id),
-                       FastScanConfig(mode=config.mode, max_rounds=config.max_rounds, threshold=config.threshold,
-                                      nbits=config.nbits, penalty_weight=config.penalty_weight, seed=config.seed))
-    return list(result.kept), "fast_scan"
+    def describe(result) -> str:
+        kept = len(result.kept)
+        if kept or (result.trials and result.trials[-1].round > 1):
+            round_number = min(kept + 1, cfg.max_rounds)
+            return (f"Step {steps} of {steps} · Choosing among the best {len(result.pool)}, round {round_number} "
+                    f"of {cfg.max_rounds}: {kept} part{'s' * (kept != 1)} kept so far")
+        asked["round_one"] += 1
+        n = len(candidates)
+        if asked["round_one"] <= n:
+            return f"Step 1 of {steps} · Quick look at every part: {asked['round_one']} of {n}"
+        survivors = min(cfg.survivors, n)
+        return (f"Step 2 of 3 · Re-checking the {survivors} most promising on every question: "
+                f"{min(asked['round_one'] - n, survivors)} of {survivors}")
+
+    def on_progress(result) -> None:
+        message = describe(result)
+        done = min(asked["questions"], total)
+        elapsed = time.monotonic() - started
+        rate = done / elapsed if done and elapsed > 20 else speed  # its own pace includes swapping parts
+        if done < total and rate:
+            message += f" · {minutes_text((total - done) / rate)} left"
+        events.progress(done, total, message)
+
+    result = fast_scan(candidates, backend.registry, scorer, list(sample_by_id), list(probe_by_id), cfg,
+                       on_progress=on_progress)
+    return result, cfg, total
 
 
 # --- the pipeline ------------------------------------------------------------------------------------
@@ -375,42 +422,54 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         events.done(len(questions), len(questions))
 
     with events.stage_of("score_3bit", total=2 * n):
+        asked_at = time.monotonic()
         picks = backend.score("compressed", questions, lambda k: events.progress(k, len(questions)))
+        speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)  # questions a second, for estimates
         compressed = dict(zip(map(id, questions), picks))
-        events.done(len(questions), len(questions))
+        events.done(len(questions), len(questions), f"{len(questions):,} questions · {speed:.1f} a second")
 
     with events.stage_of("find_damage"):
         safe = [it for it in ambig if original[id(it)] == it.unknown_index]
         flipped = [it for it in safe if compressed[id(it)] == it.stereotype_index]
         knows = [it for it in disambig if original[id(it)] == it.label]
-        search_flipped = [it for it in flipped if in_search_half(it.question_id, config.seed)][:SEARCH_CAP]
-        probe = [it for it in knows if in_search_half(it.question_id, config.seed)]
+        search_flipped = seeded_subset([it for it in flipped if in_search_half(it.question_id, config.seed)],
+                                       SEARCH_CAP, config.seed)
+        probe = seeded_subset([it for it in knows if in_search_half(it.question_id, config.seed)],
+                              PROBE_CAP, config.seed)
         held_ambig = [it for it in ambig if not in_search_half(it.question_id, config.seed)]
         held_disambig = [it for it in disambig if not in_search_half(it.question_id, config.seed)]
         events.done(len(flipped), len(safe),
-                    f"{len(flipped)} of {len(safe)} fair answers flipped to the stereotype; "
-                    f"{len(search_flipped)} used to search, {len(held_ambig)} + {len(held_disambig)} kept back to check")
+                    f"{len(flipped)} of {len(safe)} fair answers flipped to the stereotype · "
+                    f"{len(held_ambig) + len(held_disambig):,} questions kept back to check the repair")
 
     candidates = adapter.candidates()
     damaged = len(search_flipped) >= MIN_FLIPPED
-    with events.stage_of("scan", message=f"{len(candidates)} parts"):
+    cfg = scan_config(config, len(candidates))
+    total = plan_questions(cfg, len(candidates), len(search_flipped), len(probe)) if damaged else 0
+    with events.stage_of("scan", total=total, message=f"{len(candidates)} parts · {minutes_text(total / speed)}"
+                         if damaged else f"{len(candidates)} parts"):
         if damaged:
-            kept, engine = run_scan(backend, candidates, search_flipped, probe, config, events)
-            for path in kept:
+            scan, cfg, total = run_scan(backend, candidates, search_flipped, probe, config, events, speed)
+            kept = list(scan.kept)
+            for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
                 if path not in backend.registry.active:
                     backend.registry.commit(path, config.nbits)
-            events.done(len(kept), len(kept), f"kept {len(kept)} parts ({engine})")
+            events.done(total, total, f"Kept {len(kept)} of {len(candidates)} parts" if kept else
+                        "No part repaired enough to keep; the model stays as compressed")
         else:
-            kept, engine = [], "none"
-            events.done(message="compression flipped too few answers here; nothing to repair")
+            scan = None
+            kept = []
+            events.done(message="Compression flipped too few answers here; nothing to repair")
+    engine = "fast_scan" if scan is not None else "none"
 
     with events.stage_of("verify", total=len(held_ambig) + len(held_disambig)):
         held = held_ambig + held_disambig
         repaired_picks = (backend.score("repaired", held, lambda k: events.progress(k, len(held))) if kept
                           else [compressed[id(it)] for it in held])
         repaired = dict(zip(map(id, held), repaired_picks))
-        report = build_report(config, adapter, backend, engine, ambig, disambig, safe, flipped, kept,
-                              held_ambig, held_disambig, original, compressed, repaired, started)
+        report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
+                              held_ambig, held_disambig, original, compressed, repaired, started,
+                              search=(len(search_flipped), len(probe)))
         events.done(len(held), len(held))
 
     with events.stage_of("report"):
@@ -425,8 +484,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     return report
 
 
-def build_report(config, adapter, backend, engine, ambig, disambig, safe, flipped, kept, held_ambig,
-                 held_disambig, original, compressed, repaired, started) -> dict:
+def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept, held_ambig,
+                 held_disambig, original, compressed, repaired, started, search=(0, 0)) -> dict:
     from src.product.fairgate import check
     from src.stats.metrics import is_unknown
     from src.stats.recovery import recovery_fraction
@@ -453,9 +512,20 @@ def build_report(config, adapter, backend, engine, ambig, disambig, safe, flippe
         "gate": gate["verdict"], "gate_failures": gate["failures"], "patch": "patch.json" if kept else None,
         "n_layers": adapter.n_layers, "part_types": list(adapter.part_types),
         "checked_on": {"ambiguous": len(held_ambig), "stated_answer": len(held_disambig)},
-        "scan": {"engine": engine, "candidates": len(adapter.candidates()), **SCAN_SETTINGS[config.mode],
-                 "penalty_weight": config.penalty_weight, "seed": config.seed},
+        "scan": scan_block(config, adapter, scan, cfg, search),
     }
+
+
+def scan_block(config, adapter, scan, cfg, search) -> dict:
+    """What the scan did, for the report: its settings, the questions it used, and (when it ran) the
+    pool it chose from, its trials and why it stopped."""
+    block = {"engine": "fast_scan" if scan is not None else "none", "candidates": len(adapter.candidates()),
+             "screen_sample": cfg.screen_sample, "screen_probe": cfg.screen_probe, "survivors": cfg.survivors,
+             "pool": cfg.pool, "search_sample": search[0], "search_probe": search[1],
+             "penalty_weight": config.penalty_weight, "seed": config.seed}
+    if scan is not None:
+        block.update(pool_parts=list(scan.pool), trials=len(scan.trials), stop_reason=scan.stop_reason)
+    return block
 
 
 def make_patch(config, adapter, kept, engine):
