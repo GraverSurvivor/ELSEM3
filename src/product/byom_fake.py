@@ -28,12 +28,12 @@ from pathlib import Path
 
 from src.product.byom import STAGES, check_mode, check_model_id, format_duration
 
-# Seconds each stage takes on a T4 for a ~3-4B model (the sprint's estimates), per mode.
+# Seconds each stage takes on a T4 for a ~3B model (estimates from ~11.6-14 questions a second), per mode.
 DURATIONS = {
-    "fast": {"download": 60, "quantize": 130, "score_original": 90, "score_3bit": 160, "find_damage": 5,
-             "scan": 420, "verify": 240, "report": 5},
-    "exact": {"download": 60, "quantize": 130, "score_original": 90, "score_3bit": 160, "find_damage": 5,
-              "scan": 1500, "verify": 480, "report": 5},
+    "fast": {"download": 120, "quantize": 120, "score_original": 170, "score_3bit": 150, "find_damage": 5,
+             "scan": 1200, "verify": 90, "report": 5},
+    "exact": {"download": 120, "quantize": 120, "score_original": 170, "score_3bit": 150, "find_damage": 5,
+              "scan": 9000, "verify": 90, "report": 5},
 }
 PROGRESS_STEPS = 12
 
@@ -109,15 +109,57 @@ def synthetic_report(model_id: str, mode: str, questions: int) -> tuple[dict, di
     return report, patch
 
 
+def scan_steps(mode: str, n_parts: int) -> list[tuple[int, str]]:
+    """Fast Scan's questions per step and its words for them (src/attribution/fast_scan.py's sizes):
+    fast looks at every part on 30 questions, re-checks 16 on 150, then chooses among 12 on 150;
+    exact looks at every part on 500, then chooses among 16."""
+    if mode == "fast":
+        return [(30 * (n_parts + 1), "Step 1 of 3 · Quick look at every part"),
+                (150 * 17, "Step 2 of 3 · Re-checking the 16 most promising"),
+                (150 * (11 + 10 + 9 + 8 + 5), "Step 3 of 3 · Choosing among the best 12")]
+    return [(500 * (n_parts + 1), "Step 1 of 2 · Quick look at every part"),
+            (500 * (15 + 14 + 13 + 12 + 5), "Step 2 of 2 · Choosing among the best 16")]
+
+
+def scan_message(mode: str, n_parts: int, done: int, seconds_left: float) -> str:
+    """The words the real scan would show after `done` questions."""
+    start, steps = 0, scan_steps(mode, n_parts)
+    for index, (size, words) in enumerate(steps):
+        if done < start + size or index == len(steps) - 1:
+            share = min(1.0, (done - start) / size)
+            if "Quick look" in words:
+                detail = f": {min(n_parts, int(share * n_parts))} of {n_parts}"
+            elif "Re-checking" in words:
+                detail = f": {min(16, int(share * 16))} of 16"
+            else:
+                round_number = min(5, 1 + int(share * 5))
+                kept = round_number - 1
+                detail = f", round {round_number} of 5: {kept} part{'s' * (kept != 1)} kept so far"
+            minutes = seconds_left / 60
+            left = "under a minute" if minutes < 1 else f"about {round(minutes)} min"
+            return f"{words}{detail} · {left} left"
+        start += size
+    return ""
+
+
 def run_synthetic(args, writer: Writer) -> None:
-    totals = {"score_original": args.questions * 2, "score_3bit": args.questions * 2, "verify": args.questions * 2,
-              "scan": 70 if args.mode == "fast" else 140}
+    _, n_layers, parts = guess_arch(args.model)
+    n_parts = n_layers * len(parts)
+    scan_total = sum(size for size, _ in scan_steps(args.mode, n_parts))
+    totals = {"score_original": args.questions * 2, "score_3bit": args.questions * 2, "verify": args.questions,
+              "scan": scan_total}
+    flipped, safe = int(args.questions * 0.28), int(args.questions * 0.84)
     messages = {"download": "fetching the weights", "quantize": "HQQ 3-bit, group 64",
-                "find_damage": f"{int(args.questions * 0.28)} biased answers found"}
+                "score_3bit": f"{args.questions * 2:,} questions · 13.3 a second",
+                "find_damage": f"{flipped} of {safe} fair answers flipped to the stereotype · "
+                               f"{args.questions:,} questions kept back to check the repair"}
+    started_messages = {"scan": f"{n_parts} parts · about {round(DURATIONS[args.mode]['scan'] / 60)} min"}
+    done_messages = {"scan": f"Kept 5 of {n_parts} parts"}
     offset = 0.0
     for stage, _ in STAGES:
         writer.wait_until(offset)
-        writer.event(stage, "started", 0, totals.get(stage, 0), messages.get(stage, ""))
+        writer.event(stage, "started", 0, totals.get(stage, 0),
+                     started_messages.get(stage, "" if stage in ("score_3bit", "find_damage") else messages.get(stage, "")))
         duration = DURATIONS[args.mode][stage]
         steps = PROGRESS_STEPS if stage in totals else 1
         for step in range(1, steps + 1):
@@ -127,14 +169,17 @@ def run_synthetic(args, writer: Writer) -> None:
                 raise SystemExit(1)
             if stage in totals and step < steps:
                 total = totals[stage]
-                message = f"round {1 + step * 5 // steps} of 5" if stage == "scan" else ""
-                writer.event(stage, "progress", total * step // steps, total, message)
+                done = total * step // steps
+                message = (scan_message(args.mode, n_parts, done, duration * (steps - step) / steps)
+                           if stage == "scan" else "")
+                writer.event(stage, "progress", done, total, message)
         offset += duration
         if stage == "report":
             report, patch = synthetic_report(args.model, args.mode, args.questions)
             (writer.out / "patch.json").write_text(json.dumps(patch, indent=2), encoding="utf-8")
             (writer.out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        writer.event(stage, "done", totals.get(stage, 0), totals.get(stage, 0), messages.get(stage, ""))
+        writer.event(stage, "done", totals.get(stage, 0), totals.get(stage, 0),
+                     done_messages.get(stage, messages.get(stage, "")))
 
 
 def run_replay(args, writer: Writer) -> None:

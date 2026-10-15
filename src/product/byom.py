@@ -44,8 +44,8 @@ STAGES = (
 STAGE_LABELS = dict(STAGES)
 
 MODES = {
-    "fast": "Fast: about 20 min on a T4, very likely the same parts as the full search",
-    "exact": "Exact: about 45 min on a T4, the same parts as the full search",
+    "fast": "Fast: about 30-35 min on a T4 (20 of them scanning), very likely the same parts as the full search",
+    "exact": "Exact: 2-3 hours on a T4 (about 30 min on an A100), the same parts as the full search",
 }
 DEFAULT_QUESTIONS = 1000
 
@@ -240,11 +240,9 @@ def progress_html(state: dict, job: dict | None = None) -> str:
     """The list of stages with their status, counts, a bar for the running one, and times."""
     rows = []
     for stage in state["stages"]:
-        detail = ""
-        if stage.total:
-            detail = f"{stage.done:,} / {stage.total:,}"
-        if stage.message:
-            detail = f"{detail} · {stage.message}" if detail else stage.message
+        # A stage's own words when it has them ("Step 1 of 3 · Quick look at every part: 37 of 252 ·
+        # about 15 min left"); the bare count otherwise (questions asked so far, say).
+        detail = stage.message or (f"{stage.done:,} / {stage.total:,}" if stage.total else "")
         bar = ""
         if stage.status == "running" and stage.total:
             share = min(1.0, stage.done / stage.total)

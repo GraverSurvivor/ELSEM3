@@ -98,11 +98,17 @@ def test_durations_read_naturally():
 
 
 def test_progress_view_shows_each_stage():
-    state = job_state([ev(0, "scan", "started"), ev(30, "scan", "progress", 35, 70, "round 3 of 5")],
+    message = "Step 3 of 3 · Choosing among the best 12, round 2 of 5: 1 part kept so far · about 6 min left"
+    state = job_state([ev(0, "score_3bit", "started"), ev(5, "score_3bit", "progress", 640, 2000),
+                       ev(9, "score_3bit", "done", 2000, 2000, "2,000 questions · 11.6 a second"),
+                       ev(10, "scan", "started"), ev(30, "scan", "progress", 6435, 12870, message)],
                       now=T0 + timedelta(seconds=40))
     page = progress_html(state, {"model_id": "Qwen/Qwen2.5-3B-Instruct", "mode": "fast"})
     assert "Running · Qwen/Qwen2.5-3B-Instruct · fast mode" in page
-    assert "35 / 70 · round 3 of 5" in page and 'style="width:50%"' in page
+    assert message in page and 'style="width:50%"' in page  # the words, not "6,435 / 12,870"
+    assert "6,435" not in page and "2,000 questions · 11.6 a second" in page
+    running_count = progress_html(job_state([ev(0, "verify", "started"), ev(3, "verify", "progress", 250, 1000)]))
+    assert "250 / 1,000" in running_count  # no words: the count
     assert all(label in page for _, label in byom.STAGES)
     assert "<script" not in progress_html(job_state([ev(0, "scan", "started", message="<script>x</script>")]))
 

@@ -510,7 +510,7 @@ GUIDE = """
   <div class="fg-step"><b class="num">4</b><b>Ship</b><p>See the pass/fail verdict on the whole benchmark,
   how much memory the repair adds, and download the fix.</p></div>
   <div class="fg-step"><b class="num">5</b><b>Your model</b><p>Type the name of any Hugging Face model and
-  press Diagnose: the same check and repair, on your model, in about 20 minutes.</p></div>
+  press Diagnose: the same check and repair, on your model, in about half an hour.</p></div>
 </div>
 """
 
@@ -892,8 +892,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
             with gr.Tab("5 · Your model", id="byom"):
                 gr.HTML(_help(
                     "Type the name of a model on Hugging Face, for example <b>Qwen/Qwen2.5-3B-Instruct</b>.",
-                    "Pick <b>Fast</b> (about 20 min on a T4, very likely the same parts as the full search) or "
-                    "<b>Exact</b> (about 45 min, the same parts as the full search), then press <b>Diagnose</b>.",
+                    "Pick <b>Fast</b> (about half an hour on a T4, very likely the same parts as the full search) "
+                    "or <b>Exact</b> (2-3 hours on a T4, the same parts as the full search), then press "
+                    "<b>Diagnose</b>.",
                     "Watch each step. When it finishes: did compression make your model more biased, which parts "
                     "to keep at 8-bit, and the files to ship the repair. Models up to about 4B parameters fit a T4.",
                 ))
