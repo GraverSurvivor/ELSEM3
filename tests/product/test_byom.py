@@ -274,6 +274,24 @@ def test_a_recorded_run_replays_with_its_banner(tmp_path):
     assert "recorded real run" in results_html(replayed)
 
 
+def test_a_recorded_run_that_repaired_nothing_replays_too(tmp_path):
+    """Regression: the replay copied patch.json unconditionally and crashed on a run without one."""
+    recorder = JobRunner(tmp_path / "recorded", pipeline="fake", speed=3000)
+    recorded = recorder.start("Qwen/Qwen2.5-0.5B-Instruct", "fast")
+    _wait(recorder, recorded, {"done"})
+    report = json.loads((recorded / "report.json").read_text(encoding="utf-8"))
+    report.pop("synthetic")
+    report.update(kept=[], patch=None, outcome="not_applicable", gate="N/A", gate_failures=[],
+                  outcome_reason="The original model says \"can't tell\" on only 4 of 400 questions...")
+    (recorded / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    (recorded / "patch.json").unlink()
+
+    player = JobRunner(tmp_path / "demo", pipeline="replay", replay=recorded, speed=3000)
+    job = player.start("Qwen/Qwen2.5-0.5B-Instruct", "fast")
+    assert _wait(player, job, {"done", "failed", "stopped"})["status"] == "done"
+    assert not (job / "patch.json").exists() and "can&#x27;t be checked" in results_html(read_report(job))
+
+
 def test_the_real_pipeline_is_required_unless_a_stand_in_is_chosen(tmp_path, monkeypatch):
     monkeypatch.setattr(byom, "real_pipeline_available", lambda: False)
     with pytest.raises(RuntimeError, match="byom-pipeline fake"):

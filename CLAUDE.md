@@ -207,6 +207,15 @@ for tab 5 (tabs 1-4 use saved results, models up to ~4B);
 (Person 1) gives any supported model's parts (phi3, qwen2, llama, mistral), their shapes and GGUF
 names; for Phi-3.5 it equals the 128 candidates exactly, and `candidate_paths_for_model`,
 `filter_candidates` and patch files (optional `part_shapes`/`n_layers`) now work for the others.
+**Any model (Oct 2026):** families outside the tables are discovered from their structure on the meta
+device (`discover`: the decoder-block stack and the linears every block shares; `transformer.h`,
+`gpt_neox.layers`, `model.decoder.layers`; GPT-2 `Conv1D` recorded as transposed and turned into
+`nn.Linear` before HQQ); encoders/seq2seq are refused. `CheckpointWeightSource` reads local folders, `.bin`
+checkpoints and prefix-less names; prompts fall back to "...Answer:" without a chat template;
+`TorchBackend.preflight` refuses a model that won't fit (RAM to compress, GPU to scan, measured free)
+before downloading; the original is freed after it answers; NaN scores (fp16 overflow) stop the run.
+Reports say `outcome` (repaired / no_gain / no_damage / not_applicable) and list `other_damage`.
+`tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
 hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see

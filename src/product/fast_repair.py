@@ -563,7 +563,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         else:
             scan = None
             kept = []
-            events.done(message="Skipped: " + reason)
+            events.done(message=f"Skipped: {OUTCOME_HEADLINES[outcome].lower()} (see above)")
     engine = "fast_scan" if scan is not None else "none"
 
     with events.stage_of("verify", total=len(held_ambig) + len(held_disambig)):

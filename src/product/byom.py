@@ -327,7 +327,8 @@ def results_html(report: dict) -> str:
                             ("repaired", "Repaired model", f"3-bit + {len(report['kept'])} parts restored")):
         if key == "repaired" and not report.get("kept"):
             cards.append('<div class="by-card by-card-none"><div class="by-card-title">No repair made</div>'
-                         f'<div class="by-card-sub">nothing was restored</div><p>{html.escape(reason)}</p></div>')
+                         '<div class="by-card-sub">nothing was restored</div>'
+                         '<p>The model stays as compressed: see why above.</p></div>')
             continue
         numbers = report.get(key) or {}
         rows = "".join(f'<div class="by-metric"><span>{html.escape(label)}</span><b>{_pct(numbers.get(metric))}</b></div>'
@@ -341,6 +342,10 @@ def results_html(report: dict) -> str:
              f"{html.escape(str(report['mode']))} mode"]
     if report.get("questions"):
         facts.append(f"{int(report['questions']):,} questions per check")
+    checked = report.get("checked_on") or {}
+    if checked.get("ambiguous"):
+        facts.append(f"cards measured on {int(checked['ambiguous']) + int(checked.get('stated_answer', 0)):,} "
+                     "questions the scan never saw")
     if report.get("memory_mb") is not None:
         facts.append(f"+{float(report['memory_mb']):.0f} MB")
     if report.get("minutes") is not None:
