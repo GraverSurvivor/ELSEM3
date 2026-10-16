@@ -570,7 +570,7 @@ def byom_view(runner: JobRunner) -> tuple:
                  "llama-quantize model-f16.gguf model-Q3_K_M.gguf Q3_K_M")
         return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report), None, llama)
     try:
-        lines = llamacpp_lines(json.loads(patch_path.read_text(encoding="utf-8")))
+        lines = llamacpp_lines(json.loads(patch_path.read_text(encoding="utf-8")), report.get("gguf_names"))
         llama = "llama-quantize \\\n  " + " \\\n  ".join(lines) + " \\\n  model-f16.gguf model-Q3_K_M-fairgate.gguf Q3_K_M"
     except (OSError, ValueError, json.JSONDecodeError) as error:
         llama = f"# The llama.cpp settings couldn't be written for this model ({error}); patch.json still applies."
@@ -986,12 +986,16 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
 
             with gr.Tab("5 · Your model", id="byom"):
                 gr.HTML(_help(
-                    "Type the name of a model on Hugging Face, for example <b>Qwen/Qwen2.5-3B-Instruct</b>.",
+                    "Type the name of any text-generation model on Hugging Face (Qwen, Llama, Gemma, Mistral, Phi, "
+                    "SmolLM, GPT-2, OPT, ...), for example <b>Qwen/Qwen2.5-3B-Instruct</b>. Its size is checked "
+                    "before anything is downloaded.",
                     "Pick <b>Fast</b> (about 35 min on a T4, very likely the same parts as the full search) "
                     "or <b>Exact</b> (1.5-2 hours on a T4, the same parts as the full search), then press "
                     "<b>Diagnose</b>.",
                     "Watch each step. When it finishes: did compression make your model more biased, which parts "
-                    "to keep at 8-bit, and the files to ship the repair. Models up to about 4B parameters fit a T4.",
+                    "to keep at 8-bit, and the files to ship the repair. About 4B parameters fit a free T4 (about "
+                    "3B next to the live demo). The check needs a model that answers \"can't tell\" when the story "
+                    "doesn't say: instruction-tuned chat models of 1.5B or more usually do.",
                 ))
                 if byom is None or byom.runner is None:
                     gr.Markdown(byom.unavailable if byom is not None else ByomSetup.NOT_STARTED)

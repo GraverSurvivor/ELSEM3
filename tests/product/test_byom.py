@@ -179,8 +179,12 @@ def test_llamacpp_settings_for_each_architecture():
                                    '--tensor-type "blk\\.2\\.ffn_up=q8_0"', '--tensor-type "blk\\.3\\.ffn_down=q8_0"']
     qwen = {"nbits": 8, "modules": ["model.layers.20.self_attn.v_proj", "model.layers.4.mlp.gate_proj"]}
     assert llamacpp_lines(qwen) == ['--tensor-type "blk\\.20\\.attn_v=q8_0"', '--tensor-type "blk\\.4\\.ffn_gate=q8_0"']
-    with pytest.raises(ValueError):
-        llamacpp_lines({"nbits": 8, "modules": ["model.layers.1.mlp.mystery_proj"]})
+    mystery = llamacpp_lines({"nbits": 8, "modules": ["model.layers.1.mlp.mystery_proj"]})
+    assert mystery == ["# llama.cpp has no tensor name for: layer 1 mlp.mystery_proj (patch.json still restores them)"]
+    gpt2 = {"nbits": 8, "modules": ["transformer.h.3.attn.c_attn", "transformer.h.0.mlp.c_proj"]}
+    names = {"attn.c_attn": "attn_qkv", "mlp.c_proj": "ffn_down"}  # what the adapter writes in the report
+    assert llamacpp_lines(gpt2, names) == ['--tensor-type "blk\.3\.attn_qkv=q8_0"',
+                                           '--tensor-type "blk\.0\.ffn_down=q8_0"']
     with pytest.raises(ValueError):
         llamacpp_lines({"nbits": 7, "modules": []})
 
@@ -268,6 +272,24 @@ def test_a_recorded_run_replays_with_its_banner(tmp_path):
     assert replayed["replayed_from"].startswith(recorded.name) and replayed["kept"] == report["kept"]
     assert "in the recorded run" in read_events(job / "events.jsonl")[-1]["message"]
     assert "recorded real run" in results_html(replayed)
+
+
+def test_a_recorded_run_that_repaired_nothing_replays_too(tmp_path):
+    """Regression: the replay copied patch.json unconditionally and crashed on a run without one."""
+    recorder = JobRunner(tmp_path / "recorded", pipeline="fake", speed=3000)
+    recorded = recorder.start("Qwen/Qwen2.5-0.5B-Instruct", "fast")
+    _wait(recorder, recorded, {"done"})
+    report = json.loads((recorded / "report.json").read_text(encoding="utf-8"))
+    report.pop("synthetic")
+    report.update(kept=[], patch=None, outcome="not_applicable", gate="N/A", gate_failures=[],
+                  outcome_reason="The original model says \"can't tell\" on only 4 of 400 questions...")
+    (recorded / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    (recorded / "patch.json").unlink()
+
+    player = JobRunner(tmp_path / "demo", pipeline="replay", replay=recorded, speed=3000)
+    job = player.start("Qwen/Qwen2.5-0.5B-Instruct", "fast")
+    assert _wait(player, job, {"done", "failed", "stopped"})["status"] == "done"
+    assert not (job / "patch.json").exists() and "can&#x27;t be checked" in results_html(read_report(job))
 
 
 def test_the_real_pipeline_is_required_unless_a_stand_in_is_chosen(tmp_path, monkeypatch):

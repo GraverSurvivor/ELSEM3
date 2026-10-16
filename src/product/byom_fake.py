@@ -214,7 +214,8 @@ def run_replay(args, writer: Writer) -> None:
         if event["stage"] == "report" and event["status"] == "done":
             report = json.loads((source / "report.json").read_text(encoding="utf-8"))
             report["replayed_from"] = f"{source.name}, recorded {times[0]:%d %b %Y}"
-            shutil.copy2(source / "patch.json", writer.out / "patch.json")
+            if (source / "patch.json").exists():  # a run that restored nothing has no patch
+                shutil.copy2(source / "patch.json", writer.out / "patch.json")
             (writer.out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         writer.event(event["stage"], event["status"], event.get("done", 0), event.get("total", 0), message)
 

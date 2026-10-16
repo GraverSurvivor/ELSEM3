@@ -32,6 +32,8 @@ otherwise, the fix is pinning a specific shortlist of candidates, not a general 
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Callable
 
 import torch
 import torch.nn as nn
@@ -41,13 +43,19 @@ from src.eval.model_loader import MODEL_ID
 
 INDEX_FILE = "model.safetensors.index.json"
 SINGLE_FILE = "model.safetensors"
+BIN_INDEX_FILE = "pytorch_model.bin.index.json"   # older checkpoints, read only when there's no safetensors
+BIN_SINGLE_FILE = "pytorch_model.bin"
 
 
 class CheckpointWeightSource:
-    """Reads individual pre-quantization weights out of a model's safetensors checkpoint.
+    """Reads individual pre-quantization weights out of a model's checkpoint.
 
     Resolves module paths the same way the model does, so `"model.layers.0.self_attn.qkv_proj"`
-    reads the checkpoint's `"model.layers.0.self_attn.qkv_proj.weight"`.
+    reads the checkpoint's `"model.layers.0.self_attn.qkv_proj.weight"`. For other models it also
+    finds names saved without the model's top-level prefix (GPT-2's checkpoints say `h.0.attn...`
+    for `transformer.h.0.attn...`), reads `.bin` checkpoints when there are no safetensors, reads
+    a local folder as well as a Hub id, and turns GPT-2-style `Conv1D` weights (stored (in, out))
+    the right way round when `transposed(path)` says so.
 
     `revision` is worth pinning for a final run: this reads the checkpoint independently of
     whatever `from_pretrained` loaded, so if the Hub repo moved in between, the restored weights
@@ -55,13 +63,23 @@ class CheckpointWeightSource:
     local cache, which is why it defaults to None rather than being required.
     """
 
-    def __init__(self, model_id: str = MODEL_ID, revision: str | None = None) -> None:
+    def __init__(self, model_id: str = MODEL_ID, revision: str | None = None,
+                 transposed: Callable[[str], bool] | None = None) -> None:
         self.model_id = model_id
         self.revision = revision
-        self._weight_map = self._load_weight_map()
+        self.transposed = transposed or (lambda path: False)
+        self._local = Path(model_id) if Path(model_id).is_dir() else None
         self._shard_paths: dict[str, str] = {}
+        self._bin_shards: dict[str, dict] = {}
+        self._format = "safetensors"
+        self._weight_map = self._load_weight_map()
 
     def _download(self, filename: str) -> str:
+        if self._local is not None:
+            path = self._local / filename
+            if not path.exists():
+                raise FileNotFoundError(f"{filename} is not in {self._local}")
+            return str(path)
         return hf_hub_download(self.model_id, filename, revision=self.revision)
 
     def _load_weight_map(self) -> dict[str, str]:
@@ -72,30 +90,68 @@ class CheckpointWeightSource:
             # No index means the checkpoint isn't sharded, so every tensor is in one file.
             from safetensors import safe_open
 
-            path = self._download(SINGLE_FILE)
+            try:
+                path = self._download(SINGLE_FILE)
+            except Exception:
+                return self._load_bin_weight_map()
             self._shard_paths = {SINGLE_FILE: path}
             with safe_open(path, framework="pt") as shard:
                 return {key: SINGLE_FILE for key in shard.keys()}
-
         with open(index_path, encoding="utf-8") as handle:
             return json.load(handle)["weight_map"]
 
+    def _load_bin_weight_map(self) -> dict[str, str]:
+        self._format = "bin"
+        try:
+            with open(self._download(BIN_INDEX_FILE), encoding="utf-8") as handle:
+                return json.load(handle)["weight_map"]
+        except Exception:
+            pass
+        try:
+            return {key: BIN_SINGLE_FILE for key in self._bin_shard(BIN_SINGLE_FILE)}
+        except Exception as error:
+            raise FileNotFoundError(f"{self.model_id} has no safetensors or pytorch_model.bin checkpoint") from error
+
+    def _bin_shard(self, name: str) -> dict:
+        if name not in self._bin_shards:
+            # Memory-mapped and weights only: nothing is executed, and only the tensors read are touched.
+            self._bin_shards[name] = torch.load(self._download(name), map_location="cpu", mmap=True,
+                                                weights_only=True)
+        return self._bin_shards[name]
+
+    def _resolve(self, key: str) -> str | None:
+        """The checkpoint's name for a model tensor name, or None."""
+        if key in self._weight_map:
+            return key
+        parts = key.split(".")
+        # Saved without the model's top-level prefix(es): drop leading names, but never past the
+        # layer number, or one layer's weight could be read for another's.
+        first_number = next((i for i, part in enumerate(parts) if part.isdigit()), len(parts) - 1)
+        for i in range(1, first_number + 1):
+            if ".".join(parts[i:]) in self._weight_map:
+                return ".".join(parts[i:])
+        for prefix in ("model.", "transformer."):  # or with one the model object doesn't have
+            if prefix + key in self._weight_map:
+                return prefix + key
+        return None
+
     def has(self, key: str) -> bool:
-        return key in self._weight_map
+        return self._resolve(key) is not None
 
     def get_tensor(self, key: str) -> torch.Tensor:
         """Reads one tensor. Only that tensor's bytes are touched, not the whole shard."""
         from safetensors import safe_open
 
-        if key not in self._weight_map:
+        name = self._resolve(key)
+        if name is None:
             raise KeyError(f"{key!r} is not in {self.model_id}'s checkpoint")
-
-        shard_name = self._weight_map[key]
+        shard_name = self._weight_map[name]
+        if self._format == "bin":
+            return self._bin_shard(shard_name)[name]
         if shard_name not in self._shard_paths:
             self._shard_paths[shard_name] = self._download(shard_name)
-
         with safe_open(self._shard_paths[shard_name], framework="pt") as shard:
-            return shard.get_tensor(key)
+            return shard.get_tensor(name)
 
     def get_linear(self, path: str, dtype: torch.dtype) -> nn.Linear:
         """Rebuilds the module at `path` as a plain `nn.Linear` at `dtype`, from the checkpoint.
@@ -108,11 +164,11 @@ class CheckpointWeightSource:
         weight = self.get_tensor(weight_key).to(dtype=dtype, copy=True)
         if weight.ndim != 2:
             raise ValueError(f"{weight_key!r} has shape {tuple(weight.shape)}, expected 2-D")
-
+        if self.transposed(path):  # a Conv1D's (in, out) weight, as nn.Linear's (out, in)
+            weight = weight.t().contiguous()
         out_features, in_features = weight.shape
         bias_key = f"{path}.bias"
         has_bias = self.has(bias_key)
-
         linear = nn.Linear(in_features, out_features, bias=has_bias)
         linear.weight.data = weight
         if has_bias:

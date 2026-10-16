@@ -122,3 +122,21 @@ def test_unsharded_checkpoint_without_an_index(tmp_path, monkeypatch):
         source.get_tensor("model.layers.0.mlp.down_proj.weight"),
         tensors["model.layers.0.mlp.down_proj.weight"],
     )
+
+
+def test_any_checkpoint_layout_is_read(tmp_path):
+    """A local folder, a .bin checkpoint, names saved without the model's prefix (GPT-2), and
+    Conv1D weights stored (in, out): all read back as the module's nn.Linear."""
+    torch.manual_seed(0)
+    w = torch.randn(12, 8)  # Conv1D: (in=12, out=8)
+    b = torch.randn(8)
+    torch.save({"h.0.attn.c_attn.weight": w, "h.0.attn.c_attn.bias": b, "h.1.attn.c_attn.weight": w + 1},
+               tmp_path / "pytorch_model.bin")
+    source = CheckpointWeightSource(str(tmp_path), transposed=lambda path: path.endswith("c_attn"))
+    linear = source.get_linear("transformer.h.0.attn.c_attn", dtype=torch.float32)
+    assert (linear.out_features, linear.in_features) == (8, 12)
+    assert torch.equal(linear.weight.data, w.t()) and torch.equal(linear.bias.data, b)
+    assert not source.has("transformer.h.0.mlp.c_fc.weight")
+    assert not source.has("transformer.h.2.attn.c_attn.weight")  # never another layer's weight
+    with pytest.raises(FileNotFoundError):
+        CheckpointWeightSource(str(tmp_path / "empty_dir_that_does_not_exist_as_model"))

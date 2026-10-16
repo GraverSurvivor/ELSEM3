@@ -327,7 +327,8 @@ def results_html(report: dict) -> str:
                             ("repaired", "Repaired model", f"3-bit + {len(report['kept'])} parts restored")):
         if key == "repaired" and not report.get("kept"):
             cards.append('<div class="by-card by-card-none"><div class="by-card-title">No repair made</div>'
-                         f'<div class="by-card-sub">nothing was restored</div><p>{html.escape(reason)}</p></div>')
+                         '<div class="by-card-sub">nothing was restored</div>'
+                         '<p>The model stays as compressed: see why above.</p></div>')
             continue
         numbers = report.get(key) or {}
         rows = "".join(f'<div class="by-metric"><span>{html.escape(label)}</span><b>{_pct(numbers.get(metric))}</b></div>'
@@ -341,6 +342,10 @@ def results_html(report: dict) -> str:
              f"{html.escape(str(report['mode']))} mode"]
     if report.get("questions"):
         facts.append(f"{int(report['questions']):,} questions per check")
+    checked = report.get("checked_on") or {}
+    if checked.get("ambiguous"):
+        facts.append(f"cards measured on {int(checked['ambiguous']) + int(checked.get('stated_answer', 0)):,} "
+                     "questions the scan never saw")
     if report.get("memory_mb") is not None:
         facts.append(f"+{float(report['memory_mb']):.0f} MB")
     if report.get("minutes") is not None:
@@ -384,19 +389,27 @@ def results_html(report: dict) -> str:
 
 # --- the kept parts, on a grid for any model -------------------------------------------------------
 
-_PATH = re.compile(r"(?:^|\.)layers\.(\d+)\.(.+)$")
-
-
 def parse_module(path: str) -> tuple[int, str]:
-    """'model.layers.13.self_attn.qkv_proj' -> (13, 'self_attn.qkv_proj')."""
-    match = _PATH.search(path)
-    if not match:
-        raise ValueError(f"not a decoder-layer module: {path!r}")
-    return int(match.group(1)), match.group(2)
+    """Any model's decoder-layer path -> (layer, part): 'model.layers.13.self_attn.qkv_proj' ->
+    (13, 'self_attn.qkv_proj'), 'transformer.h.3.attn.c_attn' -> (3, 'attn.c_attn')."""
+    parts = path.split(".")
+    for i, name in enumerate(parts):
+        if name.isdigit() and 0 < i < len(parts) - 1:
+            return int(name), ".".join(parts[i + 1:])
+    raise ValueError(f"not a decoder-layer module: {path!r}")
 
 
 def _part_order(part: str) -> tuple[int, str]:
-    return (0 if part.startswith("self_attn") else 1, part)
+    first = part.split(".")[0].lower()
+    return (0 if "attn" in first or "attention" in first else 1, part)
+
+
+def part_label(part: str) -> str:
+    """Words for a part type on the grid: the known ones by name, any other by its own name."""
+    if part in PART_LABELS:
+        return PART_LABELS[part]
+    where = "Attention" if _part_order(part)[0] == 0 else "MLP"
+    return f"{where} {part.split('.')[-1]}"
 
 
 def grid_spec(report: dict) -> tuple[list[str], int, str]:
@@ -428,11 +441,11 @@ def kept_grid_html(report: dict) -> str:
     for part in parts:
         cells = "".join(
             f'<td class="by-cell{" by-kept" if (layer, part) in kept else ""}" '
-            f'title="Layer {layer} - {html.escape(PART_LABELS.get(part, part))}">'
+            f'title="Layer {layer} - {html.escape(part_label(part))}">'
             f'{"✓" if (layer, part) in kept else ""}</td>'
             for layer in range(n_layers))
-        rows.append(f'<tr><th class="by-rowlabel">{html.escape(PART_LABELS.get(part, part))}</th>{cells}</tr>')
-    order = ", ".join(f"layer {layer} {PART_LABELS.get(part, part).lower()}"
+        rows.append(f'<tr><th class="by-rowlabel">{html.escape(part_label(part))}</th>{cells}</tr>')
+    order = ", ".join(f"layer {layer} {part_label(part).lower()}"
                       for layer, part in (parse_module(p) for p in report["kept"]))
     return (f'<div class="by-grid-wrap"><table class="by-grid"><thead><tr><th class="by-rowlabel">Layer</th>{head}'
             f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
@@ -440,18 +453,23 @@ def kept_grid_html(report: dict) -> str:
             + (f" {html.escape(note)}" if note else "") + "</p>")
 
 
-def llamacpp_lines(patch: dict) -> list[str]:
-    """llama-quantize --tensor-type overrides for a patch of any supported architecture. Read from
-    the JSON directly (src.attribution.patch validates against Phi-3.5's shapes only)."""
+def llamacpp_lines(patch: dict, names: dict | None = None) -> list[str]:
+    """llama-quantize --tensor-type overrides for a patch of any model. `names` (part type -> llama.cpp
+    tensor name, from the report) covers models beyond the table here; a part with no known name gets
+    a comment line instead, since the HQQ patch file still restores it."""
     nbits = int(patch.get("nbits", 8))
     if nbits not in GGUF_TYPES:
         raise ValueError(f"no llama.cpp type for {nbits}-bit")
-    lines = []
+    known = {**GGUF_NAMES, **(names or {})}
+    lines, missing = [], []
     for path in patch.get("modules", []):
         layer, part = parse_module(path)
-        if part not in GGUF_NAMES:
-            raise ValueError(f"no llama.cpp name known for {part!r}")
-        lines.append(f'--tensor-type "blk\\.{layer}\\.{GGUF_NAMES[part]}={GGUF_TYPES[nbits]}"')
+        if part in known:
+            lines.append(f'--tensor-type "blk\\.{layer}\\.{known[part]}={GGUF_TYPES[nbits]}"')
+        else:
+            missing.append(f"layer {layer} {part}")
+    if missing:
+        lines.append(f"# llama.cpp has no tensor name for: {', '.join(missing)} (patch.json still restores them)")
     return lines
 
 

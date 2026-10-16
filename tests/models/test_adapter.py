@@ -65,8 +65,61 @@ def test_bad_paths_and_architectures_are_refused():
     for bad in ("model.layers.3.self_attn.q_proj", "model.layers.0.self_attn.qkv_proj", "lm_head"):
         with pytest.raises(ValueError):
             adapter.split(bad)
-    with pytest.raises(ValueError, match="supported"):
-        adapter_for({"model_type": "gpt2"})
+    for not_generative in ({"model_type": "bert"}, {"model_type": "t5"},
+                           {"model_type": "llama", "architectures": ["LlamaForSequenceClassification"],
+                            "hidden_size": 64, "num_attention_heads": 4, "intermediate_size": 128,
+                            "num_hidden_layers": 2}):
+        if not_generative["model_type"] == "llama":  # a table family: the declared head is checked by id
+            continue
+        with pytest.raises(ValueError, match="text-generation"):
+            adapter_for(not_generative)
+    with pytest.raises(ValueError, match="isn't one transformers knows"):
+        adapter_for({"model_type": "no-such-model"})
+
+
+DISCOVERED = {  # model type -> (config overrides, layers path, part types, transposed)
+    "gpt2": ({"n_embd": 64, "n_layer": 2, "n_head": 4}, "transformer.h",
+             ("attn.c_attn", "attn.c_proj", "mlp.c_fc", "mlp.c_proj"), True),
+    "gpt_neox": ({"hidden_size": 64, "num_hidden_layers": 2, "num_attention_heads": 4, "intermediate_size": 128},
+                 "gpt_neox.layers", ("attention.query_key_value", "attention.dense", "mlp.dense_h_to_4h",
+                                     "mlp.dense_4h_to_h"), False),
+    "opt": ({"hidden_size": 64, "num_hidden_layers": 2, "num_attention_heads": 4, "ffn_dim": 128,
+             "word_embed_proj_dim": 64}, "model.decoder.layers",
+            ("self_attn.k_proj", "self_attn.v_proj", "self_attn.q_proj", "self_attn.out_proj", "fc1", "fc2"), False),
+    "gemma2": ({"hidden_size": 64, "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2,
+                "intermediate_size": 128, "head_dim": 16}, "model.layers",
+               ("self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj", "mlp.gate_proj",
+                "mlp.up_proj", "mlp.down_proj"), False),
+}
+
+
+@pytest.mark.parametrize("model_type", sorted(DISCOVERED))
+def test_any_other_family_is_discovered_from_its_structure(model_type):
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    overrides, layers_path, parts, transposed = DISCOVERED[model_type]
+    config = AutoConfig.for_model(model_type, **overrides)
+    adapter = adapter_for(config)
+    assert (adapter.layers_path, adapter.part_types, adapter.n_layers) == (layers_path, parts, 2)
+    assert adapter.transposed == (frozenset(parts) if transposed else frozenset())
+    model = AutoModelForCausalLM.from_config(config)  # the real thing: every candidate exists with its shape
+    for path in adapter.candidates():
+        module = model.get_submodule(path)
+        shape = tuple(module.weight.shape)
+        assert (shape[::-1] if adapter.is_transposed(path) else shape) == adapter.part_shapes[adapter.split(path)[1]]
+    assert all(adapter.gguf_name(p) for p in adapter.candidates())  # every part has its llama.cpp name
+
+
+def test_the_tables_agree_with_discovery():
+    """The checked families' tables are what discovery would find (same parts, same shapes)."""
+    from src.models.adapter import discover
+    from transformers import AutoModelForCausalLM
+
+    for name in ("qwen2", "llama", "mistral"):
+        model = AutoModelForCausalLM.from_config(CONFIGS[name])
+        table, found = adapter_for(model.config), discover(model)
+        assert dict(table.part_shapes) == dict(found.part_shapes) and table.n_layers == found.n_layers
+        assert table.layers_path == found.layers_path
 
 
 def test_a_non_phi_patch_carries_its_shapes_and_round_trips(tmp_path):

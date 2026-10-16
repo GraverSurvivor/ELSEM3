@@ -12,7 +12,6 @@ from src.stats.metrics import (
     by_category,
     get_field,
     indicators,
-    is_stereotype,
     is_unknown,
     run_condition,
     srs,

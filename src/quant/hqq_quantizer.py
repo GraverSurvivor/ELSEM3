@@ -35,6 +35,45 @@ def build_quant_config(nbits: int, group_size: int = DEFAULT_GROUP_SIZE) -> Base
     return BaseQuantizeConfig(nbits=nbits, group_size=group_size)
 
 
+def linearize_conv1d(model) -> int:
+    """GPT-2-family models store their linear layers as transformers' `Conv1D` (weight (in, out)),
+    which HQQ doesn't quantize. Replaces each with the equivalent `nn.Linear` (weight transposed),
+    so those layers are compressed and restorable like any other. Returns how many were replaced."""
+    import torch.nn as nn
+
+    replaced = 0
+    for name, module in list(model.named_modules()):
+        if type(module).__name__ != "Conv1D" or getattr(module, "weight", None) is None:
+            continue
+        in_features, out_features = module.weight.shape
+        linear = nn.Linear(in_features, out_features, bias=module.bias is not None,
+                           dtype=module.weight.dtype, device=module.weight.device)
+        linear.weight.data = module.weight.data.t().contiguous()
+        if module.bias is not None:
+            linear.bias.data = module.bias.data
+        parent_name, _, child = name.rpartition(".")
+        setattr(model.get_submodule(parent_name) if parent_name else model, child, linear)
+        replaced += 1
+    return replaced
+
+
+def quantize_in_place(model, nbits: int = DEFAULT_NBITS, group_size: int = DEFAULT_GROUP_SIZE,
+                      compute_dtype=None, device: str = "cuda") -> None:
+    """HQQ-quantizes every linear layer of `model` except the output head, on `device`.
+
+    HQQ's own placement assumes Llama-style `model.layers`; any other layout (`transformer.h`,
+    `gpt_neox.layers`, ...) gets an explicit placement of every module on the one device, which is
+    the same thing HQQ does for the standard layout. Phi-3.5 and other `model.layers` models take
+    exactly the path they always did."""
+    from hqq.models.base import get_all_children_from_model
+
+    linearize_conv1d(model)
+    quant_config = build_quant_config(nbits=nbits, group_size=group_size)
+    standard = hasattr(getattr(model, "model", None), "layers") or hasattr(model, "layers")
+    placement = device if standard else {node: device for node in get_all_children_from_model(model, [])}
+    AutoHQQHFModel.quantize_model(model, quant_config=quant_config, compute_dtype=compute_dtype, device=placement)
+
+
 def load_hqq_3bit_model(
     device: str = "cuda",
     nbits: int = DEFAULT_NBITS,
@@ -59,11 +98,11 @@ def load_hqq_3bit_model(
         raise ValueError(f"Unknown dtype {dtype!r}; expected one of {list(DTYPES)}")
     torch_dtype = DTYPES[dtype]
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype)
+    from src.eval.option_scorer import prepare_tokenizer
 
-    quant_config = build_quant_config(nbits=nbits, group_size=group_size)
-    AutoHQQHFModel.quantize_model(model, quant_config=quant_config, compute_dtype=torch_dtype, device=device)
+    tokenizer = prepare_tokenizer(AutoTokenizer.from_pretrained(model_id))
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype)
+    quantize_in_place(model, nbits=nbits, group_size=group_size, compute_dtype=torch_dtype, device=device)
 
     model.eval()
     return model, tokenizer

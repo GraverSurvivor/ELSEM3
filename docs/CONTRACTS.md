@@ -44,8 +44,10 @@ adapter_for(config) -> ModelAdapter     # also adapter_for_model(model), adapter
 ModelAdapter.arch, .n_layers, .part_types, .part_shapes, .candidates(), .params(path),
              .total_params(), .gguf_name(path), .split(path)
 ```
-* Supports `phi3` (fused `qkv_proj` / `gate_up_proj`), `qwen2`, `llama`, `mistral`
-  (`q/k/v/o_proj`, `gate/up/down_proj`).
+* Tables for `phi3` (fused `qkv_proj` / `gate_up_proj`), `qwen2`, `llama`, `mistral`
+  (`q/k/v/o_proj`, `gate/up/down_proj`); any other text-generation model is discovered from its
+  structure (`ModelAdapter.layers_path`, `.transposed` for GPT-2 `Conv1D`; `gguf_name` may be None).
+  Reports add `layers_path` and `gguf_names`.
 * Candidates: grouped by part type, attention types first, each across every layer. For Phi-3.5 they
   equal `src/quant/candidates.py`'s 128 exactly (tested).
 * GGUF names: `attn_qkv`, `attn_q`, `attn_k`, `attn_v`, `attn_output`, `ffn_up` (fused gate_up or

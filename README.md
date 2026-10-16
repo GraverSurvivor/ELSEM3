@@ -76,8 +76,14 @@ python -m src.product.studio --byom --byom-pipeline fake   # tab 5 with a stand-
 ```bash
 python -m src.product.fast_repair --model Qwen/Qwen2.5-3B-Instruct --mode fast --out results/fast_repair_qwen
 ```
-Compress, find the fairness damage, scan for the parts to keep at 8-bit and check the repair, on any
-Phi-3 / Qwen2 / Llama / Mistral model up to ~4B parameters on a T4 (GPU). Contracts: docs/CONTRACTS.md.
+Compress to 3-bit, find the fairness damage, scan the model's parts for the few to keep at 8-bit
+(Fast Scan: our greedy search, run on the most promising parts) and check the repair on questions the
+scan never saw. Works on any text-generation model in transformers (Qwen, Llama, Gemma, Mistral, Phi,
+SmolLM, GPT-2, OPT, GPT-NeoX, ...): its parts are found from its structure, its size is checked before
+anything is downloaded (about 4B parameters fit a free T4), and every run ends with a plain outcome:
+repaired, damage found but nothing worth restoring, no damage, or "this model can't be checked this way"
+(an original that never answers "can't tell"). Gated models need an `HF_TOKEN`. In the Studio it is
+tab 5, next to the live Phi-3.5 demo (`--byom --live`). Contracts: docs/CONTRACTS.md.
 
 ## Deck
 

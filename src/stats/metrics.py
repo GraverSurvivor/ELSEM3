@@ -15,7 +15,7 @@ here and nothing else in the package needs to change.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable
 
 import numpy as np
 

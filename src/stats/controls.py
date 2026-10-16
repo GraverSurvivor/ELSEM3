@@ -28,7 +28,7 @@ from pathlib import Path
 
 from src.data.safe_set import read_results_file
 
-from .bbq_bias import bias_score_ambig, bias_score_disambig, false_unknown_rate, is_false_unknown
+from .bbq_bias import bias_score_ambig, bias_score_disambig, is_false_unknown
 from .bootstrap import bootstrap_paired_diff_ci, bootstrap_proportion_ci
 from .metrics import align_by_question, is_unknown
 from .recovery import recovery_difference, recovery_fraction
