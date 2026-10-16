@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Protocol
@@ -127,6 +127,10 @@ class Events:
         self.write(self.stage, "done", done, total, message)
 
 
+class PrecisionError(RuntimeError):
+    """A model whose scores overflow at fp16 (NaN): its answers would be meaningless."""
+
+
 def plain_error(error: BaseException) -> str:
     """A one-line reason a person can act on."""
     text = f"{type(error).__name__}: {error}".strip()
@@ -137,7 +141,7 @@ def plain_error(error: BaseException) -> str:
         return "This model needs a Hugging Face login or licence acceptance; it can't be downloaded anonymously."
     if "404" in lowered or ("not found" in lowered and "repository" in lowered):
         return "No model with this name exists on Hugging Face."
-    if "no gpu found" in lowered:
+    if "no gpu found" in lowered or isinstance(error, PrecisionError):
         return str(error)
     if isinstance(error, KeyboardInterrupt):
         return "Stopped."
@@ -207,13 +211,33 @@ class TorchBackend:
         self.original, _ = load_model("fp16", model_id=model_id)
         return "original model loaded at fp16"
 
+    def release_original(self) -> None:
+        """The original is only asked once, before the scan: free its GPU memory (2 bytes a weight,
+        ~6 GB for a 3B model) for the scan, the check and anything else sharing the GPU."""
+        import gc
+
+        import torch
+
+        self.original = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
     def score(self, view: str, items: list, on_progress=None) -> list[int]:
-        from src.eval.option_scorer import score_items
+        import math
+
+        from src.eval.option_scorer import score_items_with_confidence
 
         model = self.original if view == "original" else self.compressed
         picks = []
         for start in range(0, len(items), CHUNK):
-            picks += score_items(model, self.tokenizer, items[start:start + CHUNK], self.device, batch_size=self.batch_size)
+            chunk, confidence = score_items_with_confidence(model, self.tokenizer, items[start:start + CHUNK],
+                                                            self.device, batch_size=self.batch_size)
+            if any(math.isnan(c) for c in confidence):
+                # NaN scores would make every answer "A" without any error: stop and say why instead.
+                raise PrecisionError(f"The {view} model's numbers overflow at 16-bit precision (fp16), so its "
+                                     "answers can't be trusted. Some model families (Gemma, for example) need "
+                                     "bf16, which a T4 can't run fast; try an L4 or A100, or another model.")
+            picks += chunk
             if on_progress:
                 on_progress(len(picks))
         return picks
@@ -426,6 +450,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         # Answers are keyed by the question object, not its id: the two question sets are kept
         # apart even if an ambiguous and a stated-answer question ever shared an id.
         original = dict(zip(map(id, questions), picks))
+        if hasattr(backend, "release_original"):
+            backend.release_original()  # asked once; its GPU memory goes to the scan
         events.done(len(questions), len(questions), f"{len(questions):,} questions")
 
     with events.stage_of("score_3bit", total=2 * n):

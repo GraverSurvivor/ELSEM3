@@ -406,3 +406,23 @@ def test_other_damage_is_measured_against_the_original():
     assert len(found) == 2 and found[0].startswith("Compression gets fewer") and "After the repair" in found[1]
     assert other_damage({"original": card(0.9, 0.05), "compressed": card(0.88, 0.06), "repaired": card(0.9, 0.05)},
                         repaired=False) == []
+
+
+def test_the_original_is_released_once_it_has_answered(tmp_path):
+    class Releasing(FakeBackend):
+        released_after = None
+
+        def release_original(self):
+            self.released_after = len(self.calls)
+
+    backend = Releasing()
+    _run(tmp_path, backend=backend)
+    assert backend.released_after == 1  # right after its one scoring pass
+    assert all(view != "original" for view, _, _ in backend.calls[backend.released_after:])
+
+
+def test_scores_that_overflow_stop_the_run_in_plain_words():
+    from src.product.fast_repair import PrecisionError, plain_error
+
+    message = plain_error(PrecisionError("The original model's numbers overflow at 16-bit precision (fp16)..."))
+    assert message.startswith("The original model's numbers overflow") and "PrecisionError" not in message

@@ -79,7 +79,7 @@ def main() -> None:
     target_module_after = get_module_by_path(model, TARGET_MODULE_PATH)
     print(f"Target module class after promotion: {type(target_module_after).__name__}")
 
-    print(f"\nRunning the SAME fixed prompt again, post-swap...")
+    print("\nRunning the SAME fixed prompt again, post-swap...")
     logits_after = _logits_for_prompt(model, tokenizer, device)
 
     max_abs_diff = (logits_after - logits_before).abs().max().item()

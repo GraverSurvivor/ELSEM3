@@ -98,7 +98,7 @@ def main() -> None:
     if not has_gpu:
         print(f"\n      snapshotting all {len(candidates)} candidates instead would cost "
               f"{snapshot_all_bytes / GB:.2f} GB at {args.dtype}")
-        print(f"\nPARTIAL PASS: the checkpoint read is exact, which is what lets the search")
+        print("\nPARTIAL PASS: the checkpoint read is exact, which is what lets the search")
         print("avoid holding that. Re-run with a GPU for the revert and cost checks.")
         return
 
