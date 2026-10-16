@@ -163,6 +163,33 @@ Then copy its folder to `results/reference/search_mlp_only` the same way as in C
 
 ---
 
+## E. Fast Repair on Qwen2.5-3B (sprint, ~35 min fast, ~2 h exact, one account)
+
+After Cells 1, 2 (pick an ACCOUNT number not used above, e.g. `ACCOUNT = 11`), 2b and 3:
+
+### E1. A 5-minute smoke test first
+```python
+!python -m src.product.fast_repair --model Qwen/Qwen2.5-0.5B-Instruct --mode fast --questions 200 --out results/fast_repair_smoke
+!tail -3 results/fast_repair_smoke/events.jsonl
+```
+It should end with `"stage": "report", "status": "done"`. If a stage says `failed`, its `message`
+says why: send it to Person 1 before running E2.
+
+### E2. The real run (fast mode ~35 min, ~25 of them scanning; exact mode only with time to spare, ~2 h)
+```python
+!python -m src.product.fast_repair --model Qwen/Qwen2.5-3B-Instruct --mode fast --questions 1000 --out results/fast_repair_qwen_fast
+```
+Time per stage is in `events.jsonl`; the result in `report.json`. Save it:
+```python
+import shutil
+shutil.copytree("results/fast_repair_qwen_fast", "results/reference/fast_repair_qwen_fast", dirs_exist_ok=True)
+sh("git add results/reference/fast_repair_qwen_fast && git commit -q -m 'Fast Repair: Qwen2.5-3B, fast mode'")
+sh(f"git push -q {REPO} HEAD:{BRANCH}")
+print(open("results/reference/fast_repair_qwen_fast/report.json").read())
+```
+Exact mode: the same with `--mode exact` and `_exact` in the folder names. A saved run is also the
+presentation backup: `python -m src.product.studio --byom --byom-replay results/reference/fast_repair_qwen_fast`.
+
 ## After everything is merged (laptop, CPU)
 ```
 python -m src.stats.dissociation --fairness-trials results/reference/search_hedging_penalty/trials.csv --capability-trials results/reference/search_capability/trials.csv --run fairness_ambig=results/reference/repair_hedging_penalty fairness_disambig=results/reference/repair_hedging_penalty_disambig capability_ambig=results/reference/repair_capability capability_disambig=results/reference/repair_capability_disambig

@@ -192,6 +192,26 @@ additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in
   objects for the duration (instant and exact, like SwapRegistry's revert). Demo questions are
   flipped-set items no search sample contains. `--offline` runs on saved results and shows only
   states a promoted run measured. The replay reads `results/reference/search_fairness*/trials.csv`.
+- **Studio tab 5, "Your model"** (`src/product/byom.py`, Person 3, sprint Oct 2026): type a Hugging Face
+  model, Diagnose, watch the 8 stages, get the before/after cards, the kept parts on a grid for any
+  model, patch.json and llama.cpp settings. It starts the fast-repair pipeline as a subprocess (one job
+  at a time, Cancel) and reads only its files (contract C4: events.jsonl, report.json, patch.json), so
+  it is reload- and restart-safe. `--byom` keeps the GPU for that model (tabs 1-4 use saved results);
+  `--byom-pipeline fake` and `--byom-replay <run>` use `src/product/byom_fake.py`, a stand-in that
+  writes the same files without a GPU; its reports carry `synthetic`/`replayed_from`, shown as a banner.
+
+**Fast Repair (sprint, Oct 2026; contracts in docs/CONTRACTS.md).** `src/models/adapter.py`
+(Person 1) gives any supported model's parts (phi3, qwen2, llama, mistral), their shapes and GGUF
+names; for Phi-3.5 it equals the 128 candidates exactly, and `candidate_paths_for_model`,
+`filter_candidates` and patch files (optional `part_shapes`/`n_layers`) now work for the others.
+`python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
+original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
+hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see
+`scan_config`/`plan_questions`) → check on held-out questions → report.json / patch.json /
+events.jsonl. Search questions are a seeded random 300 flipped + 200 stated-answer probe (never the
+first N: the lists are grouped by category). The model work sits behind a backend interface:
+`tests/product/test_fast_repair.py` runs it with a rule-based stand-in, and
+`test_fast_repair_tiny_model.py` with real HQQ, SwapRegistry and Qwen's tokenizer on a tiny model.
 
 **The main repair (since Phase 2) is the hedging-aware one**, named in
 `results/reference/MAIN_REPAIR.json` and read through `src/experiments/main_repair.py` by the final

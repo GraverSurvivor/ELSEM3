@@ -6,6 +6,8 @@ Four screens, in the order of the pipeline, opened by a short guide:
     2 Diagnose   a replay of the real search finding which parts of the model cause the bias
     3 Repair     restore parts yourself and watch the stereotyped answers drop, live
     4 Ship       the FairGate verdict on the full benchmark, the memory the repair adds, and the patch
+    5 Bring your own model   type a Hugging Face model name, Diagnose, watch the progress, download
+                 the repair (runs the fast-repair pipeline; see src/product/byom.py)
 
 Live mode needs a GPU (a Colab T4 is enough: the 16-bit model takes 7.6 GB, the 3-bit one 1.7 GB).
 Preview mode runs anywhere on the saved full-benchmark results, and is the fallback if the GPU
@@ -13,6 +15,9 @@ session dies during a presentation.
 
     python -m src.product.studio --share          # live, on Colab (prints a public link)
     python -m src.product.studio --offline        # preview on saved results, any laptop
+    python -m src.product.studio --byom --share   # Colab: the GPU is kept for the customer's model
+    python -m src.product.studio --byom --byom-pipeline fake      # laptop: the screen with a stand-in
+    python -m src.product.studio --byom --byom-replay <run dir>   # presentation backup: a recorded run
 
 The logic lives in src/product/studio_core.py; this file is the backend that runs the models and
 the Gradio layout.
@@ -24,11 +29,22 @@ import argparse
 import json
 import time
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.attribution.patch import load_patch, save_patch
+from src.product.byom import (
+    MODES as BYOM_MODES,
+    JobBusy,
+    JobRunner,
+    failure_message,
+    kept_grid_html,
+    llamacpp_lines,
+    progress_html,
+    read_report,
+    results_html,
+)
 from src.data.safe_set import read_results_file
 
 from .studio_core import (
@@ -384,7 +400,98 @@ td.fg-cell {display: table-cell}
 .fg-count-note {grid-column: 2 / 4; font-size: 12px; opacity: .7}
 .fg-big {font-size: 15px}
 @media (max-width: 640px) {.fg-count {grid-template-columns: 1fr 60px} .fg-count-bar {grid-column: 1 / 3}}
+.by-progress {border: 1px solid var(--border-color-primary); border-radius: 10px; padding: 10px 14px;
+  background: var(--block-background-fill)}
+.by-head {display:flex; justify-content: space-between; font-size: 15px; margin-bottom: 6px}
+.by-head.by-done b {color: #15803d} .by-head.by-failed b, .by-head.by-stopped b {color: #b91c1c}
+.dark .by-head.by-done b {color: #4ade80} .dark .by-head.by-failed b, .dark .by-head.by-stopped b {color: #f87171}
+.by-stage {display:grid; grid-template-columns: 22px minmax(150px, 1fr) 2fr 60px; gap: 8px; align-items:center;
+  padding: 5px 0; border-top: 1px solid var(--border-color-primary); font-size: 14px}
+.by-icon {text-align:center; font-weight:700}
+.by-waiting {opacity: .55} .by-done .by-icon {color: #16a34a} .by-failed .by-icon {color: #dc2626}
+.by-stopped .by-icon {color: #d97706}
+.by-running .by-icon {color: var(--color-accent)} .by-running .by-label {font-weight: 600}
+.by-detail {font-size: 13px; opacity: .85}
+.by-time {text-align:right; font-variant-numeric: tabular-nums; font-size: 13px; opacity: .8}
+.by-bar {height: 6px; border-radius: 4px; background: var(--background-fill-secondary); margin-top: 4px; overflow:hidden}
+.by-bar div {height: 100%; background: var(--color-accent)}
+.by-cards {display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 6px 0}
+.by-card {border: 1px solid var(--border-color-primary); border-radius: 10px; padding: 12px;
+  background: var(--block-background-fill)}
+.by-card-title {font-weight: 700} .by-card-sub {font-size: 12px; opacity: .7; margin-bottom: 8px}
+.by-metric {display:flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0}
+.by-summary {margin-top: 8px} .by-recovery {font-size: 16px} .by-recovery span {font-size: 13px; opacity: .75}
+.by-gate {display:inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 6px; font-size: 14px}
+.by-gate-pass {background: #16a34a1f; color: #15803d} .by-gate-fail {background: #dc26261f; color: #b91c1c}
+.dark .by-gate-pass {color: #4ade80} .dark .by-gate-fail {color: #f87171}
+.by-reasons {margin: 4px 0 0 18px; font-size: 13px} .by-facts {font-size: 12px; opacity: .7; margin-top: 6px}
+.by-banner {border: 1px dashed #d97706; background: #d977061a; border-radius: 8px; padding: 6px 10px;
+  margin-bottom: 8px; font-size: 13px}
+.by-grid-wrap {overflow-x: auto}
+.by-grid {border-collapse: separate; border-spacing: 3px; border: none !important; width: auto !important}
+.by-grid tr, .by-grid thead, .by-grid tbody, .by-grid th {border: none !important; background: transparent !important}
+.by-grid th {font-size: 11px; font-weight: 500; opacity: .7; padding: 0 2px}
+.by-grid th.by-rowlabel {text-align: right; white-space: nowrap; padding-right: 6px; font-size: 12px}
+.by-grid td.by-cell {width: 18px !important; min-width: 18px; max-width: 18px; height: 18px !important;
+  padding: 0 !important; border-radius: 4px; text-align:center; font-size: 11px; line-height: 18px;
+  background: var(--background-fill-secondary); border: 1px solid var(--border-color-primary) !important}
+.by-grid th {padding: 0 2px !important; line-height: 18px !important; height: 18px}
+.by-grid td.by-kept {background: #16a34a !important; color: white; border-color: #15803d !important}
+.by-note {font-size: 12px; opacity: .75}
+@media (max-width: 640px) {.by-stage {grid-template-columns: 22px 1fr 54px} .by-detail {grid-column: 2 / 4}}
 """
+
+
+@dataclass
+class ByomSetup:
+    """Tab 5's job runner, or why there isn't one in this launch."""
+
+    runner: JobRunner | None
+    unavailable: str = ""
+
+    NOT_STARTED = ("*This screen is off in this launch.* Start Studio with `--byom` to diagnose your own model "
+                   "(on a laptop add `--byom-pipeline fake` to try it with a stand-in).")
+
+    @classmethod
+    def from_args(cls, args) -> "ByomSetup":
+        if not args.byom:
+            reason = ("*This copy of Studio is running Phi-3.5 on the GPU, so there's no room for a second model.* "
+                      "Start it with `--byom` to diagnose your own model." if not args.offline else cls.NOT_STARTED)
+            return cls(None, reason)
+        pipeline = "replay" if args.byom_replay else args.byom_pipeline
+        return cls(JobRunner(args.byom_jobs, pipeline=pipeline, replay=args.byom_replay, speed=args.byom_speed))
+
+
+def byom_view(runner: JobRunner) -> tuple:
+    """Everything tab 5 shows, rebuilt from the current job's files (reload-safe)."""
+    job_dir = runner.current()
+    hidden = gr_update(visible=False)
+    if job_dir is None:
+        return ("<p>No diagnosis yet. Type a model name and press <b>Diagnose</b>.</p>", "", hidden, "", "", None, "")
+    state = runner.state(job_dir)
+    info = runner.job_info(job_dir)
+    progress = progress_html(state, info)
+    problem = failure_message(state, runner.log_tail(job_dir))
+    try:
+        report = read_report(job_dir) if state["status"] == "done" else None
+    except ValueError as error:
+        return progress, f"**The report couldn't be read:** {error}", hidden, "", "", None, ""
+    if report is None:
+        return progress, problem, hidden, "", "", None, ""
+    patch_path = job_dir / "patch.json"
+    try:
+        lines = llamacpp_lines(json.loads(patch_path.read_text(encoding="utf-8")))
+        llama = "llama-quantize \\\n  " + " \\\n  ".join(lines) + " \\\n  model-f16.gguf model-Q3_K_M-fairgate.gguf Q3_K_M"
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        llama = f"# not available: {error}"
+    return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report),
+            str(patch_path) if patch_path.exists() else None, llama)
+
+
+def gr_update(**kwargs):
+    import gradio as gr
+
+    return gr.update(**kwargs)
 
 
 def _help(*steps: str, title: str = "What to do here") -> str:
@@ -402,6 +509,8 @@ GUIDE = """
   and watch the biased answers disappear. Try random parts too, to compare.</p></div>
   <div class="fg-step"><b class="num">4</b><b>Ship</b><p>See the pass/fail verdict on the whole benchmark,
   how much memory the repair adds, and download the fix.</p></div>
+  <div class="fg-step"><b class="num">5</b><b>Your model</b><p>Type the name of any Hugging Face model and
+  press Diagnose: the same check and repair, on your model, in about 35 minutes.</p></div>
 </div>
 """
 
@@ -437,7 +546,7 @@ def _launch_kwargs(gr):
     return major, theme
 
 
-def build_app(backend, data: StudioData):
+def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
     import gradio as gr
 
     major, theme = _launch_kwargs(gr)
@@ -780,6 +889,34 @@ def build_app(backend, data: StudioData):
                 export_code = gr.Code(label="llama.cpp settings", language="shell")
                 export_file = gr.File(label="Patch file")
 
+            with gr.Tab("5 · Your model", id="byom"):
+                gr.HTML(_help(
+                    "Type the name of a model on Hugging Face, for example <b>Qwen/Qwen2.5-3B-Instruct</b>.",
+                    "Pick <b>Fast</b> (about 35 min on a T4, very likely the same parts as the full search) "
+                    "or <b>Exact</b> (1.5-2 hours on a T4, the same parts as the full search), then press "
+                    "<b>Diagnose</b>.",
+                    "Watch each step. When it finishes: did compression make your model more biased, which parts "
+                    "to keep at 8-bit, and the files to ship the repair. Models up to about 4B parameters fit a T4.",
+                ))
+                if byom is None or byom.runner is None:
+                    gr.Markdown(byom.unavailable if byom is not None else ByomSetup.NOT_STARTED)
+                with gr.Row():
+                    byom_model = gr.Textbox(label="Model name", placeholder="Qwen/Qwen2.5-3B-Instruct", scale=3)
+                    byom_mode = gr.Radio(list(BYOM_MODES.values()), value=BYOM_MODES["fast"], label="Mode", scale=3)
+                with gr.Row():
+                    byom_go = gr.Button("▶ Diagnose", variant="primary", interactive=bool(byom and byom.runner))
+                    byom_cancel = gr.Button("■ Cancel", interactive=bool(byom and byom.runner))
+                byom_progress = gr.HTML()
+                byom_problem = gr.Markdown()
+                with gr.Column(visible=False) as byom_results_box:
+                    gr.Markdown("### Results")
+                    byom_results = gr.HTML()
+                    gr.Markdown("#### Parts kept at 8-bit")
+                    byom_grid = gr.HTML()
+                    gr.Markdown("#### Ship the repair")
+                    byom_patch = gr.File(label="Patch file (patch.json)")
+                    byom_llama = gr.Code(label="llama.cpp settings (add to llama-quantize)", language="shell")
+
         # --- events ----------------------------------------------------------------------------
         ask_outputs = [question_box, card_original, card_compressed, card_repaired]
         repair_outputs = [counter_box, repair_grid, status_box, restored_box]
@@ -802,6 +939,30 @@ def build_app(backend, data: StudioData):
         restored_box.input(do_untick, restored_box, repair_outputs)
 
         export_btn.click(export, None, [export_md, export_code, export_file])
+
+        byom_outputs = [byom_progress, byom_problem, byom_results_box, byom_results, byom_grid, byom_patch, byom_llama]
+        if byom is not None and byom.runner is not None:
+            runner = byom.runner
+
+            def byom_refresh():
+                return byom_view(runner)
+
+            def byom_start(model, mode):
+                try:
+                    runner.start(model, mode)
+                except (ValueError, JobBusy, RuntimeError) as error:
+                    gr.Warning(str(error))
+                return byom_view(runner)
+
+            def byom_stop():
+                if not runner.cancel():
+                    gr.Info("Nothing is running.")
+                return byom_view(runner)
+
+            byom_go.click(byom_start, [byom_model, byom_mode], byom_outputs, concurrency_id="byom")
+            byom_cancel.click(byom_stop, None, byom_outputs, concurrency_id="byom")
+            gr.Timer(1.5).tick(byom_refresh, None, byom_outputs, concurrency_id="byom", show_progress="hidden")
+            app.load(byom_refresh, None, byom_outputs)
 
         app.load(rerender, [item_state, swapped_state, base_state], ask_outputs)
 
@@ -867,6 +1028,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--cache-dir", type=Path,
                         help="keep a copy of the 3-bit model here (e.g. on Google Drive) so later launches skip quantizing")
+    parser.add_argument("--byom", action="store_true",
+                        help="enable tab 5 (bring your own model); the GPU is kept for that model, so the other tabs "
+                             "use saved results")
+    parser.add_argument("--byom-pipeline", choices=("real", "fake"), default="real",
+                        help="real = the fast-repair pipeline; fake = a stand-in that needs no GPU")
+    parser.add_argument("--byom-replay", type=Path, help="play back a recorded run's folder (presentation backup)")
+    parser.add_argument("--byom-speed", type=float, default=30.0, help="speed-up for the stand-in or a replay")
+    parser.add_argument("--byom-jobs", type=Path, default=Path("results/byom"), help="where diagnosis jobs are kept")
     args = parser.parse_args()
 
     started = time.perf_counter()
@@ -874,8 +1043,12 @@ def main() -> None:
         data = StudioData()
     print(f"{len(data.examples)} example questions, {len(data.counter_items)} test questions, "
           f"{len(data.trials)} search trials")
-    if args.offline:
+    byom = ByomSetup.from_args(args)
+    if args.offline or args.byom:
         backend = SavedBackend(data.runs, list(data.patch.modules), repairs=data.saved_repairs)
+        if args.byom:
+            backend.mode_label = ("Bring-your-own-model mode · the GPU is kept for your model · "
+                                  "tabs 1-4 show saved results")
     else:
         backend = LiveBackend(load_original=not args.no_original, cache_dir=args.cache_dir)
         with timed("apply the main repair"):
@@ -889,7 +1062,7 @@ def main() -> None:
             print(f"The saved 3-bit model may be stale: delete {args.cache_dir} and launch again.")
     print(f"[start-up] ready in {time.perf_counter() - started:.0f} s")
 
-    app, theme = build_app(backend, data)
+    app, theme = build_app(backend, data, byom)
     launch = {"share": args.share, "server_port": args.port}
     if theme is not None:
         launch.update(theme=theme, css=CSS)

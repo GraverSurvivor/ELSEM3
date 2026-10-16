@@ -49,14 +49,22 @@ def filter_candidates(paths: list[str], candidate_set: str) -> list[str]:
     if candidate_set == "all":
         return list(paths)
     if candidate_set == "attention":
-        suffixes = ATTENTION_MODULES
+        family = ".self_attn."
     elif candidate_set == "mlp":
-        suffixes = MLP_MODULES
+        family = ".mlp."
     else:
         raise ValueError(f"unknown candidate set {candidate_set!r}; expected one of {CANDIDATE_SETS}")
-    return [path for path in paths if path.endswith(suffixes)]
+    # By family rather than Phi-3.5's suffixes, so split q/k/v and gate/up models filter the same way.
+    return [path for path in paths if family in path]
 
 
 def candidate_paths_for_model(model: nn.Module) -> list[str]:
-    """Same list, with the layer count read off the model instead of assumed."""
+    """Same list, with the layer count read off the model instead of assumed. Models other than
+    Phi-3 (Qwen2, Llama, Mistral) get their parts from src/models/adapter.py, in the same order rule;
+    for Phi-3 the adapter and this module agree exactly."""
+    model_type = getattr(getattr(model, "config", None), "model_type", None)
+    if model_type and model_type != "phi3":
+        from src.models.adapter import adapter_for
+
+        return adapter_for(model.config).candidates()
     return candidate_paths(n_layers=len(model.model.layers))
