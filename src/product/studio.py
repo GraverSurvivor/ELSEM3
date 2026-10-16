@@ -497,6 +497,14 @@ td.fg-cell {display: table-cell}
 .by-grid th {padding: 0 2px !important; line-height: 18px !important; height: 18px}
 .by-grid td.by-kept {background: #16a34a !important; color: white; border-color: #15803d !important}
 .by-note {font-size: 12px; opacity: .75}
+.by-outcome {border-radius: 10px; padding: 10px 14px; margin: 4px 0 10px; border: 1px solid #c7d2fe; background: #eef2ff}
+.by-outcome p {margin: 4px 0 0}
+.by-outcome-repaired {border-color: #bbf7d0; background: #f0fdf4}
+.by-outcome-not_applicable, .by-outcome-no_gain {border-color: #fde68a; background: #fffbeb}
+.by-card-none p {font-size: 13px; opacity: .85}
+.by-gate-na {background: #f3f4f6}
+.by-other {margin-top: 8px; padding: 8px 12px; border-left: 3px solid #f59e0b; background: #fffbeb}
+.by-other ul {margin: 4px 0 0 18px}
 @media (max-width: 640px) {.by-stage {grid-template-columns: 22px 1fr 54px} .by-detail {grid-column: 2 / 4}}
 """
 
@@ -555,11 +563,17 @@ def byom_view(runner: JobRunner) -> tuple:
     if report is None:
         return progress, problem, hidden, "", "", None, ""
     patch_path = job_dir / "patch.json"
+    if not report.get("kept") or not patch_path.exists():
+        # Nothing restored means nothing to ship beyond the plain 3-bit model; say so, not an error.
+        llama = ("# Nothing to ship: no part was restored, so there is no repair to add.\n"
+                 "# The plain 3-bit model is what this run measured:\n"
+                 "llama-quantize model-f16.gguf model-Q3_K_M.gguf Q3_K_M")
+        return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report), None, llama)
     try:
         lines = llamacpp_lines(json.loads(patch_path.read_text(encoding="utf-8")))
         llama = "llama-quantize \\\n  " + " \\\n  ".join(lines) + " \\\n  model-f16.gguf model-Q3_K_M-fairgate.gguf Q3_K_M"
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        llama = f"# not available: {error}"
+        llama = f"# The llama.cpp settings couldn't be written for this model ({error}); patch.json still applies."
     return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report),
             str(patch_path) if patch_path.exists() else None, llama)
 

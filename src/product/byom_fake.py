@@ -101,6 +101,7 @@ def synthetic_report(model_id: str, mode: str, questions: int) -> tuple[dict, di
         "gate": "FAIL", "gate_failures": ["'unknown' answers fell by 6.7 points (limit 2.0)",
                                           "stereotyped answers rose by 2.5 points (limit 1.0)"],
         "patch": "patch.json", "n_layers": n_layers, "part_types": parts,
+        "outcome": "repaired", "outcome_reason": "", "other_damage": [],
     }
     patch = {"name": f"fast_repair_{arch}", "modules": kept, "nbits": 8,
              "source": {"kind": "search", "synthetic": True, "mode": mode},
