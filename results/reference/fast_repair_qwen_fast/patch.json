@@ -1,0 +1,56 @@
+{
+  "name": "fast_repair_fast",
+  "modules": [
+    "model.layers.1.mlp.gate_proj",
+    "model.layers.2.mlp.up_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.4.mlp.gate_proj"
+  ],
+  "nbits": 8,
+  "source": {
+    "kind": "search",
+    "engine": "fast_scan",
+    "mode": "fast",
+    "questions": 1000,
+    "seed": 0
+  },
+  "base": {
+    "method": "hqq",
+    "nbits": 3,
+    "group_size": 64,
+    "compute_dtype": "fp16"
+  },
+  "model_id": "Qwen/Qwen2.5-3B-Instruct",
+  "part_shapes": {
+    "self_attn.q_proj": [
+      2048,
+      2048
+    ],
+    "self_attn.k_proj": [
+      256,
+      2048
+    ],
+    "self_attn.v_proj": [
+      256,
+      2048
+    ],
+    "self_attn.o_proj": [
+      2048,
+      2048
+    ],
+    "mlp.gate_proj": [
+      11008,
+      2048
+    ],
+    "mlp.up_proj": [
+      11008,
+      2048
+    ],
+    "mlp.down_proj": [
+      2048,
+      11008
+    ]
+  },
+  "n_layers": 36,
+  "params": 68157440
+}

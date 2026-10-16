@@ -1,0 +1,366 @@
+{"time": "2026-10-16T11:52:33.420+00:00", "stage": "download", "status": "started", "done": 0, "total": 0, "message": "fetching the model"}
+{"time": "2026-10-16T11:52:51.472+00:00", "stage": "download", "status": "done", "done": 0, "total": 0, "message": "6.2 GB of weights \u00b7 qwen2, 36 layers, 252 parts \u00b7 3.4B parameters"}
+{"time": "2026-10-16T11:52:51.472+00:00", "stage": "quantize", "status": "started", "done": 0, "total": 0, "message": "HQQ 3-bit"}
+{"time": "2026-10-16T11:54:29.749+00:00", "stage": "quantize", "status": "done", "done": 0, "total": 0, "message": "HQQ 3-bit, group 64, fp16 compute"}
+{"time": "2026-10-16T11:54:29.751+00:00", "stage": "score_original", "status": "started", "done": 0, "total": 2000, "message": "loading the questions and the original model"}
+{"time": "2026-10-16T11:55:24.306+00:00", "stage": "score_original", "status": "progress", "done": 128, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:55:28.098+00:00", "stage": "score_original", "status": "progress", "done": 256, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:55:31.741+00:00", "stage": "score_original", "status": "progress", "done": 384, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:55:36.215+00:00", "stage": "score_original", "status": "progress", "done": 512, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:55:40.680+00:00", "stage": "score_original", "status": "progress", "done": 640, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:55:45.214+00:00", "stage": "score_original", "status": "progress", "done": 768, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:55:49.531+00:00", "stage": "score_original", "status": "progress", "done": 896, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:55:54.362+00:00", "stage": "score_original", "status": "progress", "done": 1024, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:00.900+00:00", "stage": "score_original", "status": "progress", "done": 1152, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:05.786+00:00", "stage": "score_original", "status": "progress", "done": 1280, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:11.111+00:00", "stage": "score_original", "status": "progress", "done": 1408, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:16.759+00:00", "stage": "score_original", "status": "progress", "done": 1536, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:22.390+00:00", "stage": "score_original", "status": "progress", "done": 1664, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:28.105+00:00", "stage": "score_original", "status": "progress", "done": 1792, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:33.605+00:00", "stage": "score_original", "status": "progress", "done": 1920, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:37.111+00:00", "stage": "score_original", "status": "progress", "done": 2000, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:37.531+00:00", "stage": "score_original", "status": "done", "done": 2000, "total": 2000, "message": "2,000 questions"}
+{"time": "2026-10-16T11:56:37.532+00:00", "stage": "score_3bit", "status": "started", "done": 0, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:44.748+00:00", "stage": "score_3bit", "status": "progress", "done": 128, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:51.424+00:00", "stage": "score_3bit", "status": "progress", "done": 256, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:56:57.934+00:00", "stage": "score_3bit", "status": "progress", "done": 384, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:05.160+00:00", "stage": "score_3bit", "status": "progress", "done": 512, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:12.295+00:00", "stage": "score_3bit", "status": "progress", "done": 640, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:19.430+00:00", "stage": "score_3bit", "status": "progress", "done": 768, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:26.414+00:00", "stage": "score_3bit", "status": "progress", "done": 896, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:33.985+00:00", "stage": "score_3bit", "status": "progress", "done": 1024, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:43.314+00:00", "stage": "score_3bit", "status": "progress", "done": 1152, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:51.123+00:00", "stage": "score_3bit", "status": "progress", "done": 1280, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:57:59.351+00:00", "stage": "score_3bit", "status": "progress", "done": 1408, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:58:08.008+00:00", "stage": "score_3bit", "status": "progress", "done": 1536, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:58:16.686+00:00", "stage": "score_3bit", "status": "progress", "done": 1664, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:58:25.360+00:00", "stage": "score_3bit", "status": "progress", "done": 1792, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:58:33.873+00:00", "stage": "score_3bit", "status": "progress", "done": 1920, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:58:39.251+00:00", "stage": "score_3bit", "status": "progress", "done": 2000, "total": 2000, "message": ""}
+{"time": "2026-10-16T11:58:39.253+00:00", "stage": "score_3bit", "status": "done", "done": 2000, "total": 2000, "message": "2,000 questions \u00b7 16.4 a second"}
+{"time": "2026-10-16T11:58:39.253+00:00", "stage": "find_damage", "status": "started", "done": 0, "total": 0, "message": ""}
+{"time": "2026-10-16T11:58:39.260+00:00", "stage": "find_damage", "status": "done", "done": 258, "total": 770, "message": "258 of 770 fair answers flipped to the stereotype \u00b7 986 questions kept back to check the repair"}
+{"time": "2026-10-16T11:58:39.270+00:00", "stage": "scan", "status": "started", "done": 0, "total": 18720, "message": "252 parts \u00b7 about 19 min"}
+{"time": "2026-10-16T11:58:47.950+00:00", "stage": "scan", "status": "progress", "done": 120, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 1 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T11:58:52.200+00:00", "stage": "scan", "status": "progress", "done": 180, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 2 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T11:58:56.449+00:00", "stage": "scan", "status": "progress", "done": 240, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 3 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T11:59:00.718+00:00", "stage": "scan", "status": "progress", "done": 300, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 4 of 252 \u00b7 about 22 min left"}
+{"time": "2026-10-16T11:59:04.966+00:00", "stage": "scan", "status": "progress", "done": 360, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 5 of 252 \u00b7 about 22 min left"}
+{"time": "2026-10-16T11:59:09.195+00:00", "stage": "scan", "status": "progress", "done": 420, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 6 of 252 \u00b7 about 22 min left"}
+{"time": "2026-10-16T11:59:13.488+00:00", "stage": "scan", "status": "progress", "done": 480, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 7 of 252 \u00b7 about 22 min left"}
+{"time": "2026-10-16T11:59:17.718+00:00", "stage": "scan", "status": "progress", "done": 540, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 8 of 252 \u00b7 about 22 min left"}
+{"time": "2026-10-16T11:59:21.966+00:00", "stage": "scan", "status": "progress", "done": 600, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 9 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:26.200+00:00", "stage": "scan", "status": "progress", "done": 660, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 10 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:30.436+00:00", "stage": "scan", "status": "progress", "done": 720, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 11 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:34.671+00:00", "stage": "scan", "status": "progress", "done": 780, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 12 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:38.916+00:00", "stage": "scan", "status": "progress", "done": 840, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 13 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:43.150+00:00", "stage": "scan", "status": "progress", "done": 900, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 14 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:47.398+00:00", "stage": "scan", "status": "progress", "done": 960, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 15 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:51.648+00:00", "stage": "scan", "status": "progress", "done": 1020, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 16 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T11:59:55.895+00:00", "stage": "scan", "status": "progress", "done": 1080, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 17 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T12:00:00.141+00:00", "stage": "scan", "status": "progress", "done": 1140, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 18 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T12:00:04.393+00:00", "stage": "scan", "status": "progress", "done": 1200, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 19 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T12:00:08.643+00:00", "stage": "scan", "status": "progress", "done": 1260, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 20 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T12:00:12.890+00:00", "stage": "scan", "status": "progress", "done": 1320, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 21 of 252 \u00b7 about 21 min left"}
+{"time": "2026-10-16T12:00:17.140+00:00", "stage": "scan", "status": "progress", "done": 1380, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 22 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:21.655+00:00", "stage": "scan", "status": "progress", "done": 1440, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 23 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:25.904+00:00", "stage": "scan", "status": "progress", "done": 1500, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 24 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:30.174+00:00", "stage": "scan", "status": "progress", "done": 1560, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 25 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:34.451+00:00", "stage": "scan", "status": "progress", "done": 1620, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 26 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:38.708+00:00", "stage": "scan", "status": "progress", "done": 1680, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 27 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:42.977+00:00", "stage": "scan", "status": "progress", "done": 1740, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 28 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:47.213+00:00", "stage": "scan", "status": "progress", "done": 1800, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 29 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:51.452+00:00", "stage": "scan", "status": "progress", "done": 1860, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 30 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:55.699+00:00", "stage": "scan", "status": "progress", "done": 1920, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 31 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:00:59.936+00:00", "stage": "scan", "status": "progress", "done": 1980, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 32 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:01:04.181+00:00", "stage": "scan", "status": "progress", "done": 2040, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 33 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:01:08.413+00:00", "stage": "scan", "status": "progress", "done": 2100, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 34 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:01:12.645+00:00", "stage": "scan", "status": "progress", "done": 2160, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 35 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:01:16.876+00:00", "stage": "scan", "status": "progress", "done": 2220, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 36 of 252 \u00b7 about 20 min left"}
+{"time": "2026-10-16T12:01:21.019+00:00", "stage": "scan", "status": "progress", "done": 2280, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 37 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:25.163+00:00", "stage": "scan", "status": "progress", "done": 2340, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 38 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:29.311+00:00", "stage": "scan", "status": "progress", "done": 2400, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 39 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:33.461+00:00", "stage": "scan", "status": "progress", "done": 2460, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 40 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:37.610+00:00", "stage": "scan", "status": "progress", "done": 2520, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 41 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:41.746+00:00", "stage": "scan", "status": "progress", "done": 2580, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 42 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:45.897+00:00", "stage": "scan", "status": "progress", "done": 2640, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 43 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:50.052+00:00", "stage": "scan", "status": "progress", "done": 2700, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 44 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:54.205+00:00", "stage": "scan", "status": "progress", "done": 2760, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 45 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:01:58.340+00:00", "stage": "scan", "status": "progress", "done": 2820, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 46 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:02:02.487+00:00", "stage": "scan", "status": "progress", "done": 2880, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 47 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:02:06.639+00:00", "stage": "scan", "status": "progress", "done": 2940, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 48 of 252 \u00b7 about 19 min left"}
+{"time": "2026-10-16T12:02:10.791+00:00", "stage": "scan", "status": "progress", "done": 3000, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 49 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:14.937+00:00", "stage": "scan", "status": "progress", "done": 3060, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 50 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:19.081+00:00", "stage": "scan", "status": "progress", "done": 3120, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 51 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:23.229+00:00", "stage": "scan", "status": "progress", "done": 3180, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 52 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:27.372+00:00", "stage": "scan", "status": "progress", "done": 3240, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 53 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:31.513+00:00", "stage": "scan", "status": "progress", "done": 3300, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 54 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:35.658+00:00", "stage": "scan", "status": "progress", "done": 3360, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 55 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:39.806+00:00", "stage": "scan", "status": "progress", "done": 3420, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 56 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:43.956+00:00", "stage": "scan", "status": "progress", "done": 3480, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 57 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:48.104+00:00", "stage": "scan", "status": "progress", "done": 3540, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 58 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:52.244+00:00", "stage": "scan", "status": "progress", "done": 3600, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 59 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:02:56.396+00:00", "stage": "scan", "status": "progress", "done": 3660, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 60 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:03:00.548+00:00", "stage": "scan", "status": "progress", "done": 3720, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 61 of 252 \u00b7 about 18 min left"}
+{"time": "2026-10-16T12:03:04.702+00:00", "stage": "scan", "status": "progress", "done": 3780, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 62 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:08.853+00:00", "stage": "scan", "status": "progress", "done": 3840, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 63 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:13.004+00:00", "stage": "scan", "status": "progress", "done": 3900, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 64 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:17.151+00:00", "stage": "scan", "status": "progress", "done": 3960, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 65 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:21.298+00:00", "stage": "scan", "status": "progress", "done": 4020, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 66 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:25.453+00:00", "stage": "scan", "status": "progress", "done": 4080, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 67 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:29.620+00:00", "stage": "scan", "status": "progress", "done": 4140, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 68 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:33.768+00:00", "stage": "scan", "status": "progress", "done": 4200, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 69 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:37.919+00:00", "stage": "scan", "status": "progress", "done": 4260, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 70 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:42.084+00:00", "stage": "scan", "status": "progress", "done": 4320, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 71 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:46.252+00:00", "stage": "scan", "status": "progress", "done": 4380, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 72 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:50.401+00:00", "stage": "scan", "status": "progress", "done": 4440, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 73 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:54.557+00:00", "stage": "scan", "status": "progress", "done": 4500, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 74 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:03:58.720+00:00", "stage": "scan", "status": "progress", "done": 4560, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 75 of 252 \u00b7 about 17 min left"}
+{"time": "2026-10-16T12:04:02.885+00:00", "stage": "scan", "status": "progress", "done": 4620, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 76 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:07.041+00:00", "stage": "scan", "status": "progress", "done": 4680, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 77 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:11.214+00:00", "stage": "scan", "status": "progress", "done": 4740, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 78 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:15.386+00:00", "stage": "scan", "status": "progress", "done": 4800, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 79 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:19.554+00:00", "stage": "scan", "status": "progress", "done": 4860, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 80 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:23.707+00:00", "stage": "scan", "status": "progress", "done": 4920, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 81 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:27.873+00:00", "stage": "scan", "status": "progress", "done": 4980, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 82 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:32.041+00:00", "stage": "scan", "status": "progress", "done": 5040, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 83 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:36.208+00:00", "stage": "scan", "status": "progress", "done": 5100, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 84 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:40.366+00:00", "stage": "scan", "status": "progress", "done": 5160, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 85 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:44.530+00:00", "stage": "scan", "status": "progress", "done": 5220, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 86 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:48.685+00:00", "stage": "scan", "status": "progress", "done": 5280, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 87 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:52.847+00:00", "stage": "scan", "status": "progress", "done": 5340, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 88 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:04:57.017+00:00", "stage": "scan", "status": "progress", "done": 5400, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 89 of 252 \u00b7 about 16 min left"}
+{"time": "2026-10-16T12:05:01.173+00:00", "stage": "scan", "status": "progress", "done": 5460, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 90 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:05.344+00:00", "stage": "scan", "status": "progress", "done": 5520, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 91 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:09.500+00:00", "stage": "scan", "status": "progress", "done": 5580, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 92 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:13.670+00:00", "stage": "scan", "status": "progress", "done": 5640, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 93 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:17.822+00:00", "stage": "scan", "status": "progress", "done": 5700, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 94 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:21.973+00:00", "stage": "scan", "status": "progress", "done": 5760, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 95 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:26.141+00:00", "stage": "scan", "status": "progress", "done": 5820, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 96 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:30.292+00:00", "stage": "scan", "status": "progress", "done": 5880, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 97 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:34.458+00:00", "stage": "scan", "status": "progress", "done": 5940, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 98 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:38.629+00:00", "stage": "scan", "status": "progress", "done": 6000, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 99 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:42.796+00:00", "stage": "scan", "status": "progress", "done": 6060, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 100 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:46.944+00:00", "stage": "scan", "status": "progress", "done": 6120, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 101 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:51.093+00:00", "stage": "scan", "status": "progress", "done": 6180, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 102 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:55.262+00:00", "stage": "scan", "status": "progress", "done": 6240, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 103 of 252 \u00b7 about 15 min left"}
+{"time": "2026-10-16T12:05:59.413+00:00", "stage": "scan", "status": "progress", "done": 6300, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 104 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:03.581+00:00", "stage": "scan", "status": "progress", "done": 6360, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 105 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:07.736+00:00", "stage": "scan", "status": "progress", "done": 6420, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 106 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:11.891+00:00", "stage": "scan", "status": "progress", "done": 6480, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 107 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:16.046+00:00", "stage": "scan", "status": "progress", "done": 6540, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 108 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:20.286+00:00", "stage": "scan", "status": "progress", "done": 6600, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 109 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:24.538+00:00", "stage": "scan", "status": "progress", "done": 6660, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 110 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:28.770+00:00", "stage": "scan", "status": "progress", "done": 6720, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 111 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:33.005+00:00", "stage": "scan", "status": "progress", "done": 6780, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 112 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:37.249+00:00", "stage": "scan", "status": "progress", "done": 6840, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 113 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:41.484+00:00", "stage": "scan", "status": "progress", "done": 6900, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 114 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:45.747+00:00", "stage": "scan", "status": "progress", "done": 6960, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 115 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:50.017+00:00", "stage": "scan", "status": "progress", "done": 7020, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 116 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:54.252+00:00", "stage": "scan", "status": "progress", "done": 7080, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 117 of 252 \u00b7 about 14 min left"}
+{"time": "2026-10-16T12:06:58.495+00:00", "stage": "scan", "status": "progress", "done": 7140, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 118 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:02.730+00:00", "stage": "scan", "status": "progress", "done": 7200, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 119 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:06.977+00:00", "stage": "scan", "status": "progress", "done": 7260, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 120 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:11.230+00:00", "stage": "scan", "status": "progress", "done": 7320, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 121 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:15.462+00:00", "stage": "scan", "status": "progress", "done": 7380, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 122 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:19.696+00:00", "stage": "scan", "status": "progress", "done": 7440, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 123 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:23.929+00:00", "stage": "scan", "status": "progress", "done": 7500, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 124 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:28.164+00:00", "stage": "scan", "status": "progress", "done": 7560, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 125 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:32.417+00:00", "stage": "scan", "status": "progress", "done": 7620, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 126 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:36.649+00:00", "stage": "scan", "status": "progress", "done": 7680, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 127 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:40.889+00:00", "stage": "scan", "status": "progress", "done": 7740, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 128 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:45.130+00:00", "stage": "scan", "status": "progress", "done": 7800, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 129 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:49.358+00:00", "stage": "scan", "status": "progress", "done": 7860, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 130 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:53.608+00:00", "stage": "scan", "status": "progress", "done": 7920, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 131 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:07:57.839+00:00", "stage": "scan", "status": "progress", "done": 7980, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 132 of 252 \u00b7 about 13 min left"}
+{"time": "2026-10-16T12:08:02.070+00:00", "stage": "scan", "status": "progress", "done": 8040, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 133 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:06.295+00:00", "stage": "scan", "status": "progress", "done": 8100, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 134 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:10.523+00:00", "stage": "scan", "status": "progress", "done": 8160, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 135 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:14.755+00:00", "stage": "scan", "status": "progress", "done": 8220, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 136 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:19.003+00:00", "stage": "scan", "status": "progress", "done": 8280, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 137 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:23.236+00:00", "stage": "scan", "status": "progress", "done": 8340, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 138 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:27.477+00:00", "stage": "scan", "status": "progress", "done": 8400, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 139 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:31.705+00:00", "stage": "scan", "status": "progress", "done": 8460, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 140 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:35.942+00:00", "stage": "scan", "status": "progress", "done": 8520, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 141 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:40.185+00:00", "stage": "scan", "status": "progress", "done": 8580, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 142 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:44.435+00:00", "stage": "scan", "status": "progress", "done": 8640, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 143 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:48.681+00:00", "stage": "scan", "status": "progress", "done": 8700, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 144 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:53.556+00:00", "stage": "scan", "status": "progress", "done": 8760, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 145 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:08:58.404+00:00", "stage": "scan", "status": "progress", "done": 8820, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 146 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:09:03.221+00:00", "stage": "scan", "status": "progress", "done": 8880, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 147 of 252 \u00b7 about 12 min left"}
+{"time": "2026-10-16T12:09:08.051+00:00", "stage": "scan", "status": "progress", "done": 8940, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 148 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:12.888+00:00", "stage": "scan", "status": "progress", "done": 9000, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 149 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:17.739+00:00", "stage": "scan", "status": "progress", "done": 9060, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 150 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:22.632+00:00", "stage": "scan", "status": "progress", "done": 9120, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 151 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:27.593+00:00", "stage": "scan", "status": "progress", "done": 9180, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 152 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:32.528+00:00", "stage": "scan", "status": "progress", "done": 9240, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 153 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:37.452+00:00", "stage": "scan", "status": "progress", "done": 9300, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 154 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:42.381+00:00", "stage": "scan", "status": "progress", "done": 9360, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 155 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:47.351+00:00", "stage": "scan", "status": "progress", "done": 9420, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 156 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:52.325+00:00", "stage": "scan", "status": "progress", "done": 9480, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 157 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:09:57.315+00:00", "stage": "scan", "status": "progress", "done": 9540, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 158 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:10:02.294+00:00", "stage": "scan", "status": "progress", "done": 9600, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 159 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:10:07.204+00:00", "stage": "scan", "status": "progress", "done": 9660, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 160 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:10:12.075+00:00", "stage": "scan", "status": "progress", "done": 9720, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 161 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:10:16.929+00:00", "stage": "scan", "status": "progress", "done": 9780, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 162 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:10:21.763+00:00", "stage": "scan", "status": "progress", "done": 9840, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 163 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:10:26.635+00:00", "stage": "scan", "status": "progress", "done": 9900, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 164 of 252 \u00b7 about 11 min left"}
+{"time": "2026-10-16T12:10:31.489+00:00", "stage": "scan", "status": "progress", "done": 9960, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 165 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:10:36.320+00:00", "stage": "scan", "status": "progress", "done": 10020, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 166 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:10:41.156+00:00", "stage": "scan", "status": "progress", "done": 10080, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 167 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:10:46.023+00:00", "stage": "scan", "status": "progress", "done": 10140, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 168 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:10:50.920+00:00", "stage": "scan", "status": "progress", "done": 10200, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 169 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:10:55.754+00:00", "stage": "scan", "status": "progress", "done": 10260, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 170 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:00.636+00:00", "stage": "scan", "status": "progress", "done": 10320, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 171 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:05.469+00:00", "stage": "scan", "status": "progress", "done": 10380, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 172 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:10.328+00:00", "stage": "scan", "status": "progress", "done": 10440, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 173 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:15.198+00:00", "stage": "scan", "status": "progress", "done": 10500, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 174 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:20.051+00:00", "stage": "scan", "status": "progress", "done": 10560, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 175 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:24.925+00:00", "stage": "scan", "status": "progress", "done": 10620, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 176 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:29.780+00:00", "stage": "scan", "status": "progress", "done": 10680, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 177 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:34.634+00:00", "stage": "scan", "status": "progress", "done": 10740, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 178 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:39.482+00:00", "stage": "scan", "status": "progress", "done": 10800, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 179 of 252 \u00b7 about 10 min left"}
+{"time": "2026-10-16T12:11:44.338+00:00", "stage": "scan", "status": "progress", "done": 10860, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 180 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:11:49.160+00:00", "stage": "scan", "status": "progress", "done": 10920, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 181 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:11:53.999+00:00", "stage": "scan", "status": "progress", "done": 10980, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 182 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:11:58.845+00:00", "stage": "scan", "status": "progress", "done": 11040, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 183 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:03.702+00:00", "stage": "scan", "status": "progress", "done": 11100, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 184 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:08.551+00:00", "stage": "scan", "status": "progress", "done": 11160, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 185 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:13.406+00:00", "stage": "scan", "status": "progress", "done": 11220, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 186 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:18.344+00:00", "stage": "scan", "status": "progress", "done": 11280, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 187 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:23.196+00:00", "stage": "scan", "status": "progress", "done": 11340, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 188 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:28.049+00:00", "stage": "scan", "status": "progress", "done": 11400, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 189 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:32.887+00:00", "stage": "scan", "status": "progress", "done": 11460, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 190 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:37.739+00:00", "stage": "scan", "status": "progress", "done": 11520, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 191 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:42.632+00:00", "stage": "scan", "status": "progress", "done": 11580, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 192 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:47.478+00:00", "stage": "scan", "status": "progress", "done": 11640, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 193 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:52.353+00:00", "stage": "scan", "status": "progress", "done": 11700, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 194 of 252 \u00b7 about 9 min left"}
+{"time": "2026-10-16T12:12:57.200+00:00", "stage": "scan", "status": "progress", "done": 11760, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 195 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:02.035+00:00", "stage": "scan", "status": "progress", "done": 11820, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 196 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:06.914+00:00", "stage": "scan", "status": "progress", "done": 11880, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 197 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:11.755+00:00", "stage": "scan", "status": "progress", "done": 11940, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 198 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:16.569+00:00", "stage": "scan", "status": "progress", "done": 12000, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 199 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:21.400+00:00", "stage": "scan", "status": "progress", "done": 12060, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 200 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:26.228+00:00", "stage": "scan", "status": "progress", "done": 12120, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 201 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:31.068+00:00", "stage": "scan", "status": "progress", "done": 12180, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 202 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:35.922+00:00", "stage": "scan", "status": "progress", "done": 12240, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 203 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:40.772+00:00", "stage": "scan", "status": "progress", "done": 12300, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 204 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:45.616+00:00", "stage": "scan", "status": "progress", "done": 12360, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 205 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:50.465+00:00", "stage": "scan", "status": "progress", "done": 12420, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 206 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:13:55.296+00:00", "stage": "scan", "status": "progress", "done": 12480, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 207 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:14:00.137+00:00", "stage": "scan", "status": "progress", "done": 12540, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 208 of 252 \u00b7 about 8 min left"}
+{"time": "2026-10-16T12:14:04.951+00:00", "stage": "scan", "status": "progress", "done": 12600, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 209 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:09.774+00:00", "stage": "scan", "status": "progress", "done": 12660, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 210 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:14.614+00:00", "stage": "scan", "status": "progress", "done": 12720, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 211 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:19.468+00:00", "stage": "scan", "status": "progress", "done": 12780, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 212 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:24.287+00:00", "stage": "scan", "status": "progress", "done": 12840, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 213 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:29.120+00:00", "stage": "scan", "status": "progress", "done": 12900, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 214 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:34.013+00:00", "stage": "scan", "status": "progress", "done": 12960, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 215 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:38.848+00:00", "stage": "scan", "status": "progress", "done": 13020, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 216 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:43.699+00:00", "stage": "scan", "status": "progress", "done": 13080, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 217 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:48.554+00:00", "stage": "scan", "status": "progress", "done": 13140, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 218 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:53.390+00:00", "stage": "scan", "status": "progress", "done": 13200, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 219 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:14:58.239+00:00", "stage": "scan", "status": "progress", "done": 13260, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 220 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:15:03.089+00:00", "stage": "scan", "status": "progress", "done": 13320, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 221 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:15:07.933+00:00", "stage": "scan", "status": "progress", "done": 13380, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 222 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:15:12.831+00:00", "stage": "scan", "status": "progress", "done": 13440, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 223 of 252 \u00b7 about 7 min left"}
+{"time": "2026-10-16T12:15:17.768+00:00", "stage": "scan", "status": "progress", "done": 13500, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 224 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:22.591+00:00", "stage": "scan", "status": "progress", "done": 13560, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 225 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:27.434+00:00", "stage": "scan", "status": "progress", "done": 13620, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 226 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:32.301+00:00", "stage": "scan", "status": "progress", "done": 13680, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 227 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:37.140+00:00", "stage": "scan", "status": "progress", "done": 13740, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 228 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:41.988+00:00", "stage": "scan", "status": "progress", "done": 13800, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 229 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:46.841+00:00", "stage": "scan", "status": "progress", "done": 13860, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 230 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:51.676+00:00", "stage": "scan", "status": "progress", "done": 13920, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 231 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:15:56.512+00:00", "stage": "scan", "status": "progress", "done": 13980, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 232 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:16:01.364+00:00", "stage": "scan", "status": "progress", "done": 14040, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 233 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:16:06.200+00:00", "stage": "scan", "status": "progress", "done": 14100, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 234 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:16:11.054+00:00", "stage": "scan", "status": "progress", "done": 14160, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 235 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:16:15.886+00:00", "stage": "scan", "status": "progress", "done": 14220, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 236 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:16:20.729+00:00", "stage": "scan", "status": "progress", "done": 14280, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 237 of 252 \u00b7 about 6 min left"}
+{"time": "2026-10-16T12:16:25.617+00:00", "stage": "scan", "status": "progress", "done": 14340, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 238 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:16:30.474+00:00", "stage": "scan", "status": "progress", "done": 14400, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 239 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:16:35.349+00:00", "stage": "scan", "status": "progress", "done": 14460, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 240 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:16:40.187+00:00", "stage": "scan", "status": "progress", "done": 14520, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 241 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:16:45.037+00:00", "stage": "scan", "status": "progress", "done": 14580, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 242 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:16:49.873+00:00", "stage": "scan", "status": "progress", "done": 14640, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 243 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:16:54.724+00:00", "stage": "scan", "status": "progress", "done": 14700, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 244 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:16:59.559+00:00", "stage": "scan", "status": "progress", "done": 14760, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 245 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:17:04.397+00:00", "stage": "scan", "status": "progress", "done": 14820, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 246 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:17:09.229+00:00", "stage": "scan", "status": "progress", "done": 14880, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 247 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:17:14.042+00:00", "stage": "scan", "status": "progress", "done": 14940, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 248 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:17:18.875+00:00", "stage": "scan", "status": "progress", "done": 15000, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 249 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:17:23.716+00:00", "stage": "scan", "status": "progress", "done": 15060, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 250 of 252 \u00b7 about 5 min left"}
+{"time": "2026-10-16T12:17:28.553+00:00", "stage": "scan", "status": "progress", "done": 15120, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 251 of 252 \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:17:33.394+00:00", "stage": "scan", "status": "progress", "done": 15180, "total": 18720, "message": "Step 1 of 2 \u00b7 Quick look at every part: 252 of 252 \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:17:38.254+00:00", "stage": "scan", "status": "progress", "done": 15240, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:17:42.486+00:00", "stage": "scan", "status": "progress", "done": 15300, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:17:46.654+00:00", "stage": "scan", "status": "progress", "done": 15360, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:17:50.821+00:00", "stage": "scan", "status": "progress", "done": 15420, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:17:55.071+00:00", "stage": "scan", "status": "progress", "done": 15480, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:17:59.315+00:00", "stage": "scan", "status": "progress", "done": 15540, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:18:03.562+00:00", "stage": "scan", "status": "progress", "done": 15600, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:18:08.402+00:00", "stage": "scan", "status": "progress", "done": 15660, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:18:13.212+00:00", "stage": "scan", "status": "progress", "done": 15720, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:18:18.025+00:00", "stage": "scan", "status": "progress", "done": 15780, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:18:22.833+00:00", "stage": "scan", "status": "progress", "done": 15840, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:18:27.646+00:00", "stage": "scan", "status": "progress", "done": 15900, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 4 min left"}
+{"time": "2026-10-16T12:18:32.462+00:00", "stage": "scan", "status": "progress", "done": 15960, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:18:37.320+00:00", "stage": "scan", "status": "progress", "done": 16020, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:18:42.159+00:00", "stage": "scan", "status": "progress", "done": 16080, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:18:46.974+00:00", "stage": "scan", "status": "progress", "done": 16140, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 2 of 5: 1 part kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:18:51.789+00:00", "stage": "scan", "status": "progress", "done": 16200, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:18:56.024+00:00", "stage": "scan", "status": "progress", "done": 16260, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:00.189+00:00", "stage": "scan", "status": "progress", "done": 16320, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:04.348+00:00", "stage": "scan", "status": "progress", "done": 16380, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:08.614+00:00", "stage": "scan", "status": "progress", "done": 16440, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:12.860+00:00", "stage": "scan", "status": "progress", "done": 16500, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:17.111+00:00", "stage": "scan", "status": "progress", "done": 16560, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:21.923+00:00", "stage": "scan", "status": "progress", "done": 16620, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:26.739+00:00", "stage": "scan", "status": "progress", "done": 16680, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 3 min left"}
+{"time": "2026-10-16T12:19:31.547+00:00", "stage": "scan", "status": "progress", "done": 16740, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:19:36.342+00:00", "stage": "scan", "status": "progress", "done": 16800, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:19:41.140+00:00", "stage": "scan", "status": "progress", "done": 16860, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:19:45.938+00:00", "stage": "scan", "status": "progress", "done": 16920, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:19:50.743+00:00", "stage": "scan", "status": "progress", "done": 16980, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:19:55.538+00:00", "stage": "scan", "status": "progress", "done": 17040, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 3 of 5: 2 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:19:59.671+00:00", "stage": "scan", "status": "progress", "done": 17100, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:20:03.883+00:00", "stage": "scan", "status": "progress", "done": 17160, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:20:08.034+00:00", "stage": "scan", "status": "progress", "done": 17220, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:20:12.279+00:00", "stage": "scan", "status": "progress", "done": 17280, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:20:16.526+00:00", "stage": "scan", "status": "progress", "done": 17340, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:20:20.776+00:00", "stage": "scan", "status": "progress", "done": 17400, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:20:25.594+00:00", "stage": "scan", "status": "progress", "done": 17460, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 2 min left"}
+{"time": "2026-10-16T12:20:30.387+00:00", "stage": "scan", "status": "progress", "done": 17520, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 1 min left"}
+{"time": "2026-10-16T12:20:35.202+00:00", "stage": "scan", "status": "progress", "done": 17580, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 1 min left"}
+{"time": "2026-10-16T12:20:40.015+00:00", "stage": "scan", "status": "progress", "done": 17640, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 1 min left"}
+{"time": "2026-10-16T12:20:44.828+00:00", "stage": "scan", "status": "progress", "done": 17700, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 1 min left"}
+{"time": "2026-10-16T12:20:49.664+00:00", "stage": "scan", "status": "progress", "done": 17760, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 1 min left"}
+{"time": "2026-10-16T12:20:54.482+00:00", "stage": "scan", "status": "progress", "done": 17820, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 1 min left"}
+{"time": "2026-10-16T12:20:59.342+00:00", "stage": "scan", "status": "progress", "done": 17880, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 4 of 5: 3 parts kept so far \u00b7 about 1 min left"}
+{"time": "2026-10-16T12:21:04.162+00:00", "stage": "scan", "status": "progress", "done": 17940, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:08.378+00:00", "stage": "scan", "status": "progress", "done": 18000, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:12.528+00:00", "stage": "scan", "status": "progress", "done": 18060, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:16.758+00:00", "stage": "scan", "status": "progress", "done": 18120, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:20.987+00:00", "stage": "scan", "status": "progress", "done": 18180, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:25.222+00:00", "stage": "scan", "status": "progress", "done": 18240, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:30.073+00:00", "stage": "scan", "status": "progress", "done": 18300, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:34.880+00:00", "stage": "scan", "status": "progress", "done": 18360, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:39.715+00:00", "stage": "scan", "status": "progress", "done": 18420, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:44.526+00:00", "stage": "scan", "status": "progress", "done": 18480, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:49.340+00:00", "stage": "scan", "status": "progress", "done": 18540, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:54.158+00:00", "stage": "scan", "status": "progress", "done": 18600, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:58.956+00:00", "stage": "scan", "status": "progress", "done": 18660, "total": 18720, "message": "Step 2 of 2 \u00b7 Choosing among the best 16, round 5 of 5: 4 parts kept so far \u00b7 under a minute left"}
+{"time": "2026-10-16T12:21:58.957+00:00", "stage": "scan", "status": "done", "done": 18720, "total": 18720, "message": "Kept 4 of 252 parts"}
+{"time": "2026-10-16T12:21:58.957+00:00", "stage": "verify", "status": "started", "done": 0, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:05.942+00:00", "stage": "verify", "status": "progress", "done": 128, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:12.816+00:00", "stage": "verify", "status": "progress", "done": 256, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:19.844+00:00", "stage": "verify", "status": "progress", "done": 384, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:27.556+00:00", "stage": "verify", "status": "progress", "done": 512, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:36.085+00:00", "stage": "verify", "status": "progress", "done": 640, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:44.716+00:00", "stage": "verify", "status": "progress", "done": 768, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:53.493+00:00", "stage": "verify", "status": "progress", "done": 896, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:59.667+00:00", "stage": "verify", "status": "progress", "done": 986, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:59.769+00:00", "stage": "verify", "status": "done", "done": 986, "total": 986, "message": ""}
+{"time": "2026-10-16T12:22:59.770+00:00", "stage": "report", "status": "started", "done": 0, "total": 0, "message": ""}
+{"time": "2026-10-16T12:22:59.770+00:00", "stage": "report", "status": "done", "done": 0, "total": 0, "message": "Repaired \u00b7 verdict FAIL"}
