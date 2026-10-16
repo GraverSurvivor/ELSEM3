@@ -196,7 +196,10 @@ additions below make that claim defensible. **RUNBOOK.md lists every GPU run, in
   model, Diagnose, watch the 8 stages, get the before/after cards, the kept parts on a grid for any
   model, patch.json and llama.cpp settings. It starts the fast-repair pipeline as a subprocess (one job
   at a time, Cancel) and reads only its files (contract C4: events.jsonl, report.json, patch.json), so
-  it is reload- and restart-safe. `--byom` keeps the GPU for that model (tabs 1-4 use saved results);
+  it is reload- and restart-safe. `--byom --live` puts both in one window: tabs 1-4 live, tab 5 for models
+up to ~3B; while a job runs the 16-bit Phi-3.5 steps aside (`release_original`) and the Original card
+shows the saved full-benchmark answers, then it reloads in the background. `--byom` alone keeps the GPU
+for tab 5 (tabs 1-4 use saved results, models up to ~4B);
   `--byom-pipeline fake` and `--byom-replay <run>` use `src/product/byom_fake.py`, a stand-in that
   writes the same files without a GPU; its reports carry `synthetic`/`replayed_from`, shown as a banner.
 

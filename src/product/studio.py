@@ -15,6 +15,7 @@ session dies during a presentation.
 
     python -m src.product.studio --share          # live, on Colab (prints a public link)
     python -m src.product.studio --offline        # preview on saved results, any laptop
+    python -m src.product.studio --byom --live --share   # Colab: the live demo AND tab 5 in one app
     python -m src.product.studio --byom --share   # Colab: the GPU is kept for the customer's model
     python -m src.product.studio --byom --byom-pipeline fake      # laptop: the screen with a stand-in
     python -m src.product.studio --byom --byom-replay <run dir>   # presentation backup: a recorded run
@@ -186,8 +187,13 @@ class LiveBackend:
     live = True
     mode_label = "Live on GPU"
 
+    # While a tab-5 job runs, the 16-bit model steps aside (7.6 GB of a T4's 15 GB) and the original's
+    # answers come from the saved full-benchmark run; it loads back when the job ends.
+    ORIGINAL_AWAY = ("Saved answer from the full-benchmark run: the 16-bit model steps aside while tab 5 "
+                     "diagnoses your model, and is back when it finishes.")
+
     def __init__(self, device: str = "cuda", load_original: bool = True, batch_size: int = 16,
-                 cache_dir: Path | None = None):
+                 cache_dir: Path | None = None, saved_original: dict | None = None):
         import gc
 
         import torch
@@ -208,9 +214,56 @@ class LiveBackend:
         if load_original:
             with timed("original 16-bit model"):
                 self.original, _ = load_model("fp16")
-        self.has_original = self.original is not None
+        self.wants_original = load_original
+        self.saved_original = saved_original or {}  # question id -> the original's saved pick
+        self.original_away = False
+        self.reloading = False
         self._plain: dict[str, object] = {}  # path -> the 3-bit module it started as
         self._cache: dict[tuple, Answer] = {}
+
+    @property
+    def has_original(self) -> bool:
+        return self.original is not None or (self.original_away and bool(self.saved_original))
+
+    def release_original(self) -> bool:
+        """Frees the 16-bit model's GPU memory for a tab-5 job. True if there was one to free."""
+        if self.original is None:
+            return False
+        import gc
+
+        import torch
+
+        self.original = None
+        self.original_away = True
+        gc.collect()
+        torch.cuda.empty_cache()
+        return True
+
+    def reload_original(self, wait: bool = False) -> None:
+        """Loads the 16-bit model back after a tab-5 job, in the background (about a minute)."""
+        if not self.original_away or self.reloading:
+            return
+        self.reloading = True
+
+        def load():
+            from src.eval.model_loader import load_model
+
+            try:
+                model, _ = load_model("fp16")
+                self.original, self.original_away = model, False
+            finally:
+                self.reloading = False
+
+        if wait:
+            load()
+        else:
+            import threading
+
+            threading.Thread(target=load, daemon=True, name="reload-original").start()
+
+    def _saved_original(self, item) -> Answer | None:
+        pick = None if item.category == "Custom" else self.saved_original.get(item.question_id)
+        return None if pick is None else Answer(pick)
 
     def restored(self) -> list[str]:
         return list(self.registry.active)
@@ -264,6 +317,8 @@ class LiveBackend:
         return (view, state, item.context, item.question, item.options)
 
     def _answers(self, items, view: str) -> list[Answer]:
+        if view == "original" and self.original is None:  # stepped aside: what was measured, else saved
+            return [self._cache.get(self._key(view, it)) or self._saved_original(it) for it in items]
         missing = [it for it in items if self._key(view, it) not in self._cache]
         if missing:
             if view == "original":
@@ -281,7 +336,8 @@ class LiveBackend:
         """One view's answers to several questions, scored together."""
         if view == "original" and not self.has_original:
             return None
-        return self._answers(items, view)
+        answers = self._answers(items, view)
+        return None if any(a is None for a in answers) else answers
 
     def answers(self, item, swapped: bool) -> dict[str, Answer | None]:
         out = {}
@@ -292,7 +348,10 @@ class LiveBackend:
     def counts(self, items, view: str) -> dict | None:
         if view == "original" and not self.has_original:
             return None
-        return count_answers(items, [a.pick for a in self._answers(items, view)])
+        answers = self._answers(items, view)
+        if any(a is None for a in answers):
+            return None
+        return count_answers(items, [a.pick for a in answers])
 
     def overhead_mb(self) -> float:
         return self.registry.deployed_overhead_bytes() / 2**20
@@ -455,11 +514,28 @@ class ByomSetup:
     @classmethod
     def from_args(cls, args) -> "ByomSetup":
         if not args.byom:
-            reason = ("*This copy of Studio is running Phi-3.5 on the GPU, so there's no room for a second model.* "
-                      "Start it with `--byom` to diagnose your own model." if not args.offline else cls.NOT_STARTED)
+            reason = ("*This copy of Studio runs only the Phi-3.5 demo.* Start it with `--byom --live` to have "
+                      "this tab too, in the same window." if not args.offline else cls.NOT_STARTED)
             return cls(None, reason)
         pipeline = "replay" if args.byom_replay else args.byom_pipeline
         return cls(JobRunner(args.byom_jobs, pipeline=pipeline, replay=args.byom_replay, speed=args.byom_speed))
+
+
+def make_room_for_job(backend) -> None:
+    """Before a tab-5 job loads its model: the live demo's 16-bit model steps aside."""
+    if getattr(backend, "live", False) and hasattr(backend, "release_original"):
+        if backend.release_original():
+            print("[tab 5] the 16-bit Phi-3.5 stepped aside for the job; the original's answers are saved ones")
+
+
+def after_job(backend, runner: "JobRunner") -> None:
+    """When no tab-5 job is running, the demo gets its 16-bit model back (in the background)."""
+    if not getattr(backend, "original_away", False) or backend.reloading or not backend.wants_original:
+        return
+    job = runner.current()
+    if job is None or not runner.is_running(job):
+        print("[tab 5] job finished: loading the 16-bit Phi-3.5 back")
+        backend.reload_original()
 
 
 def byom_view(runner: JobRunner) -> tuple:
@@ -591,12 +667,17 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
         for view in VIEWS:
             note = notes[view]
             if answers[view] is None:
-                if view == "original" and not backend.has_original:
+                if view == "original" and getattr(backend, "original_away", False):
+                    note = ("The 16-bit model steps aside while tab 5 diagnoses your model, and there is no "
+                            "saved answer for this question. Ask again when the diagnosis ends.")
+                elif view == "original" and not backend.has_original:
                     note = "Not loaded in this session."
                 elif not backend.live:
                     note = "This needs the live app (GPU). Preview mode only has saved answers."
             elif swapped and base_item is not None:
                 note = " ".join(n for n in (swap_note(base_item, before.get(view), item, answers[view]), note) if n)
+            if view == "original" and answers[view] is not None and getattr(backend, "original_away", False):
+                note = " ".join(n for n in (note, LiveBackend.ORIGINAL_AWAY) if n)
             sub = repaired_sub() if view == "repaired" else None
             cards.append(answer_card_html(view, item, answers[view], subtitle=sub, note=note))
         return (question_html(item, swapped), *cards)
@@ -945,13 +1026,20 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
             runner = byom.runner
 
             def byom_refresh():
+                after_job(backend, runner)
                 return byom_view(runner)
 
             def byom_start(model, mode):
+                if getattr(backend, "reloading", False):
+                    gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
+                               "(about a minute). Press Diagnose again in a moment.")
+                    return byom_view(runner)
                 try:
                     runner.start(model, mode)
                 except (ValueError, JobBusy, RuntimeError) as error:
                     gr.Warning(str(error))
+                else:
+                    make_room_for_job(backend)  # the job is still downloading: GPU free in time
                 return byom_view(runner)
 
             def byom_stop():
@@ -1031,6 +1119,9 @@ def main() -> None:
     parser.add_argument("--byom", action="store_true",
                         help="enable tab 5 (bring your own model); the GPU is kept for that model, so the other tabs "
                              "use saved results")
+    parser.add_argument("--live", action="store_true",
+                        help="with --byom: keep tabs 1-4 live on the GPU too (one window for both; tab 5 then "
+                             "fits models up to ~3B, and the 16-bit Phi-3.5 steps aside while a job runs)")
     parser.add_argument("--byom-pipeline", choices=("real", "fake"), default="real",
                         help="real = the fast-repair pipeline; fake = a stand-in that needs no GPU")
     parser.add_argument("--byom-replay", type=Path, help="play back a recorded run's folder (presentation backup)")
@@ -1044,13 +1135,15 @@ def main() -> None:
     print(f"{len(data.examples)} example questions, {len(data.counter_items)} test questions, "
           f"{len(data.trials)} search trials")
     byom = ByomSetup.from_args(args)
-    if args.offline or args.byom:
+    if args.offline or (args.byom and not args.live):
         backend = SavedBackend(data.runs, list(data.patch.modules), repairs=data.saved_repairs)
         if args.byom:
             backend.mode_label = ("Bring-your-own-model mode · the GPU is kept for your model · "
                                   "tabs 1-4 show saved results")
     else:
-        backend = LiveBackend(load_original=not args.no_original, cache_dir=args.cache_dir)
+        saved_original = {r.question_id: r.predicted_index for r in data.runs["original"]}
+        backend = LiveBackend(load_original=not args.no_original, cache_dir=args.cache_dir,
+                              saved_original=saved_original)
         with timed("apply the main repair"):
             backend.set_restored(list(data.patch.modules))  # open with the search's repair applied
         with timed("self-check against the saved runs"):
@@ -1060,6 +1153,11 @@ def main() -> None:
                 backend.mode_label += " · ⚠ no example question reproduces on these models"
         if backend.model_source == "saved copy" and "differs" in backend.mode_label:
             print(f"The saved 3-bit model may be stale: delete {args.cache_dir} and launch again.")
+        if byom.runner is not None:
+            backend.mode_label += " · tab 5 shares this GPU (models up to ~3B)"
+            job = byom.runner.current()
+            if job is not None and byom.runner.is_running(job):  # restarted while a job runs
+                make_room_for_job(backend)
     print(f"[start-up] ready in {time.perf_counter() - started:.0f} s")
 
     app, theme = build_app(backend, data, byom)
