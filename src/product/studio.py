@@ -570,7 +570,7 @@ def byom_view(runner: JobRunner) -> tuple:
                  "llama-quantize model-f16.gguf model-Q3_K_M.gguf Q3_K_M")
         return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report), None, llama)
     try:
-        lines = llamacpp_lines(json.loads(patch_path.read_text(encoding="utf-8")))
+        lines = llamacpp_lines(json.loads(patch_path.read_text(encoding="utf-8")), report.get("gguf_names"))
         llama = "llama-quantize \\\n  " + " \\\n  ".join(lines) + " \\\n  model-f16.gguf model-Q3_K_M-fairgate.gguf Q3_K_M"
     except (OSError, ValueError, json.JSONDecodeError) as error:
         llama = f"# The llama.cpp settings couldn't be written for this model ({error}); patch.json still applies."

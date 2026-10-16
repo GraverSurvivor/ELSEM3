@@ -179,8 +179,12 @@ def test_llamacpp_settings_for_each_architecture():
                                    '--tensor-type "blk\\.2\\.ffn_up=q8_0"', '--tensor-type "blk\\.3\\.ffn_down=q8_0"']
     qwen = {"nbits": 8, "modules": ["model.layers.20.self_attn.v_proj", "model.layers.4.mlp.gate_proj"]}
     assert llamacpp_lines(qwen) == ['--tensor-type "blk\\.20\\.attn_v=q8_0"', '--tensor-type "blk\\.4\\.ffn_gate=q8_0"']
-    with pytest.raises(ValueError):
-        llamacpp_lines({"nbits": 8, "modules": ["model.layers.1.mlp.mystery_proj"]})
+    mystery = llamacpp_lines({"nbits": 8, "modules": ["model.layers.1.mlp.mystery_proj"]})
+    assert mystery == ["# llama.cpp has no tensor name for: layer 1 mlp.mystery_proj (patch.json still restores them)"]
+    gpt2 = {"nbits": 8, "modules": ["transformer.h.3.attn.c_attn", "transformer.h.0.mlp.c_proj"]}
+    names = {"attn.c_attn": "attn_qkv", "mlp.c_proj": "ffn_down"}  # what the adapter writes in the report
+    assert llamacpp_lines(gpt2, names) == ['--tensor-type "blk\.3\.attn_qkv=q8_0"',
+                                           '--tensor-type "blk\.0\.ffn_down=q8_0"']
     with pytest.raises(ValueError):
         llamacpp_lines({"nbits": 7, "modules": []})
 

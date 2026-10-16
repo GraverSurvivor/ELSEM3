@@ -46,7 +46,9 @@ def load_model(
     if dtype not in DTYPES:
         raise ValueError(f"Unknown dtype {dtype!r}; expected one of {list(DTYPES)}")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    from src.eval.option_scorer import prepare_tokenizer
+
+    tokenizer = prepare_tokenizer(AutoTokenizer.from_pretrained(model_id))
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         torch_dtype=DTYPES[dtype],

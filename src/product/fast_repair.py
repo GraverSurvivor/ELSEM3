@@ -131,17 +131,42 @@ class PrecisionError(RuntimeError):
     """A model whose scores overflow at fp16 (NaN): its answers would be meaningless."""
 
 
+class TooBigError(RuntimeError):
+    """The model can't be compressed and scanned with this machine's memory; said before downloading."""
+
+
+def memory_plan(n_params: int, n_linear: int) -> dict:
+    """Bytes the pipeline needs for a model of `n_params` weights, `n_linear` of them in linear
+    layers (the ones HQQ compresses):
+    * system memory while compressing: the 16-bit model is loaded on the CPU first (2 bytes a weight);
+    * GPU memory while scanning: the 3-bit model (HQQ's real cost is ~3.75 bits a weight with its
+      scales, ~0.5 bytes with packing; the rest stays 16-bit) plus working room for the questions.
+    The 16-bit original also goes to the GPU once, to answer the questions; if it doesn't fit it
+    spills to system memory (slower, still exact) and is freed before the scan."""
+    compressed = 0.5 * n_linear + 2 * (n_params - n_linear)
+    return {"ram": 2.2 * n_params + 0.5e9, "gpu": 1.1 * compressed + 0.8e9, "original": 2.2 * n_params + 0.5e9}
+
+
+def format_params(n: int) -> str:
+    return f"{n / 1e9:.1f}B parameters" if n >= 1e9 else f"{n / 1e6:.0f}M parameters"
+
+
 def plain_error(error: BaseException) -> str:
     """A one-line reason a person can act on."""
     text = f"{type(error).__name__}: {error}".strip()
     lowered = text.lower()
     if "out of memory" in lowered:
-        return "The GPU ran out of memory: the model is probably too big for this GPU (about 4B parameters fit a T4)."
+        return ("The GPU ran out of memory: the model is probably too big for this GPU (about 4B parameters fit "
+                "a free T4 on its own, about 3B next to the live Phi-3.5 demo).")
     if "gated" in lowered or "401" in lowered or "403" in lowered:
-        return "This model needs a Hugging Face login or licence acceptance; it can't be downloaded anonymously."
+        return ("This model needs a Hugging Face login: accept its licence on its Hugging Face page, then add "
+                "your Hugging Face token as the HF_TOKEN secret (Colab) or environment variable, and run again.")
+    if "trust_remote_code" in lowered:
+        return ("This model runs its own code from its repository (trust_remote_code), which FairGate doesn't "
+                "execute for safety. Models built into the transformers library work.")
     if "404" in lowered or ("not found" in lowered and "repository" in lowered):
         return "No model with this name exists on Hugging Face."
-    if "no gpu found" in lowered or isinstance(error, PrecisionError):
+    if "no gpu found" in lowered or isinstance(error, (PrecisionError, TooBigError)):
         return str(error)
     if isinstance(error, KeyboardInterrupt):
         return "Stopped."
@@ -167,28 +192,64 @@ class Backend(Protocol):
 class TorchBackend:
     """The real models: the original at fp16 and the HQQ 3-bit copy whose parts the scan swaps."""
 
-    def __init__(self, nbits: int = 8, batch_size: int = 16):
+    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda"):
         import torch
 
-        if not torch.cuda.is_available():
+        if device == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("No GPU found. Fast Repair needs a CUDA GPU (e.g. a Colab T4).")
-        self.device, self.nbits, self.batch_size = "cuda", nbits, batch_size
-        self.original = self.compressed = self.tokenizer = self.registry = None
+        self.device, self.nbits, self.batch_size = device, nbits, batch_size
+        self.original = self.compressed = self.tokenizer = self.registry = self._adapter = None
+
+    def preflight(self, model_id: str) -> str:
+        """Before downloading anything but config.json: does the model fit this machine? Counts the
+        model's weights on the meta device (no memory) and compares memory_plan with what is free
+        now (so a GPU shared with the live Phi-3.5 demo is judged by what is left of it)."""
+        import psutil
+        import torch
+        from transformers import AutoConfig
+
+        from src.models.adapter import meta_model
+
+        config = AutoConfig.from_pretrained(model_id)
+        model = meta_model(config)
+        n_params = sum(p.numel() for p in {id(p): p for p in model.parameters()}.values())
+        n_linear = sum(m.weight.numel() for m in model.modules()
+                       if type(m).__name__ in ("Linear", "Conv1D") and getattr(m, "weight", None) is not None)
+        plan = memory_plan(n_params, n_linear)
+        free_ram = psutil.virtual_memory().available
+        free_gpu = torch.cuda.mem_get_info()[0] if self.device == "cuda" else free_ram
+        fits = plan["ram"] <= free_ram and plan["gpu"] <= free_gpu
+        size = format_params(n_params)
+        if not fits:
+            largest = min((free_ram - 0.5e9) / 2.2, (free_gpu - 0.8e9) / 0.66) / 1e9
+            raise TooBigError(
+                f"{model_id} has {size}. Compressing and scanning it needs about {plan['ram'] / 1e9:.0f} GB of "
+                f"system memory and {plan['gpu'] / 1e9:.0f} GB of GPU memory; this machine has "
+                f"{free_ram / 1e9:.0f} GB and {free_gpu / 1e9:.0f} GB free. Models up to about "
+                f"{max(largest, 0):.1f}B parameters fit here; a bigger GPU (L4, A100) runs this one.")
+        spill = "" if plan["original"] <= free_gpu else " (the original will partly run from system memory: slower)"
+        return size + spill
 
     def download(self, model_id: str) -> str:
         from huggingface_hub import snapshot_download
 
-        path = Path(snapshot_download(model_id, allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt",
-                                                                 "tokenizer*", "*.tiktoken"]))
-        size = sum(f.stat().st_size for f in path.rglob("*.safetensors")) / 1e9
+        if Path(model_id).is_dir():  # a local folder (tests, or a model saved on Drive)
+            path = Path(model_id)
+        else:
+            files = ["*.json", "*.model", "*.txt", "tokenizer*", "*.tiktoken"]
+            path = Path(snapshot_download(model_id, allow_patterns=files + ["*.safetensors"]))
+            if not any(path.rglob("*.safetensors")):  # an older checkpoint: weights only as .bin
+                path = Path(snapshot_download(model_id, allow_patterns=files + ["*.bin"]))
+        size = sum(f.stat().st_size for pattern in ("*.safetensors", "*.bin") for f in path.rglob(pattern)) / 1e9
         if size == 0:
-            raise RuntimeError("The model has no .safetensors weights; only safetensors checkpoints are supported.")
+            raise RuntimeError("The model has no weights in safetensors or pytorch_model.bin form.")
         return f"{size:.1f} GB of weights"
 
     def adapter(self, model_id: str):
         from src.models.adapter import adapter_for_id
 
-        return adapter_for_id(model_id)
+        self._adapter = adapter_for_id(model_id)
+        return self._adapter
 
     def load_compressed(self, model_id: str) -> str:
         import gc
@@ -200,7 +261,11 @@ class TorchBackend:
         from src.quant.weight_source import CheckpointWeightSource
 
         self.compressed, self.tokenizer = load_hqq_3bit_model(device=self.device, dtype="fp16", model_id=model_id)
-        self.registry = SwapRegistry(self.compressed, CheckpointWeightSource(model_id), device=self.device)
+        adapter = self._adapter or self.adapter(model_id)
+        # GPT-2-style parts are stored (in, out) in the checkpoint; the 3-bit model holds them as nn.Linear.
+        transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
+        weights = CheckpointWeightSource(model_id, transposed=lambda path: path in transposed_paths)
+        self.registry = SwapRegistry(self.compressed, weights, device=self.device)
         gc.collect()
         torch.cuda.empty_cache()
         return "HQQ 3-bit, group 64, fp16 compute"
@@ -208,7 +273,8 @@ class TorchBackend:
     def load_original(self, model_id: str) -> str:
         from src.eval.model_loader import load_model
 
-        self.original, _ = load_model("fp16", model_id=model_id)
+        self.original, _ = load_model("fp16", model_id=model_id,
+                                      device_map="auto" if self.device == "cuda" else self.device)
         return "original model loaded at fp16"
 
     def release_original(self) -> None:
@@ -248,7 +314,7 @@ class TorchBackend:
     def gpu_name(self) -> str:
         import torch
 
-        return torch.cuda.get_device_name(0)
+        return torch.cuda.get_device_name(0) if self.device == "cuda" else self.device
 
 
 # --- questions ---------------------------------------------------------------------------------------
@@ -434,9 +500,11 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     with events.stage_of("download", message="fetching the model"):
         if backend is None:  # inside the stage, so "no GPU" is reported like any other failure
             backend = TorchBackend(nbits=config.nbits, batch_size=config.batch_size)
-        adapter = backend.adapter(config.model_id)  # fails fast on an unsupported architecture
+        adapter = backend.adapter(config.model_id)  # fails fast on a model that isn't a text generator
+        size = backend.preflight(config.model_id) if hasattr(backend, "preflight") else ""  # before any download
         message = backend.download(config.model_id)
-        events.done(message=f"{message} · {adapter.arch}, {adapter.n_layers} layers, {len(adapter.candidates())} parts")
+        events.done(message=f"{message} · {adapter.arch}, {adapter.n_layers} layers, {len(adapter.candidates())} parts"
+                    + (f" · {size}" if size else ""))
 
     with events.stage_of("quantize", message="HQQ 3-bit"):
         events.done(message=backend.load_compressed(config.model_id))
@@ -603,6 +671,7 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         "recovery": recovery, "kept": list(kept), "memory_mb": round(backend.memory_mb(), 1) if kept else 0.0,
         "gate": gate["verdict"], "gate_failures": gate["failures"], "patch": "patch.json" if kept else None,
         "n_layers": adapter.n_layers, "part_types": list(adapter.part_types),
+        "layers_path": adapter.layers_path, "gguf_names": dict(adapter.gguf_names),
         "checked_on": {"ambiguous": len(held_ambig), "stated_answer": len(held_disambig)},
         "scan": scan_block(config, adapter, scan, cfg, search),
         "outcome": outcome, "outcome_reason": reason or ("" if kept else "No part was restored."),

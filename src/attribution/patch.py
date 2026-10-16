@@ -56,15 +56,29 @@ def module_layer(path: str) -> int:
     return int(path.split(".")[2])
 
 
+def split_layer_path(path: str) -> tuple[str, int, str]:
+    """Any model's decoder-layer path -> (where the layers live, layer, part):
+    'transformer.h.3.attn.c_attn' -> ('transformer.h', 3, 'attn.c_attn'). The layer is the first
+    all-digit name in the path; Phi-3.5's 'model.layers.13.self_attn.qkv_proj' splits as before."""
+    parts = path.split(".")
+    for i, name in enumerate(parts):
+        if name.isdigit() and 0 < i < len(parts) - 1:
+            return ".".join(parts[:i]), int(name), ".".join(parts[i + 1:])
+    raise ValueError(f"not a decoder-layer module path: {path!r}")
+
+
 def module_params(path: str, part_shapes: dict | None = None, n_layers: int | None = None) -> int:
     """Weights in one candidate module: from Phi-3.5-mini's fixed shapes by default, or from the
-    shapes a non-Phi patch carries (written by src/models/adapter.py)."""
+    shapes a non-Phi patch carries (written by src/models/adapter.py; any model's layer path)."""
     shapes = MODULE_SHAPES if part_shapes is None else part_shapes
     layers = N_LAYERS if n_layers is None else n_layers
-    suffix = module_suffix(path)
+    if part_shapes is None:
+        suffix, layer = module_suffix(path), module_layer(path)
+    else:
+        _, layer, suffix = split_layer_path(path)
     if suffix not in shapes:
         raise ValueError(f"{path!r} is not one of the candidate module types ({', '.join(shapes)})")
-    if not 0 <= module_layer(path) < layers:
+    if not 0 <= layer < layers:
         raise ValueError(f"{path!r} names a layer outside 0-{layers - 1}")
     out_features, in_features = shapes[suffix]
     return out_features * in_features

@@ -178,15 +178,15 @@ def test_a_failure_is_reported_in_plain_words_at_its_stage(tmp_path, stage, word
     assert not (tmp_path / "job" / "report.json").exists()
 
 
-def test_an_unsupported_architecture_fails_at_the_first_stage(tmp_path):
-    class Unsupported(FakeBackend):
+def test_a_model_that_isnt_a_text_generator_fails_at_the_first_stage(tmp_path):
+    class Encoder(FakeBackend):
         def adapter(self, model_id):
-            return adapter_for({"model_type": "gpt2"})
+            return adapter_for({"model_type": "bert"})
 
     with pytest.raises(ValueError):
-        _run(tmp_path, backend=Unsupported())
+        _run(tmp_path, backend=Encoder())
     last = _events(tmp_path / "job")[-1]
-    assert last["stage"] == "download" and "supported" in last["message"]
+    assert last["stage"] == "download" and "text-generation" in last["message"]
 
 
 def test_the_studio_command_line_matches(monkeypatch, tmp_path):

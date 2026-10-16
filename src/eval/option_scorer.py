@@ -22,15 +22,31 @@ LABELS = ("A", "B", "C")
 DEFAULT_BATCH_SIZE = 8
 
 
+def has_chat_template(tokenizer: PreTrainedTokenizerBase) -> bool:
+    return bool(getattr(tokenizer, "chat_template", None))
+
+
 def format_prompt(item: BBQItem, tokenizer: PreTrainedTokenizerBase) -> str:
-    """Builds the multiple-choice prompt via the model's own chat template."""
+    """Builds the multiple-choice prompt via the model's own chat template. A model without one (a
+    base, non-chat model) gets the same text as a plain completion ending in "Answer:"."""
     content = (
         f"{item.context}\n\n{item.question}\n\n"
         f"A) {item.options[0]}\nB) {item.options[1]}\nC) {item.options[2]}\n\n"
         "Answer with only the letter of the correct option."
     )
+    if not has_chat_template(tokenizer):
+        return content + "\nAnswer:"
     messages = [{"role": "user", "content": content}]
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
+def prepare_tokenizer(tokenizer: PreTrainedTokenizerBase) -> PreTrainedTokenizerBase:
+    """Batched scoring pads; a tokenizer without a pad token (Llama, GPT-2, ...) pads with its
+    end-of-text token. Left padding keeps every row's last real token at position -1."""
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token or tokenizer.unk_token
+    tokenizer.padding_side = "left"
+    return tokenizer
 
 
 def _label_token_ids(prompt_text: str, tokenizer: PreTrainedTokenizerBase) -> list[int]:
@@ -47,12 +63,16 @@ def _label_token_ids(prompt_text: str, tokenizer: PreTrainedTokenizerBase) -> li
     """
     prompt_ids = tokenizer.encode(prompt_text, add_special_tokens=True)
     label_ids = []
-    for label in LABELS:
+    # After a chat template the answer starts a new turn ("A"); after a plain "Answer:" it follows a
+    # space (" A"), which is how such models write it.
+    for label in (LABELS if has_chat_template(tokenizer) else tuple(" " + label for label in LABELS)):
         full_ids = tokenizer.encode(prompt_text + label, add_special_tokens=True)
         new_tokens = full_ids[len(prompt_ids) :]
         if not new_tokens:
             raise ValueError(f"Label {label!r} added no new tokens in this prompt's context")
         label_ids.append(new_tokens[0])
+    if len(set(label_ids)) != len(label_ids):
+        raise ValueError("this tokenizer gives two answer letters the same token, so A/B/C can't be told apart")
     return label_ids
 
 
