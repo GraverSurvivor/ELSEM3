@@ -294,3 +294,25 @@ def test_the_stand_in_scan_matches_the_real_pipeline(mode):
     assert scan_message(mode, 252, 0, 600).startswith(steps[0][1] + ": 0 of 252 · about 10 min left")
     late = scan_message(mode, 252, sum(size for size, _ in steps) - 1, 30)
     assert ", round 5 of 5: 4 parts kept so far · under a minute left" in late
+
+
+def test_a_run_without_a_repair_says_why_and_shows_no_repaired_card():
+    """Regression (Qwen2.5-0.5B on Colab, Oct 2026): the screen showed a "repaired" card identical to the
+    compressed one, "Fairness recovered: -0.0%", a PASS, an empty grid and a broken Ship section."""
+    from src.product.byom import kept_grid_html, report_outcome, results_html
+
+    card = {"usr": 0.242, "srs": 0.388, "false_unknown": 0.282, "accuracy": 0.351}
+    report = {"model_id": "Qwen/Qwen2.5-0.5B-Instruct", "arch": "qwen2", "mode": "fast", "kept": [], "gate": "N/A",
+              "gate_failures": [], "original": {"usr": 0.008, "srs": 0.495, "false_unknown": 0.0, "accuracy": 0.558},
+              "compressed": card, "repaired": card, "recovery": {"point": None, "lower": None, "upper": None},
+              "safe": 9, "flipped": 1, "outcome": "not_applicable",
+              "outcome_reason": "The original model says \"can't tell\" on only 9 of 1,000 questions...",
+              "other_damage": ["Compression gets fewer questions right when the story states the answer: 35.1%..."],
+              "n_layers": 24, "part_types": ["self_attn.q_proj"]}
+    page = results_html(report)
+    assert "This model can&#x27;t be checked this way" in page and "No repair made" in page
+    assert "Repaired model" not in page and "-0.0%" not in page and "PASS" not in page
+    assert "not applicable" in page and "Other damage" in page and "Compression flipped" not in page
+    assert "No parts were kept" in kept_grid_html(report)
+    old = {k: v for k, v in report.items() if k not in ("outcome", "outcome_reason")}
+    assert report_outcome(old)[0] == "no_damage"  # reports written before the field still read

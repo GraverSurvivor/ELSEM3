@@ -102,3 +102,35 @@ def test_the_command_line_offers_one_window_for_both(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         studio.main()
     assert "--live" in capsys.readouterr().out
+
+
+def test_ship_says_there_is_nothing_to_ship_when_nothing_was_restored(tmp_path, monkeypatch):
+    """Regression: with no patch.json the Ship section showed an empty file box and a raw
+    "not available: [Errno 2] ..." error."""
+    import json
+
+    from src.product.studio import byom_view
+
+    report = {"model_id": "Qwen/Qwen2.5-0.5B-Instruct", "arch": "qwen2", "mode": "fast", "kept": [], "gate": "N/A",
+              "gate_failures": [], "original": {}, "compressed": {}, "repaired": {},
+              "recovery": {"point": None, "lower": None, "upper": None}, "outcome": "not_applicable",
+              "outcome_reason": "x", "other_damage": []}
+    (tmp_path / "report.json").write_text(json.dumps(report), encoding="utf-8")
+
+    class Done:
+        def current(self):
+            return tmp_path
+
+        def state(self, job_dir):
+            return {"status": "done", "stages": [], "elapsed": 0, "now": None, "current": None}
+
+        def job_info(self, job_dir):
+            return {"model_id": report["model_id"], "mode": "fast"}
+
+        def log_tail(self, job_dir):
+            return ""
+
+    monkeypatch.setattr(studio, "progress_html", lambda state, info=None: "")  # the stages aren't checked here
+    _, _, _, results, grid, patch_file, llama = byom_view(Done())
+    assert patch_file is None and "Errno" not in llama and llama.startswith("# Nothing to ship")
+    assert "No repair made" in results and "No parts were kept" in grid

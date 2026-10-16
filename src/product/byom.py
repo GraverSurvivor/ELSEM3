@@ -299,12 +299,36 @@ def _pct(value) -> str:
     return "–" if value is None else f"{100 * float(value):.1f}%"
 
 
+OUTCOME_TITLES = {
+    "repaired": "Repaired",
+    "no_gain": "Damage found, but no part was worth restoring",
+    "no_damage": "No fairness damage to repair",
+    "not_applicable": "This model can't be checked this way",
+}
+
+
+def report_outcome(report: dict) -> tuple[str, str]:
+    """(outcome, reason) from the report; worked out for reports written before the field existed."""
+    outcome = report.get("outcome")
+    if outcome in OUTCOME_TITLES:
+        return outcome, str(report.get("outcome_reason") or "")
+    if report.get("kept"):
+        return "repaired", ""
+    return "no_damage", "No part was restored, so the model stays as compressed."
+
+
 def results_html(report: dict) -> str:
-    """Three before/after cards, then the recovery, the gate verdict and the facts of the run."""
+    """What the run concluded, the before/after cards, the recovery, the gate verdict and the facts.
+    A run that restored nothing shows no "repaired" card: it would only repeat the compressed one."""
+    outcome, reason = report_outcome(report)
     cards = []
     for key, title, sub in (("original", "Original model", "full precision"),
                             ("compressed", "Compressed model", "3-bit"),
                             ("repaired", "Repaired model", f"3-bit + {len(report['kept'])} parts restored")):
+        if key == "repaired" and not report.get("kept"):
+            cards.append('<div class="by-card by-card-none"><div class="by-card-title">No repair made</div>'
+                         f'<div class="by-card-sub">nothing was restored</div><p>{html.escape(reason)}</p></div>')
+            continue
         numbers = report.get(key) or {}
         rows = "".join(f'<div class="by-metric"><span>{html.escape(label)}</span><b>{_pct(numbers.get(metric))}</b></div>'
                        for metric, label in METRICS)
@@ -324,7 +348,7 @@ def results_html(report: dict) -> str:
     if report.get("gpu"):
         facts.append(html.escape(str(report["gpu"])))
     damage = ""
-    if report.get("flipped") is not None and report.get("safe"):
+    if outcome != "not_applicable" and report.get("flipped") is not None and report.get("safe"):
         damage = (f"<p>Compression flipped <b>{int(report['flipped']):,}</b> of the "
                   f"{int(report['safe']):,} questions the original answered fairly to the stereotype.</p>")
     banner = ""
@@ -334,14 +358,27 @@ def results_html(report: dict) -> str:
     elif report.get("replayed_from"):
         banner = (f'<div class="by-banner">A recorded real run ({html.escape(str(report["replayed_from"]))}), '
                   'replayed for the demo.</div>')
+    headline = (f'<div class="by-outcome by-outcome-{outcome}"><b>{html.escape(OUTCOME_TITLES[outcome])}</b>'
+                + (f'<p>{html.escape(reason)}</p>' if reason and outcome != "repaired" else "") + "</div>")
+    if recovery.get("point") is not None:
+        recovered = (f'<div class="by-recovery">Fairness recovered: <b>{_pct(recovery.get("point"))}</b> '
+                     f'<span>(95% interval {_pct(recovery.get("lower"))} to {_pct(recovery.get("upper"))})</span></div>')
+    else:
+        recovered = ('<div class="by-recovery">Fairness recovered: <b>not applicable</b> <span>(compression didn\'t '
+                     'reduce the fair answers, so there was nothing to recover)</span></div>')
+    if gate == "N/A":
+        verdict = ('<div class="by-gate by-gate-na">FairGate verdict: <b>not applicable</b> '
+                   '<span>(no fair answers to compare)</span></div>')
+    else:
+        verdict = f'<div class="by-gate by-gate-{gate.lower()}">FairGate verdict: <b>{html.escape(gate)}</b></div>'
+    other = "".join(f"<li>{html.escape(str(d))}</li>" for d in report.get("other_damage") or [])
+    other_html = (f'<div class="by-other"><b>Other damage the fairness verdict doesn\'t cover</b><ul>{other}</ul></div>'
+                  if other else "")
     return (
-        f'{banner}<div class="by-cards">{"".join(cards)}</div>{damage}'
-        f'<div class="by-summary"><div class="by-recovery">Fairness recovered: '
-        f'<b>{_pct(recovery.get("point"))}</b> <span>(95% interval {_pct(recovery.get("lower"))} to '
-        f'{_pct(recovery.get("upper"))})</span></div>'
-        f'<div class="by-gate by-gate-{gate.lower()}">FairGate verdict: <b>{html.escape(gate)}</b></div>'
+        f'{banner}{headline}<div class="by-cards">{"".join(cards)}</div>{damage}'
+        f'<div class="by-summary">{recovered}{verdict}'
         + (f'<ul class="by-reasons">{reasons}</ul>' if reasons else "")
-        + f'<div class="by-facts">{" · ".join(facts)}</div></div>'
+        + f'{other_html}<div class="by-facts">{" · ".join(facts)}</div></div>'
     )
 
 
@@ -380,6 +417,8 @@ def grid_spec(report: dict) -> tuple[list[str], int, str]:
 
 def kept_grid_html(report: dict) -> str:
     """Part types (rows) x layers (columns), the kept parts marked. Works for any model size."""
+    if not report.get("kept"):
+        return "<p>No parts were kept at 8-bit: the model stays as compressed.</p>"
     kept = {parse_module(p) for p in report.get("kept") or []}
     parts, n_layers, note = grid_spec(report)
     if not parts or n_layers <= 0:

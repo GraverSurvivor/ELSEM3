@@ -82,6 +82,14 @@ python -m src.product.fast_repair --model <HF id> --mode fast|exact --questions 
 * The three cards and the recovery are measured on held-out questions the scan never used.
 * `recovery` values are `null` when compression changed nothing to recover.
 * `kept` is `[]` and `patch` is `null` when compression flipped too few answers to repair.
+* `outcome`: `"repaired"`, `"no_gain"` (damage found, no part worth keeping), `"no_damage"` (fewer than 10
+  flipped search questions), or `"not_applicable"` (the original says "can't tell" on under 10% of
+  ambiguous questions, or fewer than 50: no fair behaviour to break). `outcome_reason` says it in plain
+  words. `not_applicable` runs no scan and has `gate: "N/A"`.
+* `recovery` is computed only when compression cut "can't tell" answers by at least 2 points.
+* `other_damage`: plain sentences for accuracy lost or "can't tell" added on stated-answer questions
+  (5 points or more), for the compressed model and, if repaired, the repaired one. The fairness verdict
+  doesn't cover these, so the Studio shows them next to it.
 * `n_layers` and `part_types` (display order) were added for the Studio grid (Person 3's request).
 * The scan stage's `done`/`total` count questions asked against the plan, so the bar moves with time;
   its `started` message carries the estimate ("252 parts · about 25 min") and every progress message

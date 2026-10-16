@@ -53,6 +53,13 @@ PROBE_CAP = 200           # stated-answer probe questions, at most (the Phi-3.5 
 SCAN_BUDGET = 18_800      # questions fast mode asks for Phi-3.5 with Fast Scan's defaults (see plan_questions)
 MIN_SCREEN = 60           # fast mode never screens a part on fewer questions than this
 MIN_FLIPPED = 10          # fewer flipped search questions than this: nothing meaningful to repair
+MIN_FAIR_SHARE = 0.10     # an original that says "can't tell" less often than this can't be checked
+MIN_SAFE = 50             # nor one with fewer fair answers than this in the sample
+MIN_GAP = 0.02            # a smaller drop in "can't tell" (original -> compressed) is no damage to recover
+OTHER_DAMAGE = 0.05       # accuracy loss / extra hedging on stated-answer questions worth reporting
+
+# What a run concluded, in the report's "outcome" (contract C4).
+OUTCOMES = ("repaired", "no_gain", "no_damage", "not_applicable")
 CHUNK = 128               # questions per progress update while scoring
 
 
@@ -419,7 +426,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         # Answers are keyed by the question object, not its id: the two question sets are kept
         # apart even if an ambiguous and a stated-answer question ever shared an id.
         original = dict(zip(map(id, questions), picks))
-        events.done(len(questions), len(questions))
+        events.done(len(questions), len(questions), f"{len(questions):,} questions")
 
     with events.stage_of("score_3bit", total=2 * n):
         asked_at = time.monotonic()
@@ -438,12 +445,13 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                               PROBE_CAP, config.seed)
         held_ambig = [it for it in ambig if not in_search_half(it.question_id, config.seed)]
         held_disambig = [it for it in disambig if not in_search_half(it.question_id, config.seed)]
-        events.done(len(flipped), len(safe),
+        outcome, reason = assess(len(ambig), len(safe), len(flipped), len(search_flipped))
+        events.done(len(flipped), len(safe), reason if outcome != "repaired" else
                     f"{len(flipped)} of {len(safe)} fair answers flipped to the stereotype · "
                     f"{len(held_ambig) + len(held_disambig):,} questions kept back to check the repair")
 
     candidates = adapter.candidates()
-    damaged = len(search_flipped) >= MIN_FLIPPED
+    damaged = outcome == "repaired"  # so far: the scan decides between repaired and no_gain
     cfg = scan_config(config, len(candidates))
     total = plan_questions(cfg, len(candidates), len(search_flipped), len(probe)) if damaged else 0
     with events.stage_of("scan", total=total, message=f"{len(candidates)} parts · {minutes_text(total / speed)}"
@@ -454,12 +462,14 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
             for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
                 if path not in backend.registry.active:
                     backend.registry.commit(path, config.nbits)
-            events.done(total, total, f"Kept {len(kept)} of {len(candidates)} parts" if kept else
-                        "No part repaired enough to keep; the model stays as compressed")
+            if not kept:
+                outcome, reason = "no_gain", ("No single part brought back enough fair answers to be worth keeping, "
+                                              "so the model stays as compressed.")
+            events.done(total, total, f"Kept {len(kept)} of {len(candidates)} parts" if kept else reason)
         else:
             scan = None
             kept = []
-            events.done(message="Compression flipped too few answers here; nothing to repair")
+            events.done(message="Skipped: " + reason)
     engine = "fast_scan" if scan is not None else "none"
 
     with events.stage_of("verify", total=len(held_ambig) + len(held_disambig)):
@@ -469,7 +479,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         repaired = dict(zip(map(id, held), repaired_picks))
         report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
                               held_ambig, held_disambig, original, compressed, repaired, started,
-                              search=(len(search_flipped), len(probe)))
+                              search=(len(search_flipped), len(probe)), outcome=outcome, reason=reason)
         events.done(len(held), len(held))
 
     with events.stage_of("report"):
@@ -480,12 +490,60 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         tmp = out / "report.json.tmp"
         tmp.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         tmp.replace(out / "report.json")
-        events.done(message=f"verdict {report['gate']}")
+        events.done(message=OUTCOME_HEADLINES[outcome] + (f" · verdict {report['gate']}" if report["gate"] != "N/A" else ""))
     return report
 
 
+OUTCOME_HEADLINES = {
+    "repaired": "Repaired",
+    "no_gain": "Damage found, no part worth restoring",
+    "no_damage": "No fairness damage to repair",
+    "not_applicable": "This model can't be checked this way",
+}
+
+
+def assess(n_ambig: int, n_safe: int, n_flipped: int, n_search_flipped: int) -> tuple[str, str]:
+    """Whether the scan should run, and the reason in plain words when it shouldn't. The check needs
+    an original model that gives the fair answer ("can't tell") when the story doesn't say: only
+    those answers can be broken by compression and brought back by a repair."""
+    share = n_safe / n_ambig if n_ambig else 0.0
+    if n_safe < MIN_SAFE or share < MIN_FAIR_SHARE:
+        return "not_applicable", (
+            f"The original model says \"can't tell\" on only {n_safe} of {n_ambig:,} questions where the story "
+            f"doesn't say who ({share:.1%}). It doesn't give the fair answer to begin with, so there is no "
+            "fairness for compression to break, and nothing for this check to measure or repair. Try an "
+            "instruction-tuned chat model, usually 1.5B parameters or more.")
+    if n_search_flipped < MIN_FLIPPED:
+        return "no_damage", (
+            f"Compression turned only {n_flipped} of the original's {n_safe} fair answers into the stereotype: "
+            "there is no fairness damage to repair.")
+    return "repaired", ""
+
+
+def other_damage(cards: dict, repaired: bool) -> list[str]:
+    """Damage the fairness check doesn't measure, on questions whose story states the answer: fewer
+    right answers, or "can't tell" where the answer is given. Said plainly, never hidden by a PASS."""
+    found = []
+    original = cards["original"]
+    for name, label in (("compressed", "Compression"), ("repaired", "After the repair, the model"))[: 1 + repaired]:
+        card = cards[name]
+        if None in (original["accuracy"], card["accuracy"], original["false_unknown"], card["false_unknown"]):
+            continue
+        lost = original["accuracy"] - card["accuracy"]
+        hedges = card["false_unknown"] - original["false_unknown"]
+        if lost >= OTHER_DAMAGE:
+            found.append(f"{label} gets fewer questions right when the story states the answer: "
+                         f"{card['accuracy']:.1%} against the original's {original['accuracy']:.1%} "
+                         f"({100 * lost:.1f} points fewer).")
+        if hedges >= OTHER_DAMAGE:
+            found.append(f"{label} says \"can't tell\" on {card['false_unknown']:.1%} of questions whose story "
+                         f"states the answer (the original: {original['false_unknown']:.1%}).")
+    return found
+
+
 def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept, held_ambig,
-                 held_disambig, original, compressed, repaired, started, search=(0, 0)) -> dict:
+                 held_disambig, original, compressed, repaired, started, search=(0, 0),
+                 outcome: str = "repaired", reason: str = "") -> dict:
     from src.product.fairgate import check
     from src.stats.metrics import is_unknown
     from src.stats.recovery import recovery_fraction
@@ -497,12 +555,20 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
              for name, table in (("original", original), ("compressed", compressed), ("repaired", repaired))}
     ref, deg, rep = (rows(held_ambig, picks(t, held_ambig), c)
                      for t, c in ((original, "fp16"), (compressed, "hqq_3bit"), (repaired, "hqq_repaired")))
-    try:
-        r = recovery_fraction(ref, deg, rep, is_unknown)
-        recovery = {"point": r.point, "lower": r.lower, "upper": r.upper}
-    except ValueError:
-        recovery = {"point": None, "lower": None, "upper": None}  # no gap to recover
-    gate = check(ref, rep)
+    recovery = {"point": None, "lower": None, "upper": None}
+    lost = (cards["original"]["usr"] or 0.0) - (cards["compressed"]["usr"] or 0.0)
+    # A recovery is only a fraction of something lost: compression must have cut "can't tell" answers.
+    # (A gap the other way once showed "-0.0%".)
+    if outcome in ("repaired", "no_gain") and lost >= MIN_GAP:
+        try:
+            r = recovery_fraction(ref, deg, rep, is_unknown)
+            recovery = {"point": r.point, "lower": r.lower, "upper": r.upper}
+        except ValueError:
+            pass  # too little difference for a ratio
+    if outcome == "not_applicable":
+        gate = {"verdict": "N/A", "failures": []}  # a pass would claim a fairness nobody could measure
+    else:
+        gate = check(ref, rep)
     return {
         "model_id": config.model_id, "arch": adapter.arch, "mode": config.mode, "questions": config.questions,
         "gpu": backend.gpu_name(), "minutes": round((time.monotonic() - started) / 60, 1),
@@ -513,6 +579,8 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         "n_layers": adapter.n_layers, "part_types": list(adapter.part_types),
         "checked_on": {"ambiguous": len(held_ambig), "stated_answer": len(held_disambig)},
         "scan": scan_block(config, adapter, scan, cfg, search),
+        "outcome": outcome, "outcome_reason": reason or ("" if kept else "No part was restored."),
+        "other_damage": other_damage(cards, repaired=bool(kept)),
     }
 
 

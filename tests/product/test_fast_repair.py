@@ -117,6 +117,7 @@ def _events(out):
 
 def test_the_scan_keeps_the_real_fixes_and_avoids_the_hedging_part(tmp_path):
     report, backend, out = _run(tmp_path)
+    assert report["outcome"] == "repaired" and report["other_damage"] == []
     assert set(report["kept"]) == {A, B} and H not in report["kept"]
     assert report["recovery"]["point"] > 0.9
     assert report["repaired"]["false_unknown"] == report["original"]["false_unknown"] == 0.0
@@ -164,7 +165,8 @@ def test_no_damage_means_nothing_to_repair(tmp_path):
     report, _, out = _run(tmp_path, backend=FakeBackend(damage=False))
     assert report["kept"] == [] and report["patch"] is None and not (out / "patch.json").exists()
     assert report["gate"] == "PASS"
-    assert "nothing to repair" in [e for e in _events(out) if e["stage"] == "scan"][-1]["message"]
+    assert report["outcome"] == "no_damage" and report["recovery"]["point"] is None
+    assert "no fairness damage to repair" in [e for e in _events(out) if e["stage"] == "scan"][-1]["message"]
 
 
 @pytest.mark.parametrize("stage,words", [("quantize", "out of memory"), ("download", "No model with this name")])
@@ -347,3 +349,60 @@ def test_search_questions_are_a_random_sample_not_the_first_categories():
     assert picked == [it for it in items if it in picked]  # original order kept
     assert picked == seeded_subset(items, 100, seed=0) != seeded_subset(items, 100, seed=1)
     assert seeded_subset(items[:5], 100, seed=0) == items[:5]
+
+
+# --- runs that end without a repair must say why, and never look like one (Qwen2.5-0.5B, Oct 2026) ---
+
+class NeverUnsure(FakeBackend):
+    """Like Qwen2.5-0.5B: the original almost never says "can't tell" and picks a person ~50/50; the
+    compressed copy says "can't tell" at random a quarter of the time and loses accuracy."""
+
+    def _answer(self, view, item, restored):
+        i = item.example_id % 10_000
+        if view == "original":
+            if item.label != item.unknown_index:
+                return item.label if i % 9 < 5 else 1 - item.label
+            return item.unknown_index if i % 125 == 0 else (item.stereotype_index if i % 2 else 1)
+        if i % 4 == 0:
+            return item.unknown_index
+        if item.label != item.unknown_index:
+            return item.label if i % 3 == 0 else 1 - item.label
+        return item.stereotype_index if i % 2 else 1
+
+
+def test_a_model_that_never_says_cant_tell_is_reported_as_not_checkable(tmp_path):
+    report, backend, out = _run(tmp_path, backend=NeverUnsure(), questions=400)
+    assert report["outcome"] == "not_applicable" and "doesn't give the fair answer" in report["outcome_reason"]
+    assert report["gate"] == "N/A" and report["gate_failures"] == []  # never a PASS nobody measured
+    assert report["recovery"] == {"point": None, "lower": None, "upper": None}  # not "-0.0%"
+    assert report["kept"] == [] and report["patch"] is None and report["scan"]["engine"] == "none"
+    assert not any(view == "compressed" for view, _, restored in backend.calls if restored)  # no scan
+    assert any("fewer questions right" in d for d in report["other_damage"])
+    assert any("can't tell" in d for d in report["other_damage"])
+    events = _events(out)
+    damage = [e for e in events if e["stage"] == "find_damage"][-1]["message"]
+    assert damage.startswith("The original model says \"can't tell\" on only")
+    assert events[-1]["message"] == "This model can't be checked this way"
+
+
+def test_a_scan_that_keeps_nothing_says_so(tmp_path, monkeypatch):
+    import src.product.fast_repair as fr
+
+    monkeypatch.setattr(fr, "run_scan", lambda *a, **k: (type("R", (), {"kept": [], "pool": [], "trials": [],
+                                                                         "stop_reason": "x"})(),
+                                                         fr.scan_config(FastRepairConfig(model_id="x/y"), 28), 10))
+    report, _, out = _run(tmp_path)
+    assert report["outcome"] == "no_gain" and report["patch"] is None
+    assert "No single part" in [e for e in _events(out) if e["stage"] == "scan"][-1]["message"]
+    assert report["recovery"]["point"] == 0.0 or report["recovery"]["point"] is None  # nothing restored
+
+
+def test_other_damage_is_measured_against_the_original():
+    from src.product.fast_repair import other_damage
+
+    card = lambda acc, fu: {"usr": 0.8, "srs": 0.1, "accuracy": acc, "false_unknown": fu}  # noqa: E731
+    found = other_damage({"original": card(0.9, 0.05), "compressed": card(0.8, 0.06), "repaired": card(0.89, 0.2)},
+                         repaired=True)
+    assert len(found) == 2 and found[0].startswith("Compression gets fewer") and "After the repair" in found[1]
+    assert other_damage({"original": card(0.9, 0.05), "compressed": card(0.88, 0.06), "repaired": card(0.9, 0.05)},
+                        repaired=False) == []
