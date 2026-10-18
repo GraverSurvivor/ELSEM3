@@ -49,6 +49,7 @@ STAGES = ("download", "quantize", "score_original", "score_3bit", "find_damage",
 MODES = ("fast", "exact")
 
 SEARCH_CAP = 300          # flipped questions the scan uses, at most (the Phi-3.5 search sample's size)
+GUARD_CAP = 150           # still-fair questions the scan also asks, so a part loses points for breaking them
 PROBE_CAP = 200           # stated-answer probe questions, at most (the Phi-3.5 hedging probe's size)
 SCAN_BUDGET = 18_800      # questions fast mode asks for Phi-3.5 with Fast Scan's defaults (see plan_questions)
 MIN_SCREEN = 60           # fast mode never screens a part on fewer questions than this
@@ -76,11 +77,14 @@ class FastRepairConfig:
     penalty_weight: float = 1.0
     threshold: float = 0.01
     max_rounds: int = 5
-    nbits: int = 8
+    nbits: int = 8          # what a restored part goes back to
+    base_nbits: int = 3     # what the whole model is compressed to: 3, or 4 for models 3-bit wrecks
 
     def __post_init__(self):
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}, got {self.mode!r}")
+        if self.base_nbits not in (3, 4):
+            raise ValueError(f"base_nbits must be 3 or 4, got {self.base_nbits}")
         if self.questions < 100:
             raise ValueError("use at least 100 questions per check")
         self.out = Path(self.out)
@@ -135,7 +139,7 @@ class TooBigError(RuntimeError):
     """The model can't be compressed and scanned with this machine's memory; said before downloading."""
 
 
-def memory_plan(n_params: int, n_linear: int) -> dict:
+def memory_plan(n_params: int, n_linear: int, base_nbits: int = 3) -> dict:
     """Bytes the pipeline needs for a model of `n_params` weights, `n_linear` of them in linear
     layers (the ones HQQ compresses):
     * system memory while compressing: the 16-bit model is loaded on the CPU first (2 bytes a weight);
@@ -143,7 +147,7 @@ def memory_plan(n_params: int, n_linear: int) -> dict:
       scales, ~0.5 bytes with packing; the rest stays 16-bit) plus working room for the questions.
     The 16-bit original also goes to the GPU once, to answer the questions; if it doesn't fit it
     spills to system memory (slower, still exact) and is freed before the scan."""
-    compressed = 0.5 * n_linear + 2 * (n_params - n_linear)
+    compressed = (0.5 if base_nbits == 3 else 0.62) * n_linear + 2 * (n_params - n_linear)
     return {"ram": 2.2 * n_params + 0.5e9, "gpu": 1.1 * compressed + 0.8e9, "original": 2.2 * n_params + 0.5e9}
 
 
@@ -192,12 +196,12 @@ class Backend(Protocol):
 class TorchBackend:
     """The real models: the original at fp16 and the HQQ 3-bit copy whose parts the scan swaps."""
 
-    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda"):
+    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda", base_nbits: int = 3):
         import torch
 
         if device == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("No GPU found. Fast Repair needs a CUDA GPU (e.g. a Colab T4).")
-        self.device, self.nbits, self.batch_size = device, nbits, batch_size
+        self.device, self.nbits, self.batch_size, self.base_nbits = device, nbits, batch_size, base_nbits
         self.original = self.compressed = self.tokenizer = self.registry = self._adapter = None
 
     def preflight(self, model_id: str) -> str:
@@ -215,7 +219,7 @@ class TorchBackend:
         n_params = sum(p.numel() for p in {id(p): p for p in model.parameters()}.values())
         n_linear = sum(m.weight.numel() for m in model.modules()
                        if type(m).__name__ in ("Linear", "Conv1D") and getattr(m, "weight", None) is not None)
-        plan = memory_plan(n_params, n_linear)
+        plan = memory_plan(n_params, n_linear, self.base_nbits)
         free_ram = psutil.virtual_memory().available
         free_gpu = torch.cuda.mem_get_info()[0] if self.device == "cuda" else free_ram
         fits = plan["ram"] <= free_ram and plan["gpu"] <= free_gpu
@@ -260,7 +264,8 @@ class TorchBackend:
         from src.quant.module_swap import SwapRegistry
         from src.quant.weight_source import CheckpointWeightSource
 
-        self.compressed, self.tokenizer = load_hqq_3bit_model(device=self.device, dtype="fp16", model_id=model_id)
+        self.compressed, self.tokenizer = load_hqq_3bit_model(device=self.device, dtype="fp16", model_id=model_id,
+                                                              nbits=self.base_nbits)
         adapter = self._adapter or self.adapter(model_id)
         # GPT-2-style parts are stored (in, out) in the checkpoint; the 3-bit model holds them as nn.Linear.
         transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
@@ -520,7 +525,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
 
     with events.stage_of("download", message="fetching the model"):
         if backend is None:  # inside the stage, so "no GPU" is reported like any other failure
-            backend = TorchBackend(nbits=config.nbits, batch_size=config.batch_size)
+            backend = TorchBackend(nbits=config.nbits, batch_size=config.batch_size, base_nbits=config.base_nbits)
         adapter = backend.adapter(config.model_id)  # fails fast on a model that isn't a text generator
         size = backend.preflight(config.model_id) if hasattr(backend, "preflight") else ""  # before any download
         message = backend.download(config.model_id)
@@ -556,6 +561,12 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         knows = [it for it in disambig if original[id(it)] == it.label]
         search_flipped = seeded_subset([it for it in flipped if in_search_half(it.question_id, config.seed)],
                                        SEARCH_CAP, config.seed)
+        # Fair answers the compressed model still gives: a part that breaks them must lose points, or
+        # the scan keeps parts that fix a few flipped answers while breaking more fair ones elsewhere
+        # (Qwen2.5-3B at 3-bit: "can't tell" on unseen questions fell 32% -> 23% with such parts).
+        still_fair = [it for it in safe if compressed[id(it)] == it.unknown_index]
+        search_guard = seeded_subset([it for it in still_fair if in_search_half(it.question_id, config.seed)],
+                                     min(GUARD_CAP, len(search_flipped)), config.seed)
         probe = seeded_subset([it for it in knows if in_search_half(it.question_id, config.seed)],
                               PROBE_CAP, config.seed)
         held_ambig = [it for it in ambig if not in_search_half(it.question_id, config.seed)]
@@ -568,12 +579,13 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     candidates = adapter.candidates()
     damaged = outcome == "repaired"  # so far: the scan decides between repaired and no_gain
     cfg = scan_config(config, len(candidates))
-    total = plan_questions(cfg, len(candidates), len(search_flipped), len(probe)) if damaged else 0
+    scan_sample = search_flipped + search_guard  # USR on this = flipped brought back minus fair broken
+    total = plan_questions(cfg, len(candidates), len(scan_sample), len(probe)) if damaged else 0
     with events.stage_of("scan", total=total, message=f"{len(candidates)} parts · {minutes_text(total / speed)}"
                          if damaged else f"{len(candidates)} parts"):
         if damaged:
             hedged_before = {it.question_id: compressed[id(it)] == it.unknown_index for it in probe}
-            scan, cfg, total = run_scan(backend, candidates, search_flipped, probe, config, events, speed,
+            scan, cfg, total = run_scan(backend, candidates, scan_sample, probe, config, events, speed,
                                         hedged_before)
             kept = list(scan.kept)
             for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
@@ -596,7 +608,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         repaired = dict(zip(map(id, held), repaired_picks))
         report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
                               held_ambig, held_disambig, original, compressed, repaired, started,
-                              search=(len(search_flipped), len(probe)), outcome=outcome, reason=reason)
+                              search=(len(scan_sample), len(probe)), outcome=outcome, reason=reason)
         if kept and (verdict := reject_reason(report)):
             outcome, reason = "rejected", verdict
             report.update(outcome=outcome, outcome_reason=reason, patch=None)
@@ -710,6 +722,7 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         "model_id": config.model_id, "arch": adapter.arch, "mode": config.mode, "questions": config.questions,
         "gpu": backend.gpu_name(), "minutes": round((time.monotonic() - started) / 60, 1),
         "safe": len(safe), "flipped": len(flipped),
+        "base_nbits": config.base_nbits,
         "original": cards["original"], "compressed": cards["compressed"], "repaired": cards["repaired"],
         "recovery": recovery, "kept": list(kept), "memory_mb": round(backend.memory_mb(), 1) if kept else 0.0,
         "gate": gate["verdict"], "gate_failures": gate["failures"], "patch": "patch.json" if kept else None,
@@ -739,6 +752,7 @@ def make_patch(config, adapter, kept, engine):
 
     is_phi = adapter.arch == "phi3" and adapter.n_layers == 32
     return Patch(name=f"fast_repair_{config.mode}", modules=tuple(kept), nbits=config.nbits,
+                 base={"method": "hqq", "nbits": config.base_nbits, "group_size": 64, "compute_dtype": "fp16"},
                  source={"kind": "search", "engine": engine, "mode": config.mode, "questions": config.questions,
                          "seed": config.seed},
                  model_id=config.model_id,
@@ -755,9 +769,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--penalty-weight", type=float, default=1.0)
+    parser.add_argument("--base-nbits", type=int, choices=(3, 4), default=3,
+                        help="compress the whole model to this many bits (4 for models 3-bit wrecks)")
     args = parser.parse_args(argv)
     config = FastRepairConfig(model_id=args.model, mode=args.mode, questions=args.questions, out=args.out,
-                              seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight)
+                              seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
+                              base_nbits=args.base_nbits)
     print(f"Fast Repair: {config.model_id}, {config.mode} mode, {config.questions} questions -> {config.out}", flush=True)
     try:
         report = run(config)

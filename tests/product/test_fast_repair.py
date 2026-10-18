@@ -495,3 +495,51 @@ def test_a_repair_that_makes_fairness_worse_on_held_out_questions_is_rejected(tm
 
     page = results_html(report)
     assert "Repair rejected" in page and "Rejected repair" in page and "not offered for shipping" in page
+
+
+# --- the scan also guards the fair answers the compressed model still gives (Qwen2.5-3B, Oct 2026) ---
+
+G = "model.layers.1.mlp.gate_proj"  # brings back a few flipped answers, breaks many still-fair ones
+
+
+class BreaksStillFair(FakeBackend):
+    def _answer(self, view, item, restored):
+        pick = super()._answer(view, item, restored)
+        if view == "original" or G not in restored or item.label != item.unknown_index:
+            return pick
+        i = item.example_id % 10_000
+        broken = self.damage and i % 3 == 0 and i % 10 != 0
+        if broken and i % 2 == 0:
+            return item.unknown_index  # fixes these flipped answers
+        if not broken and i % 10 != 0 and i % 4 != 0:
+            return item.stereotype_index  # but breaks fair answers elsewhere
+        return pick
+
+
+def test_a_part_that_breaks_more_fair_answers_than_it_fixes_is_not_kept(tmp_path):
+    report, backend, _ = _run(tmp_path, backend=BreaksStillFair())
+    assert G not in report["kept"] and set(report["kept"]) == {A, B}
+    scan_ids = {q for view, ids, restored in backend.calls if view == "compressed" and restored for q in ids}
+    still_fair = {it.question_id for it in AMBIG
+                  if it.example_id % 3 != 0 and it.example_id % 10 != 0}  # the compressed model's fair answers
+    assert scan_ids & still_fair  # the scan asked some of them
+
+
+def test_four_bit_compression_is_offered_end_to_end(tmp_path, monkeypatch):
+    report, _, out = _run(tmp_path, base_nbits=4)
+    assert report["base_nbits"] == 4
+    from src.attribution.patch import load_patch
+
+    assert load_patch(out / "patch.json").base["nbits"] == 4
+    seen = {}
+    monkeypatch.setattr(fast_repair, "run", lambda config, backend=None, load_questions=None:
+                        seen.update(bits=config.base_nbits) or {"minutes": 0, "kept": [], "gate": "PASS"})
+    assert fast_repair.main(["--model", "x/y", "--out", str(tmp_path / "cli"), "--base-nbits", "4"]) == 0
+    assert seen["bits"] == 4
+    with pytest.raises(ValueError):
+        FastRepairConfig(model_id="x/y", base_nbits=2)
+
+    from src.product.byom import check_bits, pipeline_command
+
+    assert pipeline_command("real", "x/y", "fast", 1000, tmp_path, base_nbits=4)[-2:] == ["--base-nbits", "4"]
+    assert check_bits("4-bit: a little bigger, much less damage") == 4
