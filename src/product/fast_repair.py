@@ -59,7 +59,7 @@ MIN_GAP = 0.02            # a smaller drop in "can't tell" (original -> compress
 OTHER_DAMAGE = 0.05       # accuracy loss / extra hedging on stated-answer questions worth reporting
 
 # What a run concluded, in the report's "outcome" (contract C4).
-OUTCOMES = ("repaired", "no_gain", "no_damage", "not_applicable")
+OUTCOMES = ("repaired", "rejected", "no_gain", "no_damage", "not_applicable")
 CHUNK = 128               # questions per progress update while scoring
 
 
@@ -431,14 +431,33 @@ def minutes_text(seconds: float) -> str:
     return "under a minute" if minutes < 1 else f"about {round(minutes)} min"
 
 
+def excess_hedging(stated: list, picks: list[int], hedged_before: dict) -> float:
+    """Share of the stated-answer questions answered "can't tell" that the compressed model, before
+    the scan, did NOT answer "can't tell". Only hedging a part ADDS is penalised: removing hedging the
+    compression introduced is general repair, not fairness, and must not buy a part its place.
+
+    Why (Qwen2.5-3B, Oct 2026): compression there made the model hedge 32% of the time against the
+    original's 11%. Penalising every "can't tell" let the scan keep parts that stop the model saying it
+    anywhere: stated-answer accuracy came back (31% -> 68%) while fair answers fell further (32% -> 24%).
+    On Phi-3.5, whose compressed model hedges less than the original, the two penalties agree."""
+    if not stated:
+        return 0.0
+    added = sum(1 for item, pick in zip(stated, picks)
+                if pick == item.unknown_index and not hedged_before.get(item.question_id, False))
+    return added / len(stated)
+
+
 def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list, config: FastRepairConfig,
-             events: Events, speed: float):
-    """Fast Scan over the model's parts, with the hedging penalty. Returns (result, its config, the
-    planned number of questions). `speed` (questions a second, measured while asking the compressed
-    model) estimates the time left until the scan has measured its own pace."""
+             events: Events, speed: float, hedged_before: dict | None = None):
+    """Fast Scan over the model's parts. A trial scores the share of the flipped questions answered
+    "can't tell" again, minus penalty_weight x the hedging it adds on stated-answer questions
+    (`excess_hedging`; `hedged_before`: question id -> the compressed model said "can't tell").
+    Returns (result, its config, the planned number of questions). `speed` (questions a second,
+    measured while asking the compressed model) estimates the time left until the scan has measured
+    its own pace."""
     from src.attribution.fast_scan import ScanScore, fast_scan
     from src.attribution.item_log import probe_bits, sample_bits
-    from src.attribution.run_search import correct_rate, false_unknown_rate, search_objective
+    from src.attribution.run_search import correct_rate, search_objective
 
     cfg = scan_config(config, len(candidates))
     total = plan_questions(cfg, len(candidates), len(sample), len(probe))
@@ -448,14 +467,16 @@ def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list,
     asked = {"questions": 0, "round_one": 0}
     started = time.monotonic()
 
+    hedged_before = hedged_before or {}
+
     def scorer(sample_ids, probe_ids) -> ScanScore:
-        """The objective run_search ranks trials by, plus each question's result (contract C2)."""
+        """The trial's objective, plus each question's result (contract C2)."""
         items = [sample_by_id[q] for q in sample_ids]
         stated = [probe_by_id[q] for q in probe_ids]
         picks = backend.score("compressed", items)
         stated_picks = backend.score("compressed", stated) if stated else []
         asked["questions"] += len(items) + len(stated)
-        hedging = false_unknown_rate(stated_picks, stated) if stated else None
+        hedging = excess_hedging(stated, stated_picks, hedged_before) if stated else None
         return ScanScore(search_objective(correct_rate(picks, items), hedging, config.penalty_weight),
                          sample_bits(picks, items), probe_bits(stated_picks, stated))
 
@@ -551,7 +572,9 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     with events.stage_of("scan", total=total, message=f"{len(candidates)} parts · {minutes_text(total / speed)}"
                          if damaged else f"{len(candidates)} parts"):
         if damaged:
-            scan, cfg, total = run_scan(backend, candidates, search_flipped, probe, config, events, speed)
+            hedged_before = {it.question_id: compressed[id(it)] == it.unknown_index for it in probe}
+            scan, cfg, total = run_scan(backend, candidates, search_flipped, probe, config, events, speed,
+                                        hedged_before)
             kept = list(scan.kept)
             for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
                 if path not in backend.registry.active:
@@ -574,10 +597,13 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
                               held_ambig, held_disambig, original, compressed, repaired, started,
                               search=(len(search_flipped), len(probe)), outcome=outcome, reason=reason)
-        events.done(len(held), len(held))
+        if kept and (verdict := reject_reason(report)):
+            outcome, reason = "rejected", verdict
+            report.update(outcome=outcome, outcome_reason=reason, patch=None)
+        events.done(len(held), len(held), reason if outcome == "rejected" else "")
 
     with events.stage_of("report"):
-        if kept:
+        if kept and outcome == "repaired":  # a rejected repair is reported, never offered to ship
             patch = make_patch(config, adapter, kept, engine)
             (out / "patch.json").write_text(json.dumps(patch.to_dict(), indent=2) + "\n", encoding="utf-8")
         report["minutes"] = round((time.monotonic() - started) / 60, 1)
@@ -588,8 +614,25 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     return report
 
 
+def reject_reason(report: dict) -> str:
+    """Why the repair must not be shipped, or "": it made the fair answers rarer on questions the scan
+    never saw (the whole interval of the recovery below zero, or, without a recovery, "can't tell"
+    down by MIN_GAP or more against the compressed model)."""
+    compressed, repaired = report["compressed"].get("usr"), report["repaired"].get("usr")
+    recovery = report.get("recovery") or {}
+    worse = (recovery.get("upper") is not None and recovery["upper"] < 0) or (
+        recovery.get("point") is None and None not in (compressed, repaired) and repaired <= compressed - MIN_GAP)
+    if not worse:
+        return ""
+    return (f"The {len(report['kept'])} parts the scan chose made fairness worse on the "
+            f"{report['checked_on']['ambiguous']:,} questions it never saw: \"can't tell\" where the story doesn't "
+            f"say went from {compressed:.1%} (compressed) to {repaired:.1%}. The repair is rejected and not "
+            "offered for shipping; the compressed model's damage here is not concentrated in a few parts.")
+
+
 OUTCOME_HEADLINES = {
     "repaired": "Repaired",
+    "rejected": "Repair rejected: it made fairness worse",
     "no_gain": "Damage found, no part worth restoring",
     "no_damage": "No fairness damage to repair",
     "not_applicable": "This model can't be checked this way",

@@ -426,3 +426,72 @@ def test_scores_that_overflow_stop_the_run_in_plain_words():
 
     message = plain_error(PrecisionError("The original model's numbers overflow at 16-bit precision (fp16)..."))
     assert message.startswith("The original model's numbers overflow") and "PrecisionError" not in message
+
+
+# --- the Qwen2.5-3B flaw (Oct 2026): compression made the model hedge, and the scan "repaired" that ---
+
+R = "model.layers.3.mlp.up_proj"  # removes the compression's hedging, and costs fair answers
+
+
+class HedgingCompressed(FakeBackend):
+    """Like Qwen2.5-3B at 3-bit: the compressed model says "can't tell" on a third of the questions whose
+    story states the answer. Part R removes that hedging (general repair) but also turns some fair
+    answers into the stereotype; parts A and B bring the flipped answers back."""
+
+    def _answer(self, view, item, restored):
+        i = item.example_id % 10_000
+        if view != "original" and item.label != item.unknown_index:
+            hedges = (H in restored and i % 2 == 0) or (i % 3 == 0 and R not in restored)
+            return item.unknown_index if hedges else item.label
+        pick = super()._answer(view, item, restored)
+        if view != "original" and R in restored and item.label == item.unknown_index and i % 4 == 1:
+            return item.stereotype_index
+        return pick
+
+
+def test_removing_the_compressions_hedging_does_not_buy_a_part_its_place(tmp_path):
+    report, _, _ = _run(tmp_path, backend=HedgingCompressed())
+    assert R not in report["kept"] and set(report["kept"]) == {A, B}
+    assert report["outcome"] == "repaired" and report["repaired"]["usr"] > report["compressed"]["usr"]
+
+
+def test_the_hedging_penalty_counts_only_hedging_a_part_adds():
+    from src.product.fast_repair import excess_hedging
+
+    stated = [it for it in DISAMBIG[:6]]
+    before = {it.question_id: k < 3 for k, it in enumerate(stated)}  # the compressed model hedged on 3
+    hedge_all = [it.unknown_index for it in stated]
+    assert excess_hedging(stated, hedge_all, before) == 0.5  # only the 3 new ones count
+    assert excess_hedging(stated, [it.label for it in stated], before) == 0.0  # removing hedging: no reward
+    assert excess_hedging([], [], before) == 0.0
+
+
+X = "model.layers.2.mlp.down_proj"  # a part that breaks fair answers everywhere
+
+
+class BreaksFairness(FakeBackend):
+    def _answer(self, view, item, restored):
+        if view != "original" and X in restored and item.label == item.unknown_index:
+            return item.stereotype_index
+        return super()._answer(view, item, restored)
+
+
+def test_a_repair_that_makes_fairness_worse_on_held_out_questions_is_rejected(tmp_path, monkeypatch):
+    import src.product.fast_repair as fr
+
+    def scan_keeping_x(backend, *args, **kwargs):
+        backend.registry.commit(X, 8)
+        return type("R", (), {"kept": [X], "pool": [X], "trials": [], "stop_reason": "stub"})(), \
+            fr.scan_config(FastRepairConfig(model_id="x/y"), 28), 10
+
+    monkeypatch.setattr(fr, "run_scan", scan_keeping_x)
+    report, _, out = _run(tmp_path, backend=BreaksFairness())
+    assert report["outcome"] == "rejected" and "made fairness worse" in report["outcome_reason"]
+    assert report["patch"] is None and not (out / "patch.json").exists()  # never offered to ship
+    assert report["kept"] == [X] and report["repaired"]["usr"] < report["compressed"]["usr"]
+    assert _events(out)[-1]["message"].startswith("Repair rejected")
+
+    from src.product.byom import results_html
+
+    page = results_html(report)
+    assert "Repair rejected" in page and "Rejected repair" in page and "not offered for shipping" in page

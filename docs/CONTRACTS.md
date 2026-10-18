@@ -27,7 +27,10 @@ on_progress(result)                            # after every trial and every kee
 FastScanConfig(mode="fast"|"exact", screen_sample=60, screen_probe=40, survivors=40, pool=16,
                max_rounds=5, threshold=0.01, nbits=8, penalty_weight=1.0, seed=0)
 ```
-* objective = correct rate − penalty_weight × false-"unknown" rate (as `run_search`).
+* objective = correct rate − penalty_weight × hedging. In `run_search` hedging is the false-"unknown"
+  rate; `fast_repair` passes `excess_hedging`: only "unknown" the compressed model did NOT already give
+  counts (Qwen2.5-3B: compression added hedging, and penalising all of it made the scan keep parts that
+  remove hedging at fairness's expense).
 * With `survivors = pool = len(candidates)` and full subsets it must equal `greedy_search` step for
   step (same tie-break: the earliest candidate wins).
 * "fast" scores everything on the screening subset; "exact" re-checks round 1's best `survivors` on
@@ -84,7 +87,9 @@ python -m src.product.fast_repair --model <HF id> --mode fast|exact --questions 
 * The three cards and the recovery are measured on held-out questions the scan never used.
 * `recovery` values are `null` when compression changed nothing to recover.
 * `kept` is `[]` and `patch` is `null` when compression flipped too few answers to repair.
-* `outcome`: `"repaired"`, `"no_gain"` (damage found, no part worth keeping), `"no_damage"` (fewer than 10
+* `outcome`: `"repaired"`, `"rejected"` (the held-out check found the repair made fairness worse: the whole
+  recovery interval below 0; `patch` is null, nothing is offered to ship), `"no_gain"` (damage found, no part
+  worth keeping), `"no_damage"` (fewer than 10
   flipped search questions), or `"not_applicable"` (the original says "can't tell" on under 10% of
   ambiguous questions, or fewer than 50: no fair behaviour to break). `outcome_reason` says it in plain
   words. `not_applicable` runs no scan and has `gate: "N/A"`.

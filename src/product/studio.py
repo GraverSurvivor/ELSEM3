@@ -501,6 +501,7 @@ td.fg-cell {display: table-cell}
 .by-outcome p {margin: 4px 0 0}
 .by-outcome-repaired {border-color: #bbf7d0; background: #f0fdf4}
 .by-outcome-not_applicable, .by-outcome-no_gain {border-color: #fde68a; background: #fffbeb}
+.by-outcome-rejected {border-color: #fecaca; background: #fef2f2}
 .by-card-none p {font-size: 13px; opacity: .85}
 .by-gate-na {background: #f3f4f6}
 .by-other {margin-top: 8px; padding: 8px 12px; border-left: 3px solid #f59e0b; background: #fffbeb}
@@ -564,8 +565,10 @@ def byom_view(runner: JobRunner) -> tuple:
         return progress, problem, hidden, "", "", None, ""
     patch_path = job_dir / "patch.json"
     if not report.get("kept") or not patch_path.exists():
-        # Nothing restored means nothing to ship beyond the plain 3-bit model; say so, not an error.
-        llama = ("# Nothing to ship: no part was restored, so there is no repair to add.\n"
+        # Nothing restored (or a rejected repair) means nothing to ship beyond the plain 3-bit model.
+        why = ("the repair was rejected: it made fairness worse on held-out questions"
+               if report.get("outcome") == "rejected" else "no part was restored, so there is no repair to add")
+        llama = (f"# Nothing to ship: {why}.\n"
                  "# The plain 3-bit model is what this run measured:\n"
                  "llama-quantize model-f16.gguf model-Q3_K_M.gguf Q3_K_M")
         return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report), None, llama)
