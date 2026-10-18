@@ -503,6 +503,7 @@ td.fg-cell {display: table-cell}
 .by-outcome-repaired {border-color: #bbf7d0; background: #f0fdf4}
 .by-outcome-not_applicable, .by-outcome-no_gain {border-color: #fde68a; background: #fffbeb}
 .by-outcome-rejected {border-color: #fecaca; background: #fef2f2}
+.by-note-precision {margin: 4px 0; padding: 6px 12px; border-left: 3px solid #6366f1; background: #eef2ff}
 .by-card-none p {font-size: 13px; opacity: .85}
 .by-gate-na {background: #f3f4f6}
 .by-other {margin-top: 8px; padding: 8px 12px; border-left: 3px solid #f59e0b; background: #fffbeb}
@@ -1006,7 +1007,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                 with gr.Row():
                     byom_model = gr.Textbox(label="Model name", placeholder="Qwen/Qwen2.5-3B-Instruct", scale=3)
                     byom_mode = gr.Radio(list(BYOM_MODES.values()), value=BYOM_MODES["fast"], label="Mode", scale=3)
-                    byom_bits = gr.Radio(list(BYOM_BITS.values()), value=BYOM_BITS[3], label="Compress to", scale=2)
+                    byom_bits = gr.Radio(list(BYOM_BITS.values()), value=BYOM_BITS[0], label="Compress to", scale=2)
                 with gr.Row():
                     byom_go = gr.Button("▶ Diagnose", variant="primary", interactive=bool(byom and byom.runner))
                     byom_cancel = gr.Button("■ Cancel", interactive=bool(byom and byom.runner))

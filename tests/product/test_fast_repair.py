@@ -309,11 +309,13 @@ def test_fast_mode_costs_the_same_whatever_the_number_of_parts():
 
     phi = scan_config(FastRepairConfig(model_id="x/y"), 128)
     assert (phi.screen_sample, phi.screen_probe, phi.pool) == (60, 40, 16)  # Fast Scan's own defaults
-    assert plan_questions(phi, 128, 300, 200) == SCAN_BUDGET
+    five = scan_config(FastRepairConfig(model_id="x/y", max_rounds=5), 128)
+    assert plan_questions(five, 128, 300, 200) == SCAN_BUDGET
+    assert plan_questions(phi, 128, 300, 200) <= SCAN_BUDGET * 1.3  # rounds 6-8, only while parts keep helping
     for parts in (196, 252):
         cfg = scan_config(FastRepairConfig(model_id="x/y"), parts)
         assert cfg.screen_sample + cfg.screen_probe >= fast_repair.MIN_SCREEN
-        assert plan_questions(cfg, parts, 300, 200) <= SCAN_BUDGET * 1.01
+        assert plan_questions(cfg, parts, 300, 200) <= SCAN_BUDGET * 1.3
     exact = scan_config(FastRepairConfig(model_id="x/y", mode="exact"), 252)
     assert (exact.mode, exact.screen_sample, exact.screen_probe, exact.survivors) == ("exact", 60, 40, 40)
 
@@ -543,3 +545,48 @@ def test_four_bit_compression_is_offered_end_to_end(tmp_path, monkeypatch):
 
     assert pipeline_command("real", "x/y", "fast", 1000, tmp_path, base_nbits=4)[-2:] == ["--base-nbits", "4"]
     assert check_bits("4-bit: a little bigger, much less damage") == 4
+
+
+def test_a_repair_with_no_measurable_effect_is_not_called_repaired():
+    from src.product.fast_repair import no_gain_reason
+
+    report = {"kept": ["model.layers.1.mlp.up_proj"], "recovery": {"point": 0.009, "lower": -0.032, "upper": 0.046}}
+    assert "no measurable difference" in no_gain_reason(report) and "4-bit" in no_gain_reason(report)
+    assert no_gain_reason({**report, "recovery": {"point": 0.86, "lower": 0.84, "upper": 0.87}}) == ""
+    assert no_gain_reason({**report, "recovery": {"point": None, "lower": None, "upper": None}}) == ""
+
+
+class BrokenAtThreeBits(FakeBackend):
+    """3-bit breaks the model everywhere (most stated-answer questions wrong); 4-bit is like FakeBackend."""
+
+    base_nbits = 3
+
+    def __init__(self):
+        super().__init__()
+        self.loads = []
+
+    def load_compressed(self, model_id):
+        self.loads.append(self.base_nbits)
+        return super().load_compressed(model_id)
+
+    def _answer(self, view, item, restored):
+        if view != "original" and self.base_nbits == 3 and item.label != item.unknown_index:
+            return 1 - item.label  # wrong on every stated-answer question
+        return super()._answer(view, item, restored)
+
+
+def test_automatic_precision_switches_to_four_bits_when_three_bits_breaks_the_model(tmp_path):
+    backend = BrokenAtThreeBits()
+    report, _, out = _run(tmp_path, backend=backend)  # base_nbits defaults to automatic
+    assert backend.loads == [3, 4] and report["base_nbits"] == 4
+    assert "compressed to 4-bit instead" in report["precision_note"]
+    assert report["outcome"] == "repaired" and set(report["kept"]) == {A, B}
+    from src.attribution.patch import load_patch
+
+    assert load_patch(out / "patch.json").base["nbits"] == 4
+    assert "4-bit instead" in [e for e in _events(out) if e["stage"] == "score_3bit"][-1]["message"]
+
+
+def test_automatic_precision_keeps_three_bits_when_they_are_fine(tmp_path):
+    report, _, _ = _run(tmp_path)
+    assert report["base_nbits"] == 3 and report["precision_note"] == ""
