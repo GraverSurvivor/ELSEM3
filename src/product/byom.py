@@ -104,7 +104,8 @@ def check_model_id(text: str | None) -> str:
     return model_id
 
 
-BITS = {3: "3-bit: smallest (the project's setting)", 4: "4-bit: a little bigger, much less damage"}
+BITS = {0: "Automatic: 3-bit, or 4-bit if 3-bit breaks the model",
+        3: "3-bit: smallest (the project's setting)", 4: "4-bit: a little bigger, much less damage"}
 
 
 def check_bits(bits) -> int:
@@ -334,7 +335,7 @@ def results_html(report: dict) -> str:
     outcome, reason = report_outcome(report)
     cards = []
     for key, title, sub in (("original", "Original model", "full precision"),
-                            ("compressed", "Compressed model", "3-bit"),
+                            ("compressed", "Compressed model", f"{report.get('base_nbits') or 3}-bit"),
                             ("repaired", "Rejected repair" if outcome == "rejected" else "Repaired model",
                              f"3-bit + {len(report['kept'])} parts restored"
                              + (" · not offered for shipping" if outcome == "rejected" else ""))):
@@ -376,7 +377,8 @@ def results_html(report: dict) -> str:
     elif report.get("replayed_from"):
         banner = (f'<div class="by-banner">A recorded real run ({html.escape(str(report["replayed_from"]))}), '
                   'replayed for the demo.</div>')
-    headline = (f'<div class="by-outcome by-outcome-{outcome}"><b>{html.escape(OUTCOME_TITLES[outcome])}</b>'
+    note = report.get("precision_note")
+    headline = (f'<div class="by-note-precision">{html.escape(note)}.</div>' if note else "") + (f'<div class="by-outcome by-outcome-{outcome}"><b>{html.escape(OUTCOME_TITLES[outcome])}</b>'
                 + (f'<p>{html.escape(reason)}</p>' if reason and outcome != "repaired" else "") + "</div>")
     if recovery.get("point") is not None:
         recovered = (f'<div class="by-recovery">Fairness recovered: <b>{_pct(recovery.get("point"))}</b> '
@@ -493,11 +495,11 @@ class JobBusy(RuntimeError):
 
 
 def pipeline_command(kind: str, model_id: str, mode: str, questions: int, out: Path,
-                     replay: Path | None = None, speed: float = 30.0, base_nbits: int = 3) -> list[str]:
+                     replay: Path | None = None, speed: float = 30.0, base_nbits: int = 0) -> list[str]:
     """The process to start. "real" is the sprint's fast_repair pipeline (Person 1); "fake" and
     "replay" are the stand-in in src/product/byom_fake.py."""
     args = ["--model", model_id, "--mode", mode, "--questions", str(questions), "--out", str(out),
-            "--base-nbits", str(base_nbits)]
+            "--base-nbits", str(base_nbits or "auto")]
     if kind == "real":
         return [sys.executable, "-m", "src.product.fast_repair", *args]
     extra = ["--speed", str(speed)]
@@ -585,7 +587,7 @@ class JobRunner:
         return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
 
     # actions
-    def start(self, model_id: str, mode: str, base_nbits: int = 3) -> Path:
+    def start(self, model_id: str, mode: str, base_nbits: int = 0) -> Path:
         model_id, mode = check_model_id(model_id), check_mode(mode)
         base_nbits = check_bits(base_nbits)
         current = self.current()

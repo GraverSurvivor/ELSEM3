@@ -49,6 +49,7 @@ STAGES = ("download", "quantize", "score_original", "score_3bit", "find_damage",
 MODES = ("fast", "exact")
 
 SEARCH_CAP = 300          # flipped questions the scan uses, at most (the Phi-3.5 search sample's size)
+AUTO_SWITCH = 0.25        # automatic precision: 3-bit losing this many right answers -> use 4-bit
 GUARD_CAP = 150           # still-fair questions the scan also asks, so a part loses points for breaking them
 PROBE_CAP = 200           # stated-answer probe questions, at most (the Phi-3.5 hedging probe's size)
 SCAN_BUDGET = 18_800      # questions fast mode asks for Phi-3.5 with Fast Scan's defaults (see plan_questions)
@@ -76,15 +77,15 @@ class FastRepairConfig:
     batch_size: int = 16
     penalty_weight: float = 1.0
     threshold: float = 0.01
-    max_rounds: int = 5
+    max_rounds: int = 8     # up to 8 parts: the held-out check still rejects any that don't help
     nbits: int = 8          # what a restored part goes back to
-    base_nbits: int = 3     # what the whole model is compressed to: 3, or 4 for models 3-bit wrecks
+    base_nbits: int = 0     # what the whole model is compressed to: 3, 4, or 0 = automatic (see AUTO_SWITCH)
 
     def __post_init__(self):
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}, got {self.mode!r}")
-        if self.base_nbits not in (3, 4):
-            raise ValueError(f"base_nbits must be 3 or 4, got {self.base_nbits}")
+        if self.base_nbits not in (0, 3, 4):
+            raise ValueError(f"base_nbits must be 3, 4 or 0 (automatic), got {self.base_nbits}")
         if self.questions < 100:
             raise ValueError("use at least 100 questions per check")
         self.out = Path(self.out)
@@ -197,6 +198,7 @@ class TorchBackend:
     """The real models: the original at fp16 and the HQQ 3-bit copy whose parts the scan swaps."""
 
     def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda", base_nbits: int = 3):
+        base_nbits = base_nbits or 3  # automatic starts at 3-bit
         import torch
 
         if device == "cuda" and not torch.cuda.is_available():
@@ -219,7 +221,7 @@ class TorchBackend:
         n_params = sum(p.numel() for p in {id(p): p for p in model.parameters()}.values())
         n_linear = sum(m.weight.numel() for m in model.modules()
                        if type(m).__name__ in ("Linear", "Conv1D") and getattr(m, "weight", None) is not None)
-        plan = memory_plan(n_params, n_linear, self.base_nbits)
+        plan = memory_plan(n_params, n_linear, 4)  # sized for 4-bit, so an automatic switch fits too
         free_ram = psutil.virtual_memory().available
         free_gpu = torch.cuda.mem_get_info()[0] if self.device == "cuda" else free_ram
         fits = plan["ram"] <= free_ram and plan["gpu"] <= free_gpu
@@ -259,6 +261,10 @@ class TorchBackend:
         import gc
 
         import torch
+
+        self.compressed = self.registry = None  # a second call (3-bit -> 4-bit) frees the first copy first
+        gc.collect()
+        torch.cuda.empty_cache()
 
         from src.quant.hqq_quantizer import load_hqq_3bit_model
         from src.quant.module_swap import SwapRegistry
@@ -399,7 +405,8 @@ def scan_config(config: FastRepairConfig, n_parts: int):
     screen = base.screen_sample + base.screen_probe
     if config.mode == "fast":
         pool = min(base.pool, n_parts)
-        passes = n_parts + 1 + sum(max(0, pool - r) for r in range(1, config.max_rounds)) + config.max_rounds
+        rounds = min(config.max_rounds, 5)  # sized as validated on Phi-3.5; rounds 6+ run only while parts help
+        passes = n_parts + 1 + sum(max(0, pool - r) for r in range(1, rounds)) + rounds
         screen = max(MIN_SCREEN, min(screen, SCAN_BUDGET // passes))
     n_sample = round(screen * base.screen_sample / (base.screen_sample + base.screen_probe))
     return FastScanConfig(mode=config.mode, screen_sample=n_sample, screen_probe=screen - n_sample,
@@ -553,7 +560,24 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         picks = backend.score("compressed", questions, lambda k: events.progress(k, len(questions)))
         speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)  # questions a second, for estimates
         compressed = dict(zip(map(id, questions), picks))
-        events.done(len(questions), len(questions), f"{len(questions):,} questions · {speed:.1f} a second")
+        used_bits, precision_note = (config.base_nbits or 3), ""
+        right = {name: sum(table[id(it)] == it.label for it in disambig) / len(disambig)
+                 for name, table in (("original", original), ("compressed", compressed))}
+        if config.base_nbits == 0 and right["original"] - right["compressed"] > AUTO_SWITCH:
+            # 3-bit broke the model everywhere: a few restored parts can't repair that. 4-bit damages far
+            # less, and what damage is left is likelier to sit in a few parts the scan can find.
+            precision_note = (f"3-bit compression broke this model everywhere (right answers on stated-answer "
+                              f"questions {right['original']:.0%} -> {right['compressed']:.0%}), so it was "
+                              "compressed to 4-bit instead")
+            events.progress(0, len(questions), precision_note + "...", force=True)
+            backend.base_nbits = used_bits = 4
+            backend.load_compressed(config.model_id)
+            asked_at = time.monotonic()
+            picks = backend.score("compressed", questions, lambda k: events.progress(k, len(questions)))
+            speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)
+            compressed = dict(zip(map(id, questions), picks))
+        events.done(len(questions), len(questions), (precision_note + " · " if precision_note else "")
+                    + f"{len(questions):,} questions · {speed:.1f} a second")
 
     with events.stage_of("find_damage"):
         safe = [it for it in ambig if original[id(it)] == it.unknown_index]
@@ -608,7 +632,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         repaired = dict(zip(map(id, held), repaired_picks))
         report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
                               held_ambig, held_disambig, original, compressed, repaired, started,
-                              search=(len(scan_sample), len(probe)), outcome=outcome, reason=reason)
+                              search=(len(scan_sample), len(probe)), outcome=outcome, reason=reason,
+                              used_bits=used_bits, precision_note=precision_note)
         if kept and (verdict := reject_reason(report)):
             outcome, reason = "rejected", verdict
             report.update(outcome=outcome, outcome_reason=reason, patch=None)
@@ -619,7 +644,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
 
     with events.stage_of("report"):
         if kept and outcome == "repaired":  # a rejected repair is reported, never offered to ship
-            patch = make_patch(config, adapter, kept, engine)
+            patch = make_patch(config, adapter, kept, engine, used_bits)
             (out / "patch.json").write_text(json.dumps(patch.to_dict(), indent=2) + "\n", encoding="utf-8")
         report["minutes"] = round((time.monotonic() - started) / 60, 1)
         tmp = out / "report.json.tmp"
@@ -708,7 +733,7 @@ def other_damage(cards: dict, repaired: bool) -> list[str]:
 
 def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept, held_ambig,
                  held_disambig, original, compressed, repaired, started, search=(0, 0),
-                 outcome: str = "repaired", reason: str = "") -> dict:
+                 outcome: str = "repaired", reason: str = "", used_bits: int = 3, precision_note: str = "") -> dict:
     from src.product.fairgate import check
     from src.stats.metrics import is_unknown
     from src.stats.recovery import recovery_fraction
@@ -738,7 +763,7 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         "model_id": config.model_id, "arch": adapter.arch, "mode": config.mode, "questions": config.questions,
         "gpu": backend.gpu_name(), "minutes": round((time.monotonic() - started) / 60, 1),
         "safe": len(safe), "flipped": len(flipped),
-        "base_nbits": config.base_nbits,
+        "base_nbits": used_bits, "precision_note": precision_note,
         "original": cards["original"], "compressed": cards["compressed"], "repaired": cards["repaired"],
         "recovery": recovery, "kept": list(kept), "memory_mb": round(backend.memory_mb(), 1) if kept else 0.0,
         "gate": gate["verdict"], "gate_failures": gate["failures"], "patch": "patch.json" if kept else None,
@@ -763,12 +788,12 @@ def scan_block(config, adapter, scan, cfg, search) -> dict:
     return block
 
 
-def make_patch(config, adapter, kept, engine):
+def make_patch(config, adapter, kept, engine, used_bits: int = 3):
     from src.attribution.patch import Patch
 
     is_phi = adapter.arch == "phi3" and adapter.n_layers == 32
     return Patch(name=f"fast_repair_{config.mode}", modules=tuple(kept), nbits=config.nbits,
-                 base={"method": "hqq", "nbits": config.base_nbits, "group_size": 64, "compute_dtype": "fp16"},
+                 base={"method": "hqq", "nbits": used_bits, "group_size": 64, "compute_dtype": "fp16"},
                  source={"kind": "search", "engine": engine, "mode": config.mode, "questions": config.questions,
                          "seed": config.seed},
                  model_id=config.model_id,
@@ -785,12 +810,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--penalty-weight", type=float, default=1.0)
-    parser.add_argument("--base-nbits", type=int, choices=(3, 4), default=3,
-                        help="compress the whole model to this many bits (4 for models 3-bit wrecks)")
+    parser.add_argument("--base-nbits", choices=("auto", "3", "4"), default="auto",
+                        help="compress to 3 or 4 bits; auto = 3, or 4 if 3-bit wrecks the model")
     args = parser.parse_args(argv)
     config = FastRepairConfig(model_id=args.model, mode=args.mode, questions=args.questions, out=args.out,
                               seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
-                              base_nbits=args.base_nbits)
+                              base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits))
     print(f"Fast Repair: {config.model_id}, {config.mode} mode, {config.questions} questions -> {config.out}", flush=True)
     try:
         report = run(config)
