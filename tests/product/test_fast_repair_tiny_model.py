@@ -130,7 +130,7 @@ def test_the_pipeline_runs_end_to_end_with_real_components(tmp_path, tokenizer):
     assert report["scan"]["engine"] == "fast_scan" and report["scan"]["trials"] >= 14  # every part tried
     assert scan[-1]["status"] == "done" and ("Kept" in scan[-1]["message"] or "No single part" in scan[-1]["message"])
     assert report["outcome"] in ("repaired", "no_gain", "no_damage")
-    if report["kept"]:  # a random model may or may not gain from a restore; the files must agree either way
+    if report["patch"]:  # only a repair worth shipping has one  # a random model may or may not gain from a restore; the files must agree either way
         from src.attribution.patch import load_patch
 
         assert list(load_patch(config.out / "patch.json").modules) == report["kept"]

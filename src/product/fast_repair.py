@@ -612,6 +612,9 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         if kept and (verdict := reject_reason(report)):
             outcome, reason = "rejected", verdict
             report.update(outcome=outcome, outcome_reason=reason, patch=None)
+        elif kept and (verdict := no_gain_reason(report)):
+            outcome, reason = "no_gain", verdict
+            report.update(outcome=outcome, outcome_reason=reason, patch=None)
         events.done(len(held), len(held), reason if outcome == "rejected" else "")
 
     with events.stage_of("report"):
@@ -640,6 +643,19 @@ def reject_reason(report: dict) -> str:
             f"{report['checked_on']['ambiguous']:,} questions it never saw: \"can't tell\" where the story doesn't "
             f"say went from {compressed:.1%} (compressed) to {repaired:.1%}. The repair is rejected and not "
             "offered for shipping; the compressed model's damage here is not concentrated in a few parts.")
+
+
+def no_gain_reason(report: dict) -> str:
+    """Why a kept repair isn't worth shipping, or "": on questions the scan never saw it made no
+    measurable difference (the recovery's 95% interval reaches zero or below)."""
+    recovery = report.get("recovery") or {}
+    if recovery.get("lower") is None or recovery["lower"] > 0:
+        return ""
+    n = len(report["kept"])
+    return (f"The {n} part{'s' * (n != 1)} the scan kept made no measurable difference on questions it never "
+            f"saw (fairness recovered {recovery['point']:.1%}, 95% interval {recovery['lower']:.1%} to "
+            f"{recovery['upper']:.1%}). Compression damaged this model across many parts, so restoring a few "
+            "doesn't bring its fairness back. Try 4-bit compression, which damages far less.")
 
 
 OUTCOME_HEADLINES = {

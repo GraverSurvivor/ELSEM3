@@ -543,3 +543,12 @@ def test_four_bit_compression_is_offered_end_to_end(tmp_path, monkeypatch):
 
     assert pipeline_command("real", "x/y", "fast", 1000, tmp_path, base_nbits=4)[-2:] == ["--base-nbits", "4"]
     assert check_bits("4-bit: a little bigger, much less damage") == 4
+
+
+def test_a_repair_with_no_measurable_effect_is_not_called_repaired():
+    from src.product.fast_repair import no_gain_reason
+
+    report = {"kept": ["model.layers.1.mlp.up_proj"], "recovery": {"point": 0.009, "lower": -0.032, "upper": 0.046}}
+    assert "no measurable difference" in no_gain_reason(report) and "4-bit" in no_gain_reason(report)
+    assert no_gain_reason({**report, "recovery": {"point": 0.86, "lower": 0.84, "upper": 0.87}}) == ""
+    assert no_gain_reason({**report, "recovery": {"point": None, "lower": None, "upper": None}}) == ""

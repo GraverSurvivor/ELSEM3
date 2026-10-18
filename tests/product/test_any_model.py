@@ -107,7 +107,7 @@ def test_the_real_pipeline_runs_on_any_family(model_type, tmp_path, tokenizer, m
     assert "parameters" in download and report["n_layers"] == 2
     assert report["outcome"] in ("repaired", "no_gain"), report["outcome_reason"]  # the scan ran
     assert report["scan"]["engine"] == "fast_scan" and report["scan"]["trials"] >= len(report["part_types"]) * 2
-    if report["kept"]:
+    if report["patch"]:  # only a repair worth shipping has one
         from src.attribution.patch import load_patch
 
         patch = load_patch(config.out / "patch.json")
