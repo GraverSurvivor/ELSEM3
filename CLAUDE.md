@@ -214,7 +214,12 @@ device (`discover`: the decoder-block stack and the linears every block shares; 
 checkpoints and prefix-less names; prompts fall back to "...Answer:" without a chat template;
 `TorchBackend.preflight` refuses a model that won't fit (RAM to compress, GPU to scan, measured free)
 before downloading; the original is freed after it answers; NaN scores (fp16 overflow) stop the run.
-Reports say `outcome` (repaired / no_gain / no_damage / not_applicable) and list `other_damage`.
+Reports say `outcome` (repaired / rejected / no_gain / no_damage / not_applicable) and list `other_damage`.
+The Fast Repair scan penalises only hedging a part ADDS over the compressed model (`excess_hedging`): on
+Qwen2.5-3B (T4, 30 min) compression raised hedging 11% -> 32%, and penalising all of it kept 4 parts
+that restored accuracy (31% -> 68%) while fair answers fell (32% -> 24%, recovery -19%). A repair whose
+held-out recovery interval is below zero is `rejected` and never offered to ship. Research runs
+(`run_search`) keep their original objective.
 `tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the

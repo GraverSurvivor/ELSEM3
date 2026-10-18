@@ -301,6 +301,7 @@ def _pct(value) -> str:
 
 OUTCOME_TITLES = {
     "repaired": "Repaired",
+    "rejected": "Repair rejected: it made fairness worse",
     "no_gain": "Damage found, but no part was worth restoring",
     "no_damage": "No fairness damage to repair",
     "not_applicable": "This model can't be checked this way",
@@ -324,7 +325,9 @@ def results_html(report: dict) -> str:
     cards = []
     for key, title, sub in (("original", "Original model", "full precision"),
                             ("compressed", "Compressed model", "3-bit"),
-                            ("repaired", "Repaired model", f"3-bit + {len(report['kept'])} parts restored")):
+                            ("repaired", "Rejected repair" if outcome == "rejected" else "Repaired model",
+                             f"3-bit + {len(report['kept'])} parts restored"
+                             + (" · not offered for shipping" if outcome == "rejected" else ""))):
         if key == "repaired" and not report.get("kept"):
             cards.append('<div class="by-card by-card-none"><div class="by-card-title">No repair made</div>'
                          '<div class="by-card-sub">nothing was restored</div>'
