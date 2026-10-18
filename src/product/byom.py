@@ -104,6 +104,16 @@ def check_model_id(text: str | None) -> str:
     return model_id
 
 
+BITS = {3: "3-bit: smallest (the project's setting)", 4: "4-bit: a little bigger, much less damage"}
+
+
+def check_bits(bits) -> int:
+    for key, label in BITS.items():
+        if bits in (key, str(key), label):
+            return key
+    raise ValueError("Pick 3-bit or 4-bit compression.")
+
+
 def check_mode(mode: str | None) -> str:
     for key, label in MODES.items():
         if mode in (key, label):
@@ -483,10 +493,11 @@ class JobBusy(RuntimeError):
 
 
 def pipeline_command(kind: str, model_id: str, mode: str, questions: int, out: Path,
-                     replay: Path | None = None, speed: float = 30.0) -> list[str]:
+                     replay: Path | None = None, speed: float = 30.0, base_nbits: int = 3) -> list[str]:
     """The process to start. "real" is the sprint's fast_repair pipeline (Person 1); "fake" and
     "replay" are the stand-in in src/product/byom_fake.py."""
-    args = ["--model", model_id, "--mode", mode, "--questions", str(questions), "--out", str(out)]
+    args = ["--model", model_id, "--mode", mode, "--questions", str(questions), "--out", str(out),
+            "--base-nbits", str(base_nbits)]
     if kind == "real":
         return [sys.executable, "-m", "src.product.fast_repair", *args]
     extra = ["--speed", str(speed)]
@@ -574,8 +585,9 @@ class JobRunner:
         return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
 
     # actions
-    def start(self, model_id: str, mode: str) -> Path:
+    def start(self, model_id: str, mode: str, base_nbits: int = 3) -> Path:
         model_id, mode = check_model_id(model_id), check_mode(mode)
+        base_nbits = check_bits(base_nbits)
         current = self.current()
         if current is not None and self.is_running(current):
             info = self.job_info(current)
@@ -587,14 +599,16 @@ class JobRunner:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         job_dir = self.jobs_dir / f"{stamp}_{_slug(model_id)}"
         job_dir.mkdir(parents=True)
-        command = pipeline_command(self.pipeline, model_id, mode, self.questions, job_dir, self.replay, self.speed)
+        command = pipeline_command(self.pipeline, model_id, mode, self.questions, job_dir, self.replay, self.speed,
+                                   base_nbits=base_nbits)
         log = (job_dir / "pipeline.log").open("w", encoding="utf-8")
         kwargs = {"start_new_session": True} if os.name != "nt" else {
             "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=Path.cwd(), **kwargs)
         log.close()  # the child has its own handle
         self._processes[job_dir.name] = process
-        self._write_info(job_dir, {"model_id": model_id, "mode": mode, "questions": self.questions,
+        self._write_info(job_dir, {"model_id": model_id, "mode": mode, "base_nbits": base_nbits,
+                                   "questions": self.questions,
                                    "pipeline": self.pipeline, "started": _now_iso(), "pid": process.pid,
                                    "command": command, "cancelled": False, "ended": None})
         return job_dir

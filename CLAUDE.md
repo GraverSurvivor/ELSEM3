@@ -220,6 +220,10 @@ Qwen2.5-3B (T4, 30 min) compression raised hedging 11% -> 32%, and penalising al
 that restored accuracy (31% -> 68%) while fair answers fell (32% -> 24%, recovery -19%). A repair whose
 held-out recovery interval is below zero is `rejected` and never offered to ship. Research runs
 (`run_search`) keep their original objective.
+The scan's sample also holds up to 150 still-fair questions (`search_guard`: the compressed model still
+answers "can't tell"), so a part that breaks fair answers loses what it gains on flipped ones: rerun on
+Qwen2.5-3B, the hedging fix alone still kept 2 parts that cut unseen "can't tell" 32% -> 23% (rejected).
+`--base-nbits 4` (tab 5: "Compress to") compresses to 4-bit for models that 3-bit wrecks.
 `tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
