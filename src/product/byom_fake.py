@@ -230,6 +230,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--speed", type=float, default=30.0, help="how many times faster than real time")
     parser.add_argument("--base-nbits", default="auto", help="accepted like the real pipeline's")
+    parser.add_argument("--max-restore", default="0.1", help="accepted like the real pipeline's")
     parser.add_argument("--replay", type=Path, help="a recorded run's folder to play back")
     parser.add_argument("--fail-at", choices=[s for s, _ in STAGES], help="simulate a failure in this stage")
     args = parser.parse_args()

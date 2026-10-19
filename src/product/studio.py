@@ -41,6 +41,7 @@ from src.attribution.patch import load_patch, save_patch
 from src.product.api_server import ApiService, latest_repaired_job, register_routes, snippets, try_it
 from src.product.byom import (
     BITS as BYOM_BITS,
+    BUDGETS as BYOM_BUDGETS,
     MODES as BYOM_MODES,
     JobBusy,
     JobRunner,
@@ -1076,6 +1077,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     byom_model = gr.Textbox(label="Model name", placeholder="Qwen/Qwen2.5-3B-Instruct", scale=3)
                     byom_mode = gr.Radio(list(BYOM_MODES.values()), value=BYOM_MODES["fast"], label="Mode", scale=3)
                     byom_bits = gr.Radio(list(BYOM_BITS.values()), value=BYOM_BITS[0], label="Compress to", scale=2)
+                byom_budget = gr.Radio(list(BYOM_BUDGETS.values()), value=BYOM_BUDGETS[0.10],
+                                       label="Repair budget: the most of the model kept at 8-bit (smaller keeps it "
+                                             "smaller; larger brings more fairness back)")
                 with gr.Row():
                     byom_go = gr.Button("▶ Diagnose", variant="primary", interactive=bool(byom and byom.runner))
                     byom_cancel = gr.Button("■ Cancel", interactive=bool(byom and byom.runner))
@@ -1160,7 +1164,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 after_job(backend, runner)
                 return byom_view(runner)
 
-            def byom_start(model, mode, bits):
+            def byom_start(model, mode, bits, budget):
                 if getattr(backend, "reloading", False):
                     gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
                                "(about a minute). Press Diagnose again in a moment.")
@@ -1171,7 +1175,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Info("Tab 6's API (serving your last repaired model) was stopped to make room for this "
                             "diagnosis.")
                 try:
-                    runner.start(model, mode, bits)
+                    runner.start(model, mode, bits, budget)
                 except (ValueError, JobBusy, RuntimeError) as error:
                     gr.Warning(str(error))
                 else:
@@ -1183,7 +1187,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Info("Nothing is running.")
                 return byom_view(runner)
 
-            byom_go.click(byom_start, [byom_model, byom_mode, byom_bits], byom_outputs, concurrency_id="byom")
+            byom_go.click(byom_start, [byom_model, byom_mode, byom_bits, byom_budget], byom_outputs,
+                          concurrency_id="byom")
             byom_cancel.click(byom_stop, None, byom_outputs, concurrency_id="byom")
             gr.Timer(1.5).tick(byom_refresh, None, byom_outputs, concurrency_id="byom", show_progress="hidden")
             app.load(byom_refresh, None, byom_outputs)

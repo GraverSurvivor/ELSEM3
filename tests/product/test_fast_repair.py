@@ -544,7 +544,8 @@ def test_four_bit_compression_is_offered_end_to_end(tmp_path, monkeypatch):
 
     from src.product.byom import check_bits, pipeline_command
 
-    assert pipeline_command("real", "x/y", "fast", 1000, tmp_path, base_nbits=4)[-2:] == ["--base-nbits", "4"]
+    command = pipeline_command("real", "x/y", "fast", 1000, tmp_path, base_nbits=4, budget=0.05)
+    assert command[-4:] == ["--base-nbits", "4", "--max-restore", "0.05"]
     assert check_bits("4-bit: a little bigger, much less damage") == 4
 
 
@@ -613,7 +614,7 @@ class DiffuseDamage(FakeBackend):
 
 
 def test_damage_spread_over_the_whole_model_is_still_repaired_to_a_real_pass(tmp_path):
-    report, _, out = _run(tmp_path, backend=DiffuseDamage(), questions=400)
+    report, _, out = _run(tmp_path, backend=DiffuseDamage(), questions=400, max_restore=0)  # no budget
     assert len(report["kept"]) > 8  # more than the scan's few parts were needed
     assert report["gate"] == "PASS" and report["outcome"] == "repaired" and report["repair_verdict"] == "IMPROVED"
     assert report["recovery"]["lower"] > 0.8  # measured on held-out questions no decision saw
@@ -667,7 +668,7 @@ class DiffuseWithHedger(DiffuseDamage):
 
 
 def test_fairness_bought_by_hedging_never_passes(tmp_path):
-    report, _, _ = _run(tmp_path, backend=DiffuseWithHedger(), questions=400)
+    report, _, _ = _run(tmp_path, backend=DiffuseWithHedger(), questions=400, max_restore=0)
     assert H in report["kept"]  # repairing until fair had to go through the hedging part
     assert report["repaired"]["false_unknown"] > 0.3  # and the model now hedges
     assert report["gate"] == "FAIL" and any("states the answer" in f for f in report["gate_failures"])
@@ -736,3 +737,42 @@ def test_the_overshoot_of_the_last_batch_is_trimmed_to_what_is_needed():
 def test_without_enough_parts_everything_is_restored_and_nothing_trimmed():
     backend, kept = _until_fair(need=40, parts=30)  # never fair: 30 parts can't cover 40 kinds
     assert kept == backend.parts and backend.registry.reverts == 0
+
+
+
+# --- the repair budget: the point is a small model ----------------------------------------------------
+
+def test_the_repair_stays_within_its_budget_and_says_so(tmp_path):
+    report, _, _ = _run(tmp_path, backend=DiffuseDamage(), questions=400)  # default budget: 10%
+    adapter = adapter_for(TINY)
+    used = sum(adapter.params(p) for p in report["kept"]) / adapter.total_params()
+    assert used <= 0.10 + 1e-9 and report["restored_share"] <= 0.10 + 1e-9
+    assert report["restore_budget"] == 0.10 and "whole budget (10% of the model)" in report["budget_note"]
+    from src.product.byom import results_html
+
+    assert "most fairness that budget buys" in results_html(report)
+
+
+def test_small_parts_that_help_come_before_big_ones():
+    """Ranked by fairness per weight: an attention part that brings back as much as an MLP part five
+    times its size goes first."""
+    from src.product.fast_repair import repair_until_fair
+
+    backend = NeedsParts(need=1, parts=2)
+    big, small = backend.parts
+    sizes = {big: 500, small: 100}
+    from src.attribution.greedy_search import Trial
+
+    scan = type("S", (), {"trials": [Trial(round=1, path=big, usr=0, gain=0.5, kept=False),
+                                     Trial(round=1, path=small, usr=0, gain=0.4, kept=False)]})()
+    backend.parts = [small, big]  # question i is fixed by part i % 1 = the first: the small one
+    import tempfile
+
+    from src.product.fast_repair import Events
+
+    events = Events(Path(tempfile.mkdtemp()))
+    events.stage = "scan"
+    original = {id(it): it.unknown_index for it in AMBIG[:50]} | {id(it): it.label for it in DISAMBIG[:20]}
+    kept = repair_until_fair(backend, scan, [big, small], [], AMBIG[:50], original, FastRepairConfig(model_id="x/y"),
+                             events, stated=DISAMBIG[:20], size=sizes.get, budget=300)
+    assert kept == [small]  # best value first, and the big one never fit the budget anyway
