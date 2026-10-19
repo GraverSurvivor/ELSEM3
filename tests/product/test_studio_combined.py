@@ -134,3 +134,38 @@ def test_ship_says_there_is_nothing_to_ship_when_nothing_was_restored(tmp_path, 
     _, _, _, results, grid, patch_file, llama = byom_view(Done())
     assert patch_file is None and "Errno" not in llama and llama.startswith("# Nothing to ship")
     assert "No repair made" in results and "No parts were kept" in grid
+
+
+def test_a_typed_question_is_answered_by_the_live_models_in_all_six_orders():
+    """The live app's path for "write your own question", run on CPU with a tiny real model and Qwen's
+    real tokenizer and chat template: the prompt is built, all 6 choice orders are scored, and each
+    model gets one combined answer with a probability for every choice."""
+    torch = pytest.importorskip("torch")
+    from transformers import AutoModelForCausalLM, AutoTokenizer, Qwen2Config
+
+    from src.product.studio_core import QUESTION_TEMPLATES, answer_orders, combine_orders, make_question
+
+    try:
+        tok = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", local_files_only=True)
+    except OSError:
+        pytest.skip("Qwen tokenizer not cached")
+    torch.manual_seed(0)
+    tiny = AutoModelForCausalLM.from_config(Qwen2Config(hidden_size=64, intermediate_size=128, num_hidden_layers=2,
+                                                        num_attention_heads=4, num_key_value_heads=2,
+                                                        vocab_size=len(tok))).eval()
+    backend = object.__new__(LiveBackend)
+    backend.model = backend.original = tiny
+    backend.tokenizer, backend.device, backend.batch_size = tok, "cpu", 4
+    backend.registry = type("R", (), {"active": {}})()
+    backend._cache, backend._plain, backend.saved_original = {}, {}, {}
+    backend.original_away, backend.reloading, backend.wants_original = False, False, True
+
+    for name, fields in QUESTION_TEMPLATES.items():
+        item = make_question(*fields)
+        orders = answer_orders(item)
+        assert len(orders) == 6
+        for view in ("original", "compressed", "repaired"):
+            scored = backend.answers_for([o for o, _ in orders], view)
+            assert len(scored) == 6 and all(a.probs is not None and abs(sum(a.probs) - 1) < 1e-4 for a in scored)
+            answer, note = combine_orders(item, scored, [p for _, p in orders])
+            assert answer.pick in (0, 1, 2) and len(answer.probs) == 3, name

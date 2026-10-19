@@ -224,6 +224,17 @@ The scan's sample also holds up to 150 still-fair questions (`search_guard`: the
 answers "can't tell"), so a part that breaks fair answers loses what it gains on flipped ones: rerun on
 Qwen2.5-3B, the hedging fix alone still kept 2 parts that cut unseen "can't tell" 32% -> 23% (rejected).
 `--base-nbits 4` (tab 5: "Compress to") compresses to 4-bit for models that 3-bit wrecks.
+**Repair until fair (default, `until_fair`):** after the scan, `repair_until_fair` restores more parts --
+best first by their round-1 scan gain, in batches 4, 8, 16, ... -- until the search half's ambiguous
+questions are as fair as the original's ("can't tell" within 1 point, stereotyped within 0.5); all parts
+restored is the 8-bit model. Decided on the search half only, so the FairGate verdict on the held-out half
+is genuine; `restored_share` reports the cost. It also requires "can't tell" on stated-answer questions to
+stay within 2 points of the original, and the product verdict FAILs a repair that hedges 3+ points more
+(fairness bought by hedging, the Phase 2 trap, never passes). Automatic precision (`base_nbits` 0): 4-bit when 3-bit
+costs over 25 points of right answers. `repair_verdict` IMPROVED / NOT IMPROVED / WORSE. Downloads are a
+repair kit (`src/product/repair_kit.py`): README, a standalone `apply_repair.py` (transformers + hqq),
+patch.json, llama.cpp lines; tested by running the script on a tiny model. Typed questions are capped
+(story 1500, question 300, people 100 characters).
 `tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the

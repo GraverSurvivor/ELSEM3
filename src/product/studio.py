@@ -67,6 +67,8 @@ from .studio_core import (
     friendly_name,
     grid_html,
     make_question,
+    mentions_both,
+    QUESTION_TEMPLATES,
     module_path,
     path_from_friendly,
     pct_weights,
@@ -503,6 +505,8 @@ td.fg-cell {display: table-cell}
 .by-outcome-repaired {border-color: #bbf7d0; background: #f0fdf4}
 .by-outcome-not_applicable, .by-outcome-no_gain {border-color: #fde68a; background: #fffbeb}
 .by-outcome-rejected {border-color: #fecaca; background: #fef2f2}
+.by-repair-verdict {font-size: 18px; margin: 6px 0} .by-repair-verdict span {font-size: 13px; opacity: .8}
+.by-rv-improved b {color: #15803d} .by-rv-worse b {color: #b91c1c} .by-rv-improved, .by-rv-worse {}
 .by-note-precision {margin: 4px 0; padding: 6px 12px; border-left: 3px solid #6366f1; background: #eef2ff}
 .by-card-none p {font-size: 13px; opacity: .85}
 .by-gate-na {background: #f3f4f6}
@@ -580,7 +584,7 @@ def byom_view(runner: JobRunner) -> tuple:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         llama = f"# The llama.cpp settings couldn't be written for this model ({error}); patch.json still applies."
     return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report),
-            str(patch_path) if patch_path.exists() else None, llama)
+            str(job_dir / "repair_kit.zip") if (job_dir / "repair_kit.zip").exists() else str(patch_path), llama)
 
 
 def gr_update(**kwargs):
@@ -732,7 +736,16 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
             item = make_question(story, question, a, b)
         except ValueError as error:
             return no_change(7, str(error))
+        missing = mentions_both(story, a, b)
+        if missing:  # a hint, not a refusal: the story may describe them in other words
+            gr.Info(f"Check the story mentions {' and '.join(missing)}: the models choose between the two people "
+                    "it describes.")
         return (item, item, False, *render(item, False))
+
+    def fill_template(name):
+        if name not in QUESTION_TEMPLATES:
+            return gr.update(), gr.update(), gr.update(), gr.update()
+        return QUESTION_TEMPLATES[name]
 
     def rerender(item, swapped, base_item):
         return render(item, swapped, base_item)
@@ -872,7 +885,11 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
         summary = (f"**Your repair: {len(paths)} part{'s' if len(paths) != 1 else ''}, {pct_weights(paths):.1f}% of the weights, "
                    f"+{backend.overhead_mb():.0f} MB.**  \nAdd these to `llama-quantize` to ship the same "
                    "repair in a llama.cpp model:")
-        return summary, "\n".join(llamacpp_overrides(patch)), str(out)
+        from src.product.repair_kit import build_kit
+
+        lines = llamacpp_overrides(patch)
+        kit = build_kit(patch.to_dict(), {"memory_mb": backend.overhead_mb()}, lines, out.with_suffix(".zip"))
+        return summary, "\n".join(lines), str(kit)
 
     # --- layout ------------------------------------------------------------------------------------
     with gr.Blocks(**blocks_kwargs) as app:
@@ -910,6 +927,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                 with gr.Row(equal_height=True):
                     card_original, card_compressed, card_repaired = gr.HTML(), gr.HTML(), gr.HTML()
                 with gr.Accordion("✏️ Write your own question", open=False):
+                    template_dd = gr.Dropdown(["(start from scratch)", *QUESTION_TEMPLATES],
+                                              value="(start from scratch)", label="Start from a ready-made question "
+                                              "(then change anything you like)")
                     story_in = gr.Textbox(label="Story (don't say who did it)", lines=2,
                                           placeholder="A nurse and a mechanic were waiting at the bus stop when "
                                                       "someone dropped a wallet.")
@@ -987,7 +1007,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                 export_btn = gr.Button("⬇ Download my repair", variant="primary")
                 export_md = gr.Markdown()
                 export_code = gr.Code(label="llama.cpp settings", language="shell")
-                export_file = gr.File(label="Patch file")
+                export_file = gr.File(label="Repair kit (.zip): README, apply_repair.py, patch, llama.cpp settings")
 
             with gr.Tab("5 · Your model", id="byom"):
                 gr.HTML(_help(
@@ -1019,7 +1039,11 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                     gr.Markdown("#### Parts kept at 8-bit")
                     byom_grid = gr.HTML()
                     gr.Markdown("#### Ship the repair")
-                    byom_patch = gr.File(label="Patch file (patch.json)")
+                    gr.Markdown("**Download the repair kit** (one .zip). Inside: a README in plain words; "
+                                "`apply_repair.py` (one command builds the repaired model); `serve_repair.py` (runs it "
+                                "as an **OpenAI-compatible API with your own API key**, on your machine); the patch; "
+                                "and llama.cpp settings.")
+                    byom_patch = gr.File(label="Repair kit (.zip)")
                     byom_llama = gr.Code(label="llama.cpp settings (add to llama-quantize)", language="shell")
 
         # --- events ----------------------------------------------------------------------------
@@ -1029,6 +1053,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
         start_btn.click(lambda: gr.Tabs(selected="ask"), None, tabs)
         example_dd.change(choose_example, example_dd, [item_state, base_state, swapped_state, *ask_outputs])
         swap_btn.click(toggle_swap, [base_state, swapped_state], [item_state, swapped_state, *ask_outputs])
+        template_dd.change(fill_template, template_dd, [story_in, question_in, a_in, b_in])
         custom_btn.click(ask_custom, [story_in, question_in, a_in, b_in],
                          [item_state, base_state, swapped_state, *ask_outputs])
         ask_tab.select(rerender, [item_state, swapped_state, base_state], ask_outputs)

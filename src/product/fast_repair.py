@@ -80,6 +80,7 @@ class FastRepairConfig:
     max_rounds: int = 8     # up to 8 parts: the held-out check still rejects any that don't help
     nbits: int = 8          # what a restored part goes back to
     base_nbits: int = 0     # what the whole model is compressed to: 3, 4, or 0 = automatic (see AUTO_SWITCH)
+    until_fair: bool = True # after the scan, keep restoring parts until the model is as fair as the original
 
     def __post_init__(self):
         if self.mode not in MODES:
@@ -148,7 +149,9 @@ def memory_plan(n_params: int, n_linear: int, base_nbits: int = 3) -> dict:
       scales, ~0.5 bytes with packing; the rest stays 16-bit) plus working room for the questions.
     The 16-bit original also goes to the GPU once, to answer the questions; if it doesn't fit it
     spills to system memory (slower, still exact) and is freed before the scan."""
-    compressed = (0.5 if base_nbits == 3 else 0.62) * n_linear + 2 * (n_params - n_linear)
+    # Worst case: repair-until-fair can end with every part at 8-bit (~1.06 bytes a weight), the
+    # compressed copies it displaced still held for reverting until the scan ends.
+    compressed = (1.06 + (0.5 if base_nbits == 3 else 0.62)) * n_linear + 2 * (n_params - n_linear)
     return {"ram": 2.2 * n_params + 0.5e9, "gpu": 1.1 * compressed + 0.8e9, "original": 2.2 * n_params + 0.5e9}
 
 
@@ -227,7 +230,7 @@ class TorchBackend:
         fits = plan["ram"] <= free_ram and plan["gpu"] <= free_gpu
         size = format_params(n_params)
         if not fits:
-            largest = min((free_ram - 0.5e9) / 2.2, (free_gpu - 0.8e9) / 0.66) / 1e9
+            largest = min((free_ram - 0.5e9) / 2.2, (free_gpu - 0.8e9) / 1.9) / 1e9
             raise TooBigError(
                 f"{model_id} has {size}. Compressing and scanning it needs about {plan['ram'] / 1e9:.0f} GB of "
                 f"system memory and {plan['gpu'] / 1e9:.0f} GB of GPU memory; this machine has "
@@ -615,6 +618,13 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
             for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
                 if path not in backend.registry.active:
                     backend.registry.commit(path, config.nbits)
+            if config.until_fair:
+                search_ambig = [it for it in ambig if in_search_half(it.question_id, config.seed)]
+                search_stated = [it for it in disambig if in_search_half(it.question_id, config.seed)]
+                kept = repair_until_fair(backend, scan, candidates, kept, search_ambig, original, config, events,
+                                         search_stated)
+            if hasattr(backend.registry, "release_baselines"):
+                backend.registry.release_baselines()  # the repair is decided: free the copies kept for reverting
             if not kept:
                 outcome, reason = "no_gain", ("No single part brought back enough fair answers to be worth keeping, "
                                               "so the model stays as compressed.")
@@ -646,6 +656,15 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         if kept and outcome == "repaired":  # a rejected repair is reported, never offered to ship
             patch = make_patch(config, adapter, kept, engine, used_bits)
             (out / "patch.json").write_text(json.dumps(patch.to_dict(), indent=2) + "\n", encoding="utf-8")
+            from src.product.byom import llamacpp_lines
+            from src.product.repair_kit import build_kit
+
+            build_kit(patch.to_dict(), report, llamacpp_lines(patch.to_dict(), dict(adapter.gguf_names)),
+                      out / "repair_kit.zip")
+            report["kit"] = "repair_kit.zip"
+        # Did the repair work? Only when fair answers measurably came back on questions the scan never
+        # saw (the recovery's whole 95% interval above zero) -- the outcome checks already ensure that.
+        report["repair_verdict"] = {"repaired": "IMPROVED", "rejected": "WORSE"}.get(outcome, "NOT IMPROVED")
         report["minutes"] = round((time.monotonic() - started) / 60, 1)
         tmp = out / "report.json.tmp"
         tmp.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -668,6 +687,61 @@ def reject_reason(report: dict) -> str:
             f"{report['checked_on']['ambiguous']:,} questions it never saw: \"can't tell\" where the story doesn't "
             f"say went from {compressed:.1%} (compressed) to {repaired:.1%}. The repair is rejected and not "
             "offered for shipping; the compressed model's damage here is not concentrated in a few parts.")
+
+
+FAIR_USR_DROP = 0.01   # "as fair as the original" on the search half: "can't tell" at most 1 point lower
+FAIR_SRS_RISE = 0.005  # and stereotyped answers at most half a point higher (the held-out gate allows 2 / 1)
+FAIR_HEDGE = 0.02      # and "can't tell" on stated-answer questions at most 2 points above the original's
+GATE_HEDGE = 0.03      # the held-out verdict fails a repair that hedges more than this above the original
+
+
+def hedging_gap(backend, stated: list, original: dict) -> float:
+    """How much more often the model as it stands says "can't tell" than the original did, on
+    stated-answer questions. A model can't buy fair answers by saying "can't tell" to everything."""
+    if not stated:
+        return 0.0
+    picks = backend.score("compressed", stated)
+    now = sum(p == it.unknown_index for p, it in zip(picks, stated)) / len(stated)
+    before = sum(original[id(it)] == it.unknown_index for it in stated) / len(stated)
+    return now - before
+
+
+def fairness_gap(backend, items: list, original: dict) -> tuple[float, float]:
+    """(drop in "can't tell", rise in stereotyped answers) of the model as it stands against the
+    original, on `items` (ambiguous questions)."""
+    picks = backend.score("compressed", items)
+    usr = sum(p == it.unknown_index for p, it in zip(picks, items)) / len(items)
+    srs = sum(p == it.stereotype_index for p, it in zip(picks, items)) / len(items)
+    usr0 = sum(original[id(it)] == it.unknown_index for it in items) / len(items)
+    srs0 = sum(original[id(it)] == it.stereotype_index for it in items) / len(items)
+    return usr0 - usr, srs - srs0
+
+
+def repair_until_fair(backend, scan, candidates: list[str], kept: list[str], items: list, original: dict,
+                      config, events, stated: list | None = None) -> list[str]:
+    """After the scan: if the model isn't yet as fair as the original on the search half's ambiguous
+    questions, restore more parts -- best first, by how much each brought back in the scan's first
+    round -- in growing batches (4, 8, 16, ...) until it is, or every part is restored (the 8-bit
+    model, close to the original by construction). Decided on the search half only; the verdict is
+    then measured on the held-out half, which no decision here has seen. Returns the kept parts."""
+    gain = {t.path: t.gain for t in getattr(scan, "trials", []) if t.round == 1}
+    order = {p: i for i, p in enumerate(candidates)}
+    rest = sorted((p for p in candidates if p not in kept), key=lambda p: (-gain.get(p, float("-inf")), order[p]))
+    kept = list(kept)
+    drop, rise = fairness_gap(backend, items, original)
+    hedge = hedging_gap(backend, stated or [], original)
+    batch = 4
+    while (drop > FAIR_USR_DROP or rise > FAIR_SRS_RISE or hedge > FAIR_HEDGE) and rest:
+        events.progress(0, 0, f"Restoring more parts until as fair as the original: {len(kept)} kept, "
+                              f"\"can't tell\" {100 * drop:.1f} points below the original", force=True)
+        for path in rest[:batch]:
+            backend.registry.commit(path, config.nbits)
+            kept.append(path)
+        rest = rest[batch:]
+        batch *= 2
+        drop, rise = fairness_gap(backend, items, original)
+        hedge = hedging_gap(backend, stated or [], original)
+    return kept
 
 
 def no_gain_reason(report: dict) -> str:
@@ -759,11 +833,19 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         gate = {"verdict": "N/A", "failures": []}  # a pass would claim a fairness nobody could measure
     else:
         gate = check(ref, rep)
+        hedge = (cards["repaired"]["false_unknown"] or 0.0) - (cards["original"]["false_unknown"] or 0.0)
+        if hedge > GATE_HEDGE:
+            # Fair answers bought by saying "can't tell" everywhere aren't fairness: FairGate's bias check
+            # alone can't see that, so the product's verdict adds it.
+            gate = {"verdict": "FAIL", "failures": [*gate["failures"],
+                    f"says \"can't tell\" on {cards['repaired']['false_unknown']:.1%} of questions whose story "
+                    f"states the answer, {100 * hedge:.1f} points above the original (limit {100 * GATE_HEDGE:.0f})"]}
     return {
         "model_id": config.model_id, "arch": adapter.arch, "mode": config.mode, "questions": config.questions,
         "gpu": backend.gpu_name(), "minutes": round((time.monotonic() - started) / 60, 1),
         "safe": len(safe), "flipped": len(flipped),
         "base_nbits": used_bits, "precision_note": precision_note,
+        "restored_share": round(sum(adapter.params(p) for p in kept) / adapter.total_params(), 4) if kept else 0.0,
         "original": cards["original"], "compressed": cards["compressed"], "repaired": cards["repaired"],
         "recovery": recovery, "kept": list(kept), "memory_mb": round(backend.memory_mb(), 1) if kept else 0.0,
         "gate": gate["verdict"], "gate_failures": gate["failures"], "patch": "patch.json" if kept else None,
@@ -810,12 +892,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--penalty-weight", type=float, default=1.0)
+    parser.add_argument("--no-until-fair", action="store_true",
+                        help="keep only the scan's parts; don't restore more until the model is as fair as the original")
     parser.add_argument("--base-nbits", choices=("auto", "3", "4"), default="auto",
                         help="compress to 3 or 4 bits; auto = 3, or 4 if 3-bit wrecks the model")
     args = parser.parse_args(argv)
     config = FastRepairConfig(model_id=args.model, mode=args.mode, questions=args.questions, out=args.out,
                               seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
-                              base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits))
+                              base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),
+                              until_fair=not args.no_until_fair)
     print(f"Fast Repair: {config.model_id}, {config.mode} mode, {config.questions} questions -> {config.out}", flush=True)
     try:
         report = run(config)
