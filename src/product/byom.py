@@ -33,7 +33,7 @@ from pathlib import Path
 # The pipeline's stages, in order (contract C4), with the words the screen uses for them.
 STAGES = (
     ("download", "Download the model"),
-    ("quantize", "Compress to 3-bit"),
+    ("quantize", "Compress the model"),
     ("score_original", "Ask the original model"),
     ("score_3bit", "Ask the compressed model"),
     ("find_damage", "Find the damage"),
@@ -102,6 +102,17 @@ def check_model_id(text: str | None) -> str:
         raise ValueError(f"\"{model_id}\" isn't a Hugging Face model name. It should look like owner/name, "
                          "for example Qwen/Qwen2.5-3B-Instruct.")
     return model_id
+
+
+BUDGETS = {0.05: "Small: up to 5% of the model", 0.10: "Balanced: up to 10% (recommended)",
+           0.0: "No limit: as fair as the original, whatever it takes"}
+
+
+def check_budget(budget) -> float:
+    for key, label in BUDGETS.items():
+        if budget == label or (isinstance(budget, (int, float)) and abs(float(budget) - key) < 1e-9):
+            return key
+    raise ValueError("Pick a repair budget.")
 
 
 BITS = {0: "Automatic: 3-bit, or 4-bit if 3-bit breaks the model",
@@ -360,6 +371,8 @@ def results_html(report: dict) -> str:
     if checked.get("ambiguous"):
         facts.append(f"cards measured on {int(checked['ambiguous']) + int(checked.get('stated_answer', 0)):,} "
                      "questions the scan never saw")
+    if report.get("restore_budget"):
+        facts.append(f"repair budget {100 * float(report['restore_budget']):.0f}%")
     if report.get("restored_share"):
         facts.append(f"{100 * float(report['restored_share']):.1f}% of the model kept at 8-bit")
     if report.get("memory_mb") is not None:
@@ -379,9 +392,11 @@ def results_html(report: dict) -> str:
     elif report.get("replayed_from"):
         banner = (f'<div class="by-banner">A recorded real run ({html.escape(str(report["replayed_from"]))}), '
                   'replayed for the demo.</div>')
+    budget_note = report.get("budget_note")
     note = report.get("precision_note")
     headline = (f'<div class="by-note-precision">{html.escape(note)}.</div>' if note else "") + (f'<div class="by-outcome by-outcome-{outcome}"><b>{html.escape(OUTCOME_TITLES[outcome])}</b>'
-                + (f'<p>{html.escape(reason)}</p>' if reason and outcome != "repaired" else "") + "</div>")
+                + (f'<p>{html.escape(reason)}</p>' if reason and outcome != "repaired" else "")
+                + (f'<p>{html.escape(budget_note)}</p>' if budget_note else "") + "</div>")
     if recovery.get("point") is not None:
         recovered = (f'<div class="by-recovery">Fairness recovered: <b>{_pct(recovery.get("point"))}</b> '
                      f'<span>(95% interval {_pct(recovery.get("lower"))} to {_pct(recovery.get("upper"))})</span></div>')
@@ -503,11 +518,11 @@ class JobBusy(RuntimeError):
 
 
 def pipeline_command(kind: str, model_id: str, mode: str, questions: int, out: Path,
-                     replay: Path | None = None, speed: float = 30.0, base_nbits: int = 0) -> list[str]:
+                     replay: Path | None = None, speed: float = 30.0, base_nbits: int = 0, budget: float = 0.10) -> list[str]:
     """The process to start. "real" is the sprint's fast_repair pipeline (Person 1); "fake" and
     "replay" are the stand-in in src/product/byom_fake.py."""
     args = ["--model", model_id, "--mode", mode, "--questions", str(questions), "--out", str(out),
-            "--base-nbits", str(base_nbits or "auto")]
+            "--base-nbits", str(base_nbits or "auto"), "--max-restore", str(budget)]
     if kind == "real":
         return [sys.executable, "-m", "src.product.fast_repair", *args]
     extra = ["--speed", str(speed)]
@@ -595,9 +610,9 @@ class JobRunner:
         return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
 
     # actions
-    def start(self, model_id: str, mode: str, base_nbits: int = 0) -> Path:
+    def start(self, model_id: str, mode: str, base_nbits: int = 0, budget: float = 0.10) -> Path:
         model_id, mode = check_model_id(model_id), check_mode(mode)
-        base_nbits = check_bits(base_nbits)
+        base_nbits, budget = check_bits(base_nbits), check_budget(budget)
         current = self.current()
         if current is not None and self.is_running(current):
             info = self.job_info(current)
@@ -610,7 +625,7 @@ class JobRunner:
         job_dir = self.jobs_dir / f"{stamp}_{_slug(model_id)}"
         job_dir.mkdir(parents=True)
         command = pipeline_command(self.pipeline, model_id, mode, self.questions, job_dir, self.replay, self.speed,
-                                   base_nbits=base_nbits)
+                                   base_nbits=base_nbits, budget=budget)
         log = (job_dir / "pipeline.log").open("w", encoding="utf-8")
         kwargs = {"start_new_session": True} if os.name != "nt" else {
             "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
