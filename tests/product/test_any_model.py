@@ -123,7 +123,7 @@ def test_a_model_too_big_for_the_machine_is_refused_before_downloading(tmp_path,
 
     folder = _save("qwen2", tmp_path, tokenizer)
     monkeypatch.setattr(psutil, "virtual_memory", lambda: type("M", (), {"available": 0.5e9})())
-    with pytest.raises(TooBigError, match="system memory"):
+    with pytest.raises(TooBigError, match="Even built layer by layer"):  # low memory tries layer by layer first
         TorchBackend(device="cpu").preflight(str(folder))
 
 
