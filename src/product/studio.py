@@ -1039,9 +1039,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                     gr.Markdown("#### Parts kept at 8-bit")
                     byom_grid = gr.HTML()
                     gr.Markdown("#### Ship the repair")
-                    gr.Markdown("**Download the repair kit** (one .zip): a README in plain words, `apply_repair.py` "
-                                "(run it to get the repaired model: one command, works offline), the patch, and "
-                                "llama.cpp settings.")
+                    gr.Markdown("**Download the repair kit** (one .zip). Inside: a README in plain words; "
+                                "`apply_repair.py` (one command builds the repaired model); `serve_repair.py` (runs it "
+                                "as an **OpenAI-compatible API with your own API key**, on your machine); the patch; "
+                                "and llama.cpp settings.")
                     byom_patch = gr.File(label="Repair kit (.zip)")
                     byom_llama = gr.Code(label="llama.cpp settings (add to llama-quantize)", language="shell")
 

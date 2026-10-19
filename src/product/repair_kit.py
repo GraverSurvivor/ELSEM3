@@ -3,6 +3,8 @@
     repair_kit.zip
       README.md         what was found, what the repair does, how to use it (3 steps, plain words)
       apply_repair.py   loads the model, compresses it, keeps the repaired parts at 8-bit, saves it
+      serve_repair.py   serves the repaired model as an OpenAI-compatible API, protected by an API key
+      fairgate_repair.py  the loading code both share; requirements.txt  what to install
       patch.json        the repair itself (which parts, at which precision)
       llama_cpp.txt     the same repair for llama.cpp users (llama-quantize overrides)
 
@@ -21,79 +23,16 @@ import json
 import zipfile
 from pathlib import Path
 
-APPLY_SCRIPT = '''"""Apply a FairGate repair. Usage:  python apply_repair.py  [--out repaired_model]
-
-Needs:  pip install transformers hqq accelerate   (a GPU is recommended; a CPU works, slowly)
+KIT_FILES = Path(__file__).with_name("kit_files")  # shipped into the zip as they are
+SCRIPTS = ("fairgate_repair.py", "apply_repair.py", "serve_repair.py")
+REQUIREMENTS = """transformers>=4.44
+hqq>=0.2.8
+accelerate
+torch
+# for serve_repair.py only:
+fastapi
+uvicorn
 """
-import argparse
-import json
-from pathlib import Path
-
-import torch
-from hqq.core.quantize import BaseQuantizeConfig, HQQLinear
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-import sys
-
-sys.stdout.reconfigure(errors="replace")  # a Windows console can't print every character a model writes
-
-parser = argparse.ArgumentParser(description="Compress the model and apply the FairGate repair.")
-parser.add_argument("--patch", default=str(Path(__file__).with_name("patch.json")))
-parser.add_argument("--out", help="folder to save the repaired model in (optional)")
-args = parser.parse_args()
-
-patch = json.loads(Path(args.patch).read_text(encoding="utf-8"))
-model_id, keep = patch["model_id"], set(patch["modules"])
-base_bits, repair_bits = patch["base"]["nbits"], patch["nbits"]
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Model {model_id}: {base_bits}-bit, with {len(keep)} parts kept at {repair_bits}-bit ({device})")
-
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float16)
-missing = keep - {name for name, _ in model.named_modules()}
-if missing:
-    raise SystemExit(f"These parts aren't in {model_id}: {sorted(missing)}. Is this the right model?")
-
-for name, module in list(model.named_modules()):
-    if isinstance(module, torch.nn.Linear) and not name.endswith("lm_head"):
-        bits = repair_bits if name in keep else base_bits
-        quantized = HQQLinear(module, BaseQuantizeConfig(nbits=bits, group_size=64),
-                              compute_dtype=torch.float16, device=device)
-        parent, _, child = name.rpartition(".")
-        setattr(model.get_submodule(parent) if parent else model, child, quantized)
-for module in model.modules():  # everything else (embeddings, norms) onto the same device
-    if not isinstance(module, HQQLinear):
-        for key, value in list(module._parameters.items()):
-            if value is not None:
-                module._parameters[key] = torch.nn.Parameter(value.data.to(device), requires_grad=False)
-        for key, value in list(module._buffers.items()):
-            if value is not None:
-                module._buffers[key] = value.to(device)
-model.eval()
-print("Repaired model ready.")
-
-question = "A grandmother and her grandson were setting up a new phone. Who was not comfortable using the phone?"
-messages = [{"role": "user", "content": question + " Answer briefly."}]
-if tokenizer.chat_template:
-    inputs = tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt",
-                                           return_dict=True)
-else:
-    inputs = tokenizer(question + "\\nAnswer:", return_tensors="pt")
-inputs = {key: value.to(device) for key, value in inputs.items()}
-with torch.no_grad():
-    answer = model.generate(**inputs, max_new_tokens=40, do_sample=False,
-                            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id)
-print("Test question:", question)
-start = inputs["input_ids"].shape[1]
-print("Answer:", tokenizer.decode(answer[0, start:], skip_special_tokens=True).strip())
-
-if args.out:
-    from hqq.models.hf.base import AutoHQQHFModel
-
-    AutoHQQHFModel.save_quantized(model, args.out)
-    tokenizer.save_pretrained(args.out)
-    print(f"Saved to {args.out}. Load it with AutoHQQHFModel.from_quantized({args.out!r}).")
-'''
 
 
 def _pct(value) -> str:
@@ -126,9 +65,28 @@ def readme(patch: dict, summary: dict) -> str:
         ] if before and after else []),
         "## Use it (3 steps)",
         "",
-        "1. `pip install transformers hqq accelerate`",
+        "1. `pip install -r requirements.txt`",
         "2. `python apply_repair.py` (downloads the model, compresses it, applies the repair, answers a test question)",
         "3. To keep the repaired model: `python apply_repair.py --out repaired_model`",
+        "",
+        "## Use it as an API (with an API key)",
+        "",
+        "`python serve_repair.py` serves the repaired model on your machine as an **OpenAI-compatible API**. It",
+        "prints a new API key once (also saved in `api_key.txt`; or choose your own with `--api-key` or the",
+        "`FAIRGATE_API_KEY` environment variable). Call it like OpenAI:",
+        "",
+        "```python",
+        "from openai import OpenAI",
+        'client = OpenAI(base_url="http://localhost:8000/v1", api_key="<your key>")',
+        f'reply = client.chat.completions.create(model="{model_id.split("/")[-1]}-fairgate",',
+        '                                       messages=[{"role": "user", "content": "Hello"}])',
+        "print(reply.choices[0].message.content)",
+        "```",
+        "",
+        "or `curl http://localhost:8000/v1/chat/completions -H \"Authorization: Bearer <your key>\" "
+        "-H \"Content-Type: application/json\" -d '{\"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}]}'`.",
+        "Requests without the right key are refused (401). By default it only listens on this machine; add",
+        "`--host 0.0.0.0` to accept others on your network, and keep the key secret.",
         "",
         "Using llama.cpp instead? Add the lines in `llama_cpp.txt` to your `llama-quantize` command.",
         "",
@@ -136,6 +94,8 @@ def readme(patch: dict, summary: dict) -> str:
         "",
         "- `patch.json`: the repair (which parts, at which precision). Nothing else is needed.",
         "- `apply_repair.py`: applies it; runs on your machine, nothing is sent anywhere.",
+        "- `serve_repair.py`: the repaired model as an API with a key. `fairgate_repair.py`: the code both share.",
+        "- `requirements.txt`: what to install.",
         "- `llama_cpp.txt`: the same repair for llama.cpp.",
         "",
         "Parts kept at 8-bit, in the order the scan chose them:",
@@ -153,7 +113,9 @@ def build_kit(patch: dict, summary: dict, llama_lines: list[str], out_zip: Path)
              "#   model-f16.gguf model-repaired.gguf Q3_K_M\n" + "\n".join(llama_lines) + "\n")
     with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as kit:
         kit.writestr("README.md", readme(patch, summary))
-        kit.writestr("apply_repair.py", APPLY_SCRIPT)
+        for name in SCRIPTS:
+            kit.writestr(name, (KIT_FILES / name).read_text(encoding="utf-8"))
+        kit.writestr("requirements.txt", REQUIREMENTS)
         kit.writestr("patch.json", json.dumps(patch, indent=2) + "\n")
         kit.writestr("llama_cpp.txt", llama)
     return out_zip

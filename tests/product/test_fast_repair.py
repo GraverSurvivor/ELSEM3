@@ -620,11 +620,14 @@ def test_damage_spread_over_the_whole_model_is_still_repaired_to_a_real_pass(tmp
     import zipfile
 
     with zipfile.ZipFile(out / "repair_kit.zip") as kit:
-        assert sorted(kit.namelist()) == ["README.md", "apply_repair.py", "llama_cpp.txt", "patch.json"]
+        assert sorted(kit.namelist()) == ["README.md", "apply_repair.py", "fairgate_repair.py", "llama_cpp.txt",
+                                          "patch.json", "requirements.txt", "serve_repair.py"]
         readme = kit.read("README.md").decode()
         assert "python apply_repair.py" in readme and "Fairness recovered" in readme
         assert json.loads(kit.read("patch.json"))["modules"] == report["kept"]
-        compile(kit.read("apply_repair.py").decode(), "apply_repair.py", "exec")  # valid Python
+        for name in ("apply_repair.py", "serve_repair.py", "fairgate_repair.py"):
+            compile(kit.read(name).decode(), name, "exec")  # valid Python
+        assert "Use it as an API (with an API key)" in readme
 
 
 def test_without_until_fair_the_same_model_is_only_partly_repaired(tmp_path):
