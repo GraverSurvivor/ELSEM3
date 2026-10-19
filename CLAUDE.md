@@ -228,7 +228,9 @@ Qwen2.5-3B, the hedging fix alone still kept 2 parts that cut unseen "can't tell
 best first by their round-1 scan gain, in batches 4, 8, 16, ... -- until the search half's ambiguous
 questions are as fair as the original's ("can't tell" within 1 point, stereotyped within 0.5); all parts
 restored is the 8-bit model. Decided on the search half only, so the FairGate verdict on the held-out half
-is genuine; `restored_share` reports the cost. Automatic precision (`base_nbits` 0): 4-bit when 3-bit
+is genuine; `restored_share` reports the cost. It also requires "can't tell" on stated-answer questions to
+stay within 2 points of the original, and the product verdict FAILs a repair that hedges 3+ points more
+(fairness bought by hedging, the Phase 2 trap, never passes). Automatic precision (`base_nbits` 0): 4-bit when 3-bit
 costs over 25 points of right answers. `repair_verdict` IMPROVED / NOT IMPROVED / WORSE. Downloads are a
 repair kit (`src/product/repair_kit.py`): README, a standalone `apply_repair.py` (transformers + hqq),
 patch.json, llama.cpp lines; tested by running the script on a tiny model. Typed questions are capped

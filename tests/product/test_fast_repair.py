@@ -452,7 +452,7 @@ class HedgingCompressed(FakeBackend):
 
 
 def test_removing_the_compressions_hedging_does_not_buy_a_part_its_place(tmp_path):
-    report, _, _ = _run(tmp_path, backend=HedgingCompressed())
+    report, _, _ = _run(tmp_path, backend=HedgingCompressed(), until_fair=False)  # the scan's own choice
     assert R not in report["kept"] and set(report["kept"]) == {A, B}
     assert report["outcome"] == "repaired" and report["repaired"]["usr"] > report["compressed"]["usr"]
 
@@ -603,7 +603,9 @@ class DiffuseDamage(FakeBackend):
 
     def _answer(self, view, item, restored):
         i = item.example_id % 10_000
-        if view == "original" or item.label != item.unknown_index:
+        if item.label != item.unknown_index:
+            return item.label  # no part makes this model hedge
+        if view == "original":
             return super()._answer(view, item, restored)
         broken = i % 3 == 0 and i % 10 != 0 and PARTS[(i // 3) % len(PARTS)] not in restored
         return item.stereotype_index if (broken or i % 10 == 0) else item.unknown_index
@@ -628,3 +630,40 @@ def test_damage_spread_over_the_whole_model_is_still_repaired_to_a_real_pass(tmp
 def test_without_until_fair_the_same_model_is_only_partly_repaired(tmp_path):
     report, _, _ = _run(tmp_path, backend=DiffuseDamage(), questions=400, until_fair=False)
     assert len(report["kept"]) <= 8 and report["gate"] == "FAIL"
+
+
+def test_the_size_check_budgets_for_a_repair_that_restores_every_part():
+    from src.product.fast_repair import memory_plan
+
+    plan = memory_plan(3_400_000_000, 2_800_000_000, base_nbits=4)
+    assert plan["gpu"] > 1.06 * 2_800_000_000  # every part at 8-bit fits, not just the 3/4-bit model
+
+
+def test_the_copies_kept_for_reverting_are_freed_once_the_repair_is_decided(tmp_path):
+    class Releasing(FakeBackend):
+        def __init__(self):
+            super().__init__()
+            self.registry.released = False
+            self.registry.release_baselines = lambda: setattr(self.registry, "released", True)
+
+    backend = Releasing()
+    _run(tmp_path, backend=backend)
+    assert backend.registry.released
+
+
+class DiffuseWithHedger(DiffuseDamage):
+    """Spread-out damage, and part H makes the model say "can't tell" even when the story states the
+    answer (as in the browser check: a PASS built on 48.5% hedging)."""
+
+    def _answer(self, view, item, restored):
+        if item.label != item.unknown_index:
+            i = item.example_id % 10_000
+            return item.unknown_index if (view != "original" and H in restored and i % 2 == 0) else item.label
+        return super()._answer(view, item, restored)
+
+
+def test_fairness_bought_by_hedging_never_passes(tmp_path):
+    report, _, _ = _run(tmp_path, backend=DiffuseWithHedger(), questions=400)
+    assert H in report["kept"]  # repairing until fair had to go through the hedging part
+    assert report["repaired"]["false_unknown"] > 0.3  # and the model now hedges
+    assert report["gate"] == "FAIL" and any("states the answer" in f for f in report["gate_failures"])

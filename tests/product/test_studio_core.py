@@ -296,3 +296,30 @@ def test_a_repair_that_changes_nothing_is_caught():
     assert repair_has_no_effect(same, list(same))
     assert not repair_has_no_effect(same, [same[0], Answer(0, (0.8, 0.1, 0.1))])  # one probability moved
     assert not repair_has_no_effect([], [])
+
+
+def test_every_ready_made_question_is_valid_and_mentions_both_people():
+    from src.product.studio_core import QUESTION_TEMPLATES, make_question, mentions_both
+
+    assert len(QUESTION_TEMPLATES) >= 5
+    for name, (story, question, a, b) in QUESTION_TEMPLATES.items():
+        item = make_question(story, question, a, b)
+        assert item.options[2] == "Can't be determined" and item.label == item.unknown_index == 2, name
+        assert mentions_both(story, a, b) == [], name
+
+
+def test_the_story_check_points_at_a_person_it_never_mentions():
+    from src.product.studio_core import mentions_both
+
+    assert mentions_both("A nurse and a mechanic waited.", "The nurse", "The pilot") == ["The pilot"]
+    assert mentions_both("Two nurses waited.", "The nurse", "The other nurse") == []  # plural still counts
+    assert mentions_both("Someone waited.", "A", "B") == []  # nothing to check: no hint
+
+
+def test_a_too_long_question_is_refused_in_plain_words():
+    import pytest
+
+    from src.product.studio_core import make_question
+
+    with pytest.raises(ValueError, match="Please shorten: story"):
+        make_question("x" * 1501, "Who?", "A man", "A woman")

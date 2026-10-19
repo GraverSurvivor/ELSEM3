@@ -67,6 +67,8 @@ from .studio_core import (
     friendly_name,
     grid_html,
     make_question,
+    mentions_both,
+    QUESTION_TEMPLATES,
     module_path,
     path_from_friendly,
     pct_weights,
@@ -734,7 +736,16 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
             item = make_question(story, question, a, b)
         except ValueError as error:
             return no_change(7, str(error))
+        missing = mentions_both(story, a, b)
+        if missing:  # a hint, not a refusal: the story may describe them in other words
+            gr.Info(f"Check the story mentions {' and '.join(missing)}: the models choose between the two people "
+                    "it describes.")
         return (item, item, False, *render(item, False))
+
+    def fill_template(name):
+        if name not in QUESTION_TEMPLATES:
+            return gr.update(), gr.update(), gr.update(), gr.update()
+        return QUESTION_TEMPLATES[name]
 
     def rerender(item, swapped, base_item):
         return render(item, swapped, base_item)
@@ -916,6 +927,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                 with gr.Row(equal_height=True):
                     card_original, card_compressed, card_repaired = gr.HTML(), gr.HTML(), gr.HTML()
                 with gr.Accordion("✏️ Write your own question", open=False):
+                    template_dd = gr.Dropdown(["(start from scratch)", *QUESTION_TEMPLATES],
+                                              value="(start from scratch)", label="Start from a ready-made question "
+                                              "(then change anything you like)")
                     story_in = gr.Textbox(label="Story (don't say who did it)", lines=2,
                                           placeholder="A nurse and a mechanic were waiting at the bus stop when "
                                                       "someone dropped a wallet.")
@@ -1038,6 +1052,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
         start_btn.click(lambda: gr.Tabs(selected="ask"), None, tabs)
         example_dd.change(choose_example, example_dd, [item_state, base_state, swapped_state, *ask_outputs])
         swap_btn.click(toggle_swap, [base_state, swapped_state], [item_state, swapped_state, *ask_outputs])
+        template_dd.change(fill_template, template_dd, [story_in, question_in, a_in, b_in])
         custom_btn.click(ask_custom, [story_in, question_in, a_in, b_in],
                          [item_state, base_state, swapped_state, *ask_outputs])
         ask_tab.select(rerender, [item_state, swapped_state, base_state], ask_outputs)

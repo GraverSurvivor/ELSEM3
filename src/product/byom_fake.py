@@ -216,6 +216,8 @@ def run_replay(args, writer: Writer) -> None:
             report["replayed_from"] = f"{source.name}, recorded {times[0]:%d %b %Y}"
             if (source / "patch.json").exists():  # a run that restored nothing has no patch
                 shutil.copy2(source / "patch.json", writer.out / "patch.json")
+                if (source / "repair_kit.zip").exists():
+                    shutil.copy2(source / "repair_kit.zip", writer.out / "repair_kit.zip")
             (writer.out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         writer.event(event["stage"], event["status"], event.get("done", 0), event.get("total", 0), message)
 
