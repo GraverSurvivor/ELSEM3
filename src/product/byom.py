@@ -345,7 +345,9 @@ def results_html(report: dict) -> str:
     A run that restored nothing shows no "repaired" card: it would only repeat the compressed one."""
     outcome, reason = report_outcome(report)
     cards = []
-    for key, title, sub in (("original", "Original model", "full precision"),
+    reference = ("8-bit reference (16-bit doesn't fit this GPU)" if report.get("reference_bits") == 8
+                 else "full precision")
+    for key, title, sub in (("original", "Original model", reference),
                             ("compressed", "Compressed model", f"{report.get('base_nbits') or 3}-bit"),
                             ("repaired", "Rejected repair" if outcome == "rejected" else "Repaired model",
                              f"{report.get('base_nbits') or 3}-bit + {len(report['kept'])} parts restored"
@@ -610,7 +612,10 @@ class JobRunner:
         return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
 
     # actions
-    def start(self, model_id: str, mode: str, base_nbits: int = 0, budget: float = 0.10) -> Path:
+    def start(self, model_id: str, mode: str, base_nbits: int = 0, budget: float = 0.10,
+              hf_token: str | None = None) -> Path:
+        """Starts a diagnosis. `hf_token` (for gated models) goes to this run's environment only: it is
+        never written to job.json, the log or anywhere else."""
         model_id, mode = check_model_id(model_id), check_mode(mode)
         base_nbits, budget = check_bits(base_nbits), check_budget(budget)
         current = self.current()
@@ -629,7 +634,10 @@ class JobRunner:
         log = (job_dir / "pipeline.log").open("w", encoding="utf-8")
         kwargs = {"start_new_session": True} if os.name != "nt" else {
             "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=Path.cwd(), **kwargs)
+        env = dict(os.environ)
+        if hf_token and hf_token.strip():
+            env["HF_TOKEN"] = hf_token.strip()
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=Path.cwd(), env=env, **kwargs)
         log.close()  # the child has its own handle
         self._processes[job_dir.name] = process
         self._write_info(job_dir, {"model_id": model_id, "mode": mode, "base_nbits": base_nbits,

@@ -210,7 +210,8 @@ class Backend(Protocol):
 class TorchBackend:
     """The real models: the original at fp16 and the HQQ 3-bit copy whose parts the scan swaps."""
 
-    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda", base_nbits: int = 3):
+    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda", base_nbits: int = 3,
+                 streaming: bool | None = None):
         base_nbits = base_nbits or 3  # automatic starts at 3-bit
         import torch
 
@@ -218,6 +219,12 @@ class TorchBackend:
             raise RuntimeError("No GPU found. Fast Repair needs a CUDA GPU (e.g. a Colab T4).")
         self.device, self.nbits, self.batch_size, self.base_nbits = device, nbits, batch_size, base_nbits
         self.original = self.compressed = self.tokenizer = self.registry = self._adapter = None
+        # Big models (the 16-bit copy doesn't fit the GPU or system memory): built layer by layer
+        # (src/quant/streaming.py), with an 8-bit reference standing in for the 16-bit original.
+        # None = decided by preflight from the free memory; True / False force it (tests).
+        self.streaming = streaming
+        self.reference_bits = 16
+        self._model_id = None
 
     def preflight(self, model_id: str) -> str:
         """Before downloading anything but config.json: does the model fit this machine? Counts the
@@ -237,8 +244,23 @@ class TorchBackend:
         plan = memory_plan(n_params, n_linear, 4)  # sized for 4-bit, so an automatic switch fits too
         free_ram = psutil.virtual_memory().available
         free_gpu = torch.cuda.mem_get_info()[0] if self.device == "cuda" else free_ram
-        fits = plan["ram"] <= free_ram and plan["gpu"] <= free_gpu
         size = format_params(n_params)
+        if self.streaming is None:
+            self.streaming = plan["ram"] > free_ram or plan["original"] > free_gpu
+        if self.streaming:
+            # Layer by layer: system memory holds one layer; the GPU holds one copy at a time, the
+            # largest being the 8-bit reference (and the repair, at most every part at 8-bit).
+            reference = 1.06 * n_linear + 2 * (n_params - n_linear) + 1.0e9
+            if reference > free_gpu:
+                largest = (free_gpu - 1.0e9) / 1.3 / 1e9
+                raise TooBigError(
+                    f"{model_id} has {size}. Even built layer by layer, its 8-bit reference needs about "
+                    f"{reference / 1e9:.0f} GB of GPU memory and this GPU has {free_gpu / 1e9:.0f} GB free. Models up "
+                    f"to about {max(largest, 0):.0f}B parameters fit here; a bigger GPU (L4, A100) runs this one.")
+            self.reference_bits = 8
+            return (size + " · too big for a 16-bit copy here, so it is built layer by layer and compared with "
+                    "an 8-bit reference (its answers match 16-bit's almost exactly)")
+        fits = plan["ram"] <= free_ram and plan["gpu"] <= free_gpu
         if not fits:
             largest = min((free_ram - 0.5e9) / 2.2, (free_gpu - 0.8e9) / 1.9) / 1e9
             raise TooBigError(
@@ -277,7 +299,15 @@ class TorchBackend:
 
         self.compressed = self.registry = None  # a second call (3-bit -> 4-bit) frees the first copy first
         gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self._model_id = model_id
+        if self.streaming and self.original is None and self.tokenizer is None:
+            # Big model: the reference must answer first, alone on the GPU; this copy is built after it.
+            return f"HQQ {self.base_nbits}-bit, built layer by layer once the reference has answered"
+        if self.streaming:
+            self._build_streamed()
+            return f"HQQ {self.base_nbits}-bit, built layer by layer"
 
         from src.quant.hqq_quantizer import load_hqq_3bit_model
         from src.quant.module_swap import SwapRegistry
@@ -294,8 +324,26 @@ class TorchBackend:
         torch.cuda.empty_cache()
         return f"HQQ {self.base_nbits}-bit, group 64, fp16 compute"
 
+    def _build_streamed(self) -> None:
+        from src.quant.module_swap import SwapRegistry
+        from src.quant.streaming import load_streaming
+        from src.quant.weight_source import CheckpointWeightSource
+
+        self.compressed, tokenizer = load_streaming(self._model_id, self.base_nbits, device=self.device)
+        self.tokenizer = self.tokenizer or tokenizer
+        adapter = self._adapter or self.adapter(self._model_id)
+        transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
+        self.registry = SwapRegistry(self.compressed, CheckpointWeightSource(
+            self._model_id, transposed=lambda path: path in transposed_paths), device=self.device)
+
     def load_original(self, model_id: str) -> str:
         from src.eval.model_loader import load_model
+
+        if self.streaming:
+            from src.quant.streaming import load_streaming
+
+            self.original, self.tokenizer = load_streaming(model_id, 8, device=self.device)
+            return "8-bit reference, built layer by layer (the 16-bit original doesn't fit this GPU)"
 
         self.original, _ = load_model("fp16", model_id=model_id,
                                       device_map="auto" if self.device == "cuda" else self.device)
@@ -310,13 +358,16 @@ class TorchBackend:
 
         self.original = None
         gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def score(self, view: str, items: list, on_progress=None) -> list[int]:
         import math
 
         from src.eval.option_scorer import score_items_with_confidence
 
+        if view != "original" and self.compressed is None and self.streaming and self._model_id:
+            self._build_streamed()  # big model: built now that the reference has answered and been freed
         model = self.original if view == "original" else self.compressed
         picks = []
         for start in range(0, len(items), CHUNK):
@@ -942,6 +993,7 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         "gpu": backend.gpu_name(), "minutes": round((time.monotonic() - started) / 60, 1),
         "safe": len(safe), "flipped": len(flipped),
         "base_nbits": used_bits, "precision_note": precision_note,
+        "reference_bits": getattr(backend, "reference_bits", 16),
         "restored_share": round(sum(adapter.params(p) for p in kept) / adapter.total_params(), 4) if kept else 0.0,
         "original": cards["original"], "compressed": cards["compressed"], "repaired": cards["repaired"],
         "recovery": recovery, "kept": list(kept), "memory_mb": round(backend.memory_mb(), 1) if kept else 0.0,

@@ -338,3 +338,23 @@ def test_a_run_without_a_repair_says_why_and_shows_no_repaired_card():
     assert "No parts were kept" in kept_grid_html(report)
     old = {k: v for k, v in report.items() if k not in ("outcome", "outcome_reason")}
     assert report_outcome(old)[0] == "no_damage"  # reports written before the field still read
+
+
+def test_a_hugging_face_token_reaches_the_run_but_is_never_written_down(tmp_path, monkeypatch):
+    import subprocess
+
+    seen = {}
+    real = subprocess.Popen
+
+    def spy(command, **kwargs):
+        seen["env"] = kwargs.get("env", {})
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", spy)
+    runner = JobRunner(tmp_path, pipeline="fake", speed=3000)
+    job = runner.start("meta-llama/Llama-3.1-8B-Instruct", "fast", hf_token=" hf_secret123 ")
+    _wait(runner, job, {"done", "failed", "stopped"})
+    assert seen["env"]["HF_TOKEN"] == "hf_secret123"
+    for path in job.rglob("*"):
+        if path.is_file():
+            assert "hf_secret123" not in path.read_text(encoding="utf-8", errors="ignore"), path.name

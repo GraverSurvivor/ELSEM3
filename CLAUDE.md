@@ -241,6 +241,13 @@ costs over 25 points of right answers. `repair_verdict` IMPROVED / NOT IMPROVED 
 repair kit (`src/product/repair_kit.py`): README, a standalone `apply_repair.py` (transformers + hqq),
 patch.json, llama.cpp lines; tested by running the script on a tiny model. Typed questions are capped
 (story 1500, question 300, people 100 characters).
+**Big models (Oct 2026, prompted by Llama-3.1-8B on a T4):** when the 16-bit copy fits neither the GPU nor
+system memory, `TorchBackend.preflight` picks the layer-by-layer path (`src/quant/streaming.py`: the model on
+the meta device, each linear read from the checkpoint and HQQ-quantized straight to the GPU; bit-identical to
+`load_hqq_3bit_model`, buffers cast like HQQ casts them). The original's answers then come from an 8-bit
+reference (`reference_bits: 8`, said on the card), loaded and freed before the compressed copy is built.
+Tab 5 takes a Hugging Face token for gated models: passed to that run's environment only, never written.
+Already-compressed checkpoints (quantization_config) and unknown architectures are refused in plain words.
 **Studio tab 6, "API"** (`src/product/api_server.py`): serves a repaired model as an OpenAI-compatible API
 on the Studio's own server (`/fairgate/v1/chat/completions`, `/fairgate/v1/models`, `/fairgate/health`; on
 Colab the share link exposes it too): the Phi-3.5 demo model with tab 3's repair (the live model itself), or
