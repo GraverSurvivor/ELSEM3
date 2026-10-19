@@ -348,7 +348,7 @@ def results_html(report: dict) -> str:
     for key, title, sub in (("original", "Original model", "full precision"),
                             ("compressed", "Compressed model", f"{report.get('base_nbits') or 3}-bit"),
                             ("repaired", "Rejected repair" if outcome == "rejected" else "Repaired model",
-                             f"3-bit + {len(report['kept'])} parts restored"
+                             f"{report.get('base_nbits') or 3}-bit + {len(report['kept'])} parts restored"
                              + (" · not offered for shipping" if outcome == "rejected" else ""))):
         if key == "repaired" and not report.get("kept"):
             cards.append('<div class="by-card by-card-none"><div class="by-card-title">No repair made</div>'

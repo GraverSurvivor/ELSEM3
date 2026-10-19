@@ -259,8 +259,36 @@ def adapter_for_model(model) -> ModelAdapter:
     return _from_table(model.config) if arch in ARCHS else discover(model)
 
 
+class AlreadyCompressed(ValueError):
+    """The checkpoint is itself quantized: there is no full-precision original to compare or restore."""
+
+
+def raw_config(model_id: str) -> dict:
+    """config.json as stored, read before transformers interprets it (so a model type transformers
+    doesn't know yet can still be checked for an earlier compression)."""
+    import json
+    from pathlib import Path
+
+    if Path(model_id).is_dir():
+        return json.loads((Path(model_id) / "config.json").read_text(encoding="utf-8"))
+    from huggingface_hub import hf_hub_download
+
+    return json.loads(Path(hf_hub_download(model_id, "config.json")).read_text(encoding="utf-8"))
+
+
+def check_not_compressed(config: dict, model_id: str) -> None:
+    quant = config.get("quantization_config") or config.get("compression_config")
+    if quant:
+        method = (quant.get("quant_method") or quant.get("format") or "an earlier compression") if isinstance(quant, dict)             else "an earlier compression"
+        raise AlreadyCompressed(
+            f"{model_id} is already compressed ({method}). FairGate needs the full-precision original: it compares "
+            "against the original's answers and restores parts from its weights. Use the original model (usually "
+            "the same name without -AWQ, -GPTQ, -FP4, -FP8, -GGUF, -4bit or -8bit).")
+
+
 def adapter_for_id(model_id: str) -> ModelAdapter:
     """Reads only the model's config.json from the Hugging Face Hub (or the local cache/folder)."""
     from transformers import AutoConfig
 
+    check_not_compressed(raw_config(model_id), model_id)
     return adapter_for(AutoConfig.from_pretrained(model_id))

@@ -170,6 +170,15 @@ def plain_error(error: BaseException) -> str:
     if "gated" in lowered or "401" in lowered or "403" in lowered:
         return ("This model needs a Hugging Face login: accept its licence on its Hugging Face page, then add "
                 "your Hugging Face token as the HF_TOKEN secret (Colab) or environment variable, and run again.")
+    if type(error).__name__ == "AlreadyCompressed":
+        return str(error)
+    if "does not recognize this architecture" in lowered or "unrecognized model" in lowered:
+        import re
+
+        kind = re.search(r"model type `([^`]+)`", text)
+        return (f"This model's architecture{f' ({kind.group(1)})' if kind else ''} is newer than the transformers "
+                "library installed here knows, or is experimental. Pick a model on a supported architecture "
+                "(Qwen2/2.5/3, Llama, Mistral, Gemma, Phi, SmolLM, GPT-2, OPT, ...), or update transformers.")
     if "trust_remote_code" in lowered:
         return ("This model runs its own code from its repository (trust_remote_code), which FairGate doesn't "
                 "execute for safety. Models built into the transformers library work.")
@@ -662,6 +671,9 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         if scan is not None and config.until_fair and (until_fair_info.get("budget_reached")
                                                        or until_fair_info.get("trimmed_scan")):
             report["budget_note"] = (
+                f"The repair reached its budget ({config.max_restore:.0%} of the model) and already passes the "
+                "fairness check on questions it never saw; a larger repair budget (tab 5) would close the small "
+                "gap that remains." if report["gate"] == "PASS" else
                 f"The repair used its whole budget ({config.max_restore:.0%} of the model) before the model was as "
                 "fair as the original: what you see is the most fairness that budget buys. A larger repair "
                 "budget (tab 5) restores more.")
