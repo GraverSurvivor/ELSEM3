@@ -183,8 +183,8 @@ def test_llamacpp_settings_for_each_architecture():
     assert mystery == ["# llama.cpp has no tensor name for: layer 1 mlp.mystery_proj (patch.json still restores them)"]
     gpt2 = {"nbits": 8, "modules": ["transformer.h.3.attn.c_attn", "transformer.h.0.mlp.c_proj"]}
     names = {"attn.c_attn": "attn_qkv", "mlp.c_proj": "ffn_down"}  # what the adapter writes in the report
-    assert llamacpp_lines(gpt2, names) == ['--tensor-type "blk\.3\.attn_qkv=q8_0"',
-                                           '--tensor-type "blk\.0\.ffn_down=q8_0"']
+    assert llamacpp_lines(gpt2, names) == [r'--tensor-type "blk\.3\.attn_qkv=q8_0"',
+                                           r'--tensor-type "blk\.0\.ffn_down=q8_0"']
     with pytest.raises(ValueError):
         llamacpp_lines({"nbits": 7, "modules": []})
 

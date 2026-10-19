@@ -622,14 +622,12 @@ def test_damage_spread_over_the_whole_model_is_still_repaired_to_a_real_pass(tmp
     import zipfile
 
     with zipfile.ZipFile(out / "repair_kit.zip") as kit:
-        assert sorted(kit.namelist()) == ["README.md", "apply_repair.py", "fairgate_repair.py", "llama_cpp.txt",
-                                          "patch.json", "requirements.txt", "serve_repair.py"]
+        assert sorted(kit.namelist()) == ["README.md", "fairgate.py", "patch.json"]  # three files, one script
         readme = kit.read("README.md").decode()
-        assert "python apply_repair.py" in readme and "Fairness recovered" in readme
+        assert "python fairgate.py chat" in readme and "python fairgate.py serve" in readme
+        assert "Fairness recovered" in readme and "llama-quantize" in readme
         assert json.loads(kit.read("patch.json"))["modules"] == report["kept"]
-        for name in ("apply_repair.py", "serve_repair.py", "fairgate_repair.py"):
-            compile(kit.read(name).decode(), name, "exec")  # valid Python
-        assert "Use it as an API (with an API key)" in readme
+        compile(kit.read("fairgate.py").decode(), "fairgate.py", "exec")  # valid Python
 
 
 def test_without_until_fair_the_same_model_is_only_partly_repaired(tmp_path):

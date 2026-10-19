@@ -237,9 +237,10 @@ ones) and stops at the budget; `budget_note` then says the result is the most fa
 Prompted by a Qwen2.5-3B run keeping ~65 of 252 parts (~19% of weights) before trimming and the budget. It also requires "can't tell" on stated-answer questions to
 stay within 2 points of the original, and the product verdict FAILs a repair that hedges 3+ points more
 (fairness bought by hedging, the Phase 2 trap, never passes). Automatic precision (`base_nbits` 0): 4-bit when 3-bit
-costs over 25 points of right answers. `repair_verdict` IMPROVED / NOT IMPROVED / WORSE. Downloads are a
-repair kit (`src/product/repair_kit.py`): README, a standalone `apply_repair.py` (transformers + hqq),
-patch.json, llama.cpp lines; tested by running the script on a tiny model. Typed questions are capped
+costs over 25 points of right answers. `repair_verdict` IMPROVED / NOT IMPROVED / WORSE. The developer download
+is a 3-file repair kit (`src/product/repair_kit.py`): README (numbers, commands, llama.cpp lines), one script
+`fairgate.py` (`chat` / `serve` / `save`, transformers + hqq) and patch.json; tested by running the script on a
+tiny model. Typed questions are capped
 (story 1500, question 300, people 100 characters).
 **Big models (Oct 2026, prompted by Llama-3.1-8B on a T4):** when the 16-bit copy fits neither the GPU nor
 system memory, `TorchBackend.preflight` picks the layer-by-layer path (`src/quant/streaming.py`: the model on
@@ -248,12 +249,21 @@ the meta device, each linear read from the checkpoint and HQQ-quantized straight
 reference (`reference_bits: 8`, said on the card), loaded and freed before the compressed copy is built.
 Tab 5 takes a Hugging Face token for gated models: passed to that run's environment only, never written.
 Already-compressed checkpoints (quantization_config) and unknown architectures are refused in plain words.
-**Studio tab 6, "API"** (`src/product/api_server.py`): serves a repaired model as an OpenAI-compatible API
-on the Studio's own server (`/fairgate/v1/chat/completions`, `/fairgate/v1/models`, `/fairgate/health`; on
-Colab the share link exposes it too): the Phi-3.5 demo model with tab 3's repair (the live model itself), or
-tab 5's latest repaired model rebuilt from its patch. Each start makes a new key (`fg-`, 256 bits; rotate /
-stop on screen); the API shares LiveBackend's lock so it never answers while parts are swapped for a
-"compressed" comparison. The repair kit's `serve_repair.py` is the same API for customers' own machines.
+**Studio screen 4, "Ship"** (simplified Oct 2026; the old tab 6 is folded in): "Which repair" picks the Phi-3.5
+demo (tab 3's repair) or tab 5's latest repaired model (tab 5's results have a "Ship this repair" button); the
+verdict, then two cards and one collapsed developer section. **Use it now** (`src/product/api_server.py`): an
+OpenAI-compatible API on the Studio's own server (`/fairgate/v1/chat/completions`, `/fairgate/v1/models`,
+`/fairgate/health`; on Colab the share link exposes it too), serving the live Phi-3.5 model itself or tab 5's model
+rebuilt layer by layer from its patch. Each start makes a new key (`fg-`, 256 bits; rotate / stop on screen); the
+API shares LiveBackend's lock so it never answers while parts are swapped for a "compressed" comparison.
+**Get the fixed model** (`src/product/hub_publish.py`): publishes the repaired model to the user's Hugging Face
+account (private by default; a Write token typed on screen, used for that upload only, never written) in HQQ's
+own format, with the tokenizer, patch.json and a model card; it loads with
+`AutoHQQHFModel.from_quantized("<user>/<model>-fairgate")`, bit-identical with the 8-bit parts kept (tested).
+transformers 5's `from_pretrained` no longer loads saved HQQ models, hence HQQ's loader; GPT-2 style `Conv1D`
+models can't be rebuilt by it and are refused (the API and kit still work). A step-3 repair that isn't the main
+repair is published with "not measured" instead of numbers. **For developers**: the repair kit; its
+`fairgate.py serve` is the same API for customers' own machines.
 `tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the

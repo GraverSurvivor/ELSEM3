@@ -1,4 +1,4 @@
-"""Studio tab 6, "API": serve a repaired model as an OpenAI-compatible API, behind an API key, from
+"""Studio Ship screen, "Use it now": serve a repaired model as an OpenAI-compatible API, behind an API key, from
 the Studio's own server (so on Colab it is reachable at the Studio's public link too).
 
     POST <studio>/fairgate/v1/chat/completions   OpenAI's chat format; needs Authorization: Bearer <key>
@@ -8,7 +8,7 @@ the Studio's own server (so on Colab it is reachable at the Studio's public link
 One model at a time: the Phi-3.5 demo model with the repair built in tab 3 (the live model itself, no
 extra memory), or the latest repaired model from tab 5 (rebuilt from its patch, as the repair kit
 does). Each start makes a new key (fg- and 256 random bits); keys are compared in constant time. The
-same code as the kit's serve_repair.py answers, so the dashboard and the download behave alike.
+same code as the kit's `fairgate.py serve` answers, so the dashboard and the download behave alike.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class ApiService:
             self.started = None
 
     def reply(self, messages: list[dict], max_tokens: int, temperature: float) -> dict:
-        from src.product.kit_files.fairgate_repair import chat
+        from src.product.kit_files.fairgate import chat
 
         with self.lock:
             if not self.running:
