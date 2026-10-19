@@ -776,3 +776,36 @@ def test_small_parts_that_help_come_before_big_ones():
     kept = repair_until_fair(backend, scan, [big, small], [], AMBIG[:50], original, FastRepairConfig(model_id="x/y"),
                              events, stated=DISAMBIG[:20], size=sizes.get, budget=300)
     assert kept == [small]  # best value first, and the big one never fit the budget anyway
+
+
+def test_the_repaired_card_names_the_real_base_precision_and_the_note_agrees_with_the_verdict():
+    """Qwen2.5-3B on a T4 (Oct 2026): compressed to 4-bit automatically, repaired within its 10%
+    budget, FairGate PASS -- the card said "3-bit" and the budget note read as if it had failed."""
+    from src.product.byom import results_html
+
+    card = {"usr": 0.7, "srs": 0.2, "false_unknown": 0.1, "accuracy": 0.79}
+    report = {"model_id": "Qwen/Qwen2.5-3B-Instruct", "arch": "qwen2", "mode": "fast", "kept": ["a.1.b"] * 39,
+              "gate": "PASS", "gate_failures": [], "original": card, "compressed": card, "repaired": card,
+              "recovery": {"point": 0.858, "lower": 0.752, "upper": 0.971}, "outcome": "repaired",
+              "base_nbits": 4, "budget_note": "The repair reached its budget (10% of the model) and already passes"}
+    page = results_html(report)
+    assert "4-bit + 39 parts restored" in page and "3-bit + 39" not in page
+
+
+def test_models_that_cannot_be_repaired_are_explained_in_plain_words(tmp_path):
+    """nvidia/Qwen3.8-Flash-Next-FP4-Local on Colab (Oct 2026): a raw, cut-off transformers error."""
+    from src.models.adapter import AlreadyCompressed, adapter_for_id
+    from src.product.fast_repair import plain_error
+
+    raw = ValueError("The checkpoint you are trying to load has model type `qwen4_exp` but Transformers does not "
+                     "recognize this architecture. This could be because of an issue with the checkpoint...")
+    message = plain_error(raw)
+    assert "(qwen4_exp) is newer than the transformers" in message and "ValueError" not in message
+
+    folder = tmp_path / "fp4"
+    folder.mkdir()
+    (folder / "config.json").write_text(json.dumps({"model_type": "qwen4_exp",
+                                                    "quantization_config": {"quant_method": "fp4"}}))
+    with pytest.raises(AlreadyCompressed) as caught:
+        adapter_for_id(str(folder))  # refused from config.json alone, before the unknown type matters
+    assert "already compressed (fp4)" in plain_error(caught.value)
