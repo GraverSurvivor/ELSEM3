@@ -28,13 +28,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 import time
+from contextlib import nullcontext
+from html import escape as html_escape
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.attribution.patch import load_patch, save_patch
+from src.product.api_server import ApiService, latest_repaired_job, register_routes, snippets, try_it
 from src.product.byom import (
     BITS as BYOM_BITS,
     MODES as BYOM_MODES,
@@ -223,6 +227,7 @@ class LiveBackend:
         self.reloading = False
         self._plain: dict[str, object] = {}  # path -> the 3-bit module it started as
         self._cache: dict[tuple, Answer] = {}
+        self.lock = threading.RLock()  # shared with tab 6's API: never answer while parts are swapped
 
     @property
     def has_original(self) -> bool:
@@ -271,7 +276,14 @@ class LiveBackend:
     def restored(self) -> list[str]:
         return list(self.registry.active)
 
+    def _guard(self):
+        return getattr(self, "lock", None) or nullcontext()
+
     def set_restored(self, paths) -> None:
+        with self._guard():
+            self._set_restored(paths)
+
+    def _set_restored(self, paths) -> None:
         from src.quant.module_swap import get_module_by_path
 
         target = list(dict.fromkeys(paths))
@@ -320,6 +332,10 @@ class LiveBackend:
         return (view, state, item.context, item.question, item.options)
 
     def _answers(self, items, view: str) -> list[Answer]:
+        with self._guard():
+            return self._answers_unlocked(items, view)
+
+    def _answers_unlocked(self, items, view: str) -> list[Answer]:
         if view == "original" and self.original is None:  # stepped aside: what was measured, else saved
             return [self._cache.get(self._key(view, it)) or self._saved_original(it) for it in items]
         missing = [it for it in items if self._key(view, it) not in self._cache]
@@ -645,8 +661,40 @@ def _launch_kwargs(gr):
     return major, theme
 
 
-def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
+API_PHI = "Phi-3.5 (our model) with the repair from tab 3"
+API_YOURS = "Your model: the latest repaired model from tab 5"
+API = {"service": None, "local": "", "share": ""}  # filled in by main() once the server runs
+
+
+def api_local_url() -> str:
+    from src.product.api_server import PREFIX
+
+    return f"{API['local'].rstrip('/')}{PREFIX}/v1"
+
+
+def api_base_url() -> str:
+    """The public address when there is one (Colab's share link), else this machine's."""
+    from src.product.api_server import PREFIX
+
+    return f"{(API['share'] or API['local']).rstrip('/')}{PREFIX}/v1"
+
+
+def copy_box(label: str):
+    """A read-only text box with a copy button (Gradio 6: buttons=["copy"]; Gradio 5: show_copy_button)."""
+    import inspect
+
     import gradio as gr
+
+    params = inspect.signature(gr.Textbox.__init__).parameters
+    extra = {"buttons": ["copy"]} if "buttons" in params else (
+        {"show_copy_button": True} if "show_copy_button" in params else {})
+    return gr.Textbox(label=label, interactive=False, **extra)
+
+
+def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=None):
+    import gradio as gr
+
+    api = api or ApiService(lock=getattr(backend, "lock", None))
 
     major, theme = _launch_kwargs(gr)
     blocks_kwargs = {"title": "FairGate Studio"}
@@ -1046,6 +1094,41 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                     byom_patch = gr.File(label="Repair kit (.zip)")
                     byom_llama = gr.Code(label="llama.cpp settings (add to llama-quantize)", language="shell")
 
+            with gr.Tab("6 · API", id="api"):
+                gr.HTML(_help(
+                    "Use a repaired model from your own apps, <b>exactly like OpenAI's API</b>, protected by an "
+                    "<b>API key</b>.",
+                    "Pick the model, press <b>Start the API</b>, and copy the address, the key and the code below.",
+                    "Press <b>Send</b> to try it: your message goes through the real API, with the key.",
+                ))
+                api_sources = []
+                if backend.live:
+                    api_sources.append(API_PHI)
+                if byom is not None and byom.runner is not None:
+                    api_sources.append(API_YOURS)
+                if not getattr(backend, "live", False):
+                    gr.Markdown("*The API serves a model running on this machine's GPU. In preview mode there is "
+                                "none: start the Studio live (`--byom --live`) to use it.*")
+                api_choice = gr.Radio(api_sources or [API_PHI], value=(api_sources or [API_PHI])[0],
+                                      label="Which repaired model to serve")
+                with gr.Row():
+                    api_start_btn = gr.Button("▶ Start the API", variant="primary",
+                                              interactive=bool(getattr(backend, "live", False)))
+                    api_key_btn = gr.Button("↻ New key")
+                    api_stop_btn = gr.Button("■ Stop")
+                api_status = gr.HTML()
+                with gr.Row():
+                    api_url = copy_box("API address (base_url)")
+                    api_key_box = copy_box("API key (keep it secret)")
+                api_code = gr.Code(label="Use it from your code", language="python")
+                with gr.Row():
+                    api_message = gr.Textbox(label="Try it: your message", scale=4,
+                                             value="A nurse and a mechanic were at the bus stop when a wallet went "
+                                                   "missing. Who took it?")
+                    api_send = gr.Button("Send through the API", scale=1)
+                api_reply = gr.Markdown()
+                api_raw = gr.Code(label="The API's answer (JSON)", language="json")
+
         # --- events ----------------------------------------------------------------------------
         ask_outputs = [question_box, card_original, card_compressed, card_repaired]
         repair_outputs = [counter_box, repair_grid, status_box, restored_box]
@@ -1102,6 +1185,99 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
             app.load(byom_refresh, None, byom_outputs)
 
         app.load(rerender, [item_state, swapped_state, base_state], ask_outputs)
+
+        api_outputs = [api_status, api_url, api_key_box, api_code]
+
+        def api_view(note=""):
+            if not api.running:
+                return (f'<div class="api-status api-off">Not serving. {html_escape(note)}</div>', "", "", "")
+            base = api_base_url()
+            minutes = (time.time() - api.started) / 60
+            status = (f'<div class="api-status api-on">● Serving <b>{html_escape(api.name)}</b> '
+                      f'({html_escape(api.source)}) · {api.requests} request{"s" * (api.requests != 1)} · '
+                      f'up {minutes:.0f} min. {html_escape(note)}</div>')
+            return status, base, api.key, snippets(base, api.key, api.name)
+
+        def api_start(choice):
+            if api.running:
+                api_stop_model()
+            try:
+                if choice == API_PHI:
+                    api.start(backend.model, backend.tokenizer, backend.device, "phi-3.5-mini-fairgate",
+                              f"Phi-3.5, 3-bit with {len(backend.restored())} parts restored in tab 3")
+                else:
+                    from src.product.kit_files.fairgate_repair import load_repaired
+
+                    if byom is None or byom.runner is None:
+                        raise RuntimeError("Tab 5 isn't on in this launch.")
+                    current = byom.runner.current()
+                    if current is not None and byom.runner.is_running(current):
+                        raise RuntimeError("A diagnosis is running in tab 5: wait for it to finish (the GPU takes "
+                                           "one model at a time).")
+                    job = latest_repaired_job(byom.runner.jobs_dir)
+                    if job is None:
+                        raise RuntimeError("No repaired model yet: run a diagnosis in tab 5 that ends in "
+                                           "\"Repaired\" first.")
+                    patch = json.loads((job / "patch.json").read_text(encoding="utf-8"))
+                    make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
+                    model, tokenizer, device = load_repaired(patch, device=getattr(backend, "device", None))
+                    api.start(model, tokenizer, device, patch["model_id"].split("/")[-1] + "-fairgate",
+                              f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} "
+                              "parts restored in tab 5")
+            except Exception as error:  # shown on the screen, the app keeps running
+                gr.Warning(str(error))
+                return api_view()
+            return api_view("Started with a new key.")
+
+        def api_stop_model():
+            was_yours = api.running and not api.name.startswith("phi-3.5")
+            api.stop()
+            if was_yours:
+                import gc
+
+                gc.collect()
+                try:
+                    import torch
+
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                if byom is not None and byom.runner is not None:
+                    after_job(backend, byom.runner)  # the 16-bit Phi-3.5 comes back
+
+        def api_stop():
+            api_stop_model()
+            return api_view("Stopped: the key no longer works.")
+
+        def api_new_key():
+            try:
+                api.rotate()
+            except RuntimeError as error:
+                gr.Warning(str(error))
+                return api_view()
+            return api_view("New key: the old one no longer works.")
+
+        def api_send_message(message):
+            if not api.running:
+                gr.Warning("Start the API first.")
+                return "", ""
+            try:
+                result = try_it(api_local_url(), api.key, message)
+            except Exception as error:
+                return f"**The request failed:** {error}", ""
+            body = result["body"]
+            if result["status"] != 200:
+                return f"**The API said {result['status']}:** {body.get('detail', body)}", json.dumps(body, indent=2)
+            reply = body["choices"][0]["message"]["content"]
+            usage = body.get("usage", {})
+            return (f"**{api.name} answered** ({usage.get('completion_tokens', '?')} tokens, through "
+                    f"`{api_base_url()}` with your key):\n\n> {reply}", json.dumps(body, indent=2))
+
+        api_start_btn.click(api_start, api_choice, api_outputs, concurrency_id="api")
+        api_stop_btn.click(api_stop, None, api_outputs, concurrency_id="api")
+        api_key_btn.click(api_new_key, None, api_outputs, concurrency_id="api")
+        api_send.click(api_send_message, api_message, [api_reply, api_raw], concurrency_id="api_try")
+        app.load(api_view, None, api_outputs)
 
     return app, (theme if major >= 6 else None)
 
@@ -1209,11 +1385,17 @@ def main() -> None:
                 make_room_for_job(backend)
     print(f"[start-up] ready in {time.perf_counter() - started:.0f} s")
 
-    app, theme = build_app(backend, data, byom)
+    api = ApiService(lock=getattr(backend, "lock", None))
+    API["service"] = api
+    app, theme = build_app(backend, data, byom, api)
     launch = {"share": args.share, "server_port": args.port}
     if theme is not None:
         launch.update(theme=theme, css=CSS)
-    app.queue(default_concurrency_limit=1).launch(**launch)
+    app.queue(default_concurrency_limit=1).launch(prevent_thread_lock=True, **launch)
+    register_routes(app.app, api)  # tab 6's API, on this same server (and its public link)
+    API["local"], API["share"] = app.local_url or f"http://127.0.0.1:{args.port}/", app.share_url or ""
+    print(f"[api] tab 6 serves on {api_base_url()} once started")
+    app.block_thread()
 
 
 if __name__ == "__main__":

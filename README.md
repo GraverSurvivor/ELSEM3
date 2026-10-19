@@ -83,7 +83,9 @@ SmolLM, GPT-2, OPT, GPT-NeoX, ...): its parts are found from its structure, its 
 anything is downloaded (about 4B parameters fit a free T4), and every run ends with a plain outcome:
 repaired, damage found but nothing worth restoring, no damage, or "this model can't be checked this way"
 (an original that never answers "can't tell"). Gated models need an `HF_TOKEN`. In the Studio it is
-tab 5, next to the live Phi-3.5 demo (`--byom --live`). Contracts: docs/CONTRACTS.md.
+tab 5, next to the live Phi-3.5 demo (`--byom --live`). Tab 6 serves a repaired model as an
+OpenAI-compatible API with an API key, and every repair kit includes `serve_repair.py` to do the same on
+your own machine. Contracts: docs/CONTRACTS.md.
 
 ## Deck
 
