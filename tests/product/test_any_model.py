@@ -123,7 +123,7 @@ def test_a_model_too_big_for_the_machine_is_refused_before_downloading(tmp_path,
 
     folder = _save("qwen2", tmp_path, tokenizer)
     monkeypatch.setattr(psutil, "virtual_memory", lambda: type("M", (), {"available": 0.5e9})())
-    with pytest.raises(TooBigError, match="system memory"):
+    with pytest.raises(TooBigError, match="Even built layer by layer"):  # low memory tries layer by layer first
         TorchBackend(device="cpu").preflight(str(folder))
 
 
@@ -201,3 +201,25 @@ def test_the_repaired_model_is_served_as_an_api_behind_a_key(tmp_path, tokenizer
         sys.path.remove(str(tmp_path / "kit"))
         for name in ("fairgate_repair", "serve_repair"):
             sys.modules.pop(name, None)
+
+
+@pytest.mark.parametrize("model_type", ["qwen2", "gpt2"])
+def test_a_model_too_big_for_a_16_bit_copy_runs_layer_by_layer(model_type, tmp_path, tokenizer, monkeypatch):
+    """The big-model path (Llama-3.1-8B on a T4): built layer by layer, with an 8-bit reference loaded and
+    freed before the compressed copy is built. Here forced on a tiny model, end to end with the scan."""
+    import psutil
+    from transformers import AutoTokenizer
+
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: type("M", (), {"available": 64e9})())
+    folder = _save(model_type, tmp_path, AutoTokenizer.from_pretrained(TOKENIZER, local_files_only=True))
+    backend = FairOriginal(device="cpu", streaming=True)
+    config = FastRepairConfig(model_id=str(folder), mode="fast", questions=120, out=tmp_path / "job")
+    report = run(config, backend, load_questions=lambda: (_questions("ambig"), _questions("disambig")))
+    assert report["reference_bits"] == 8 and report["outcome"] in ("repaired", "no_gain")
+    assert report["scan"]["engine"] == "fast_scan"
+    events = [json.loads(line) for line in (config.out / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert not any(e["status"] == "failed" for e in events)
+    assert "layer by layer" in [e for e in events if e["stage"] == "quantize"][-1]["message"]
+    from src.product.byom import results_html
+
+    assert "8-bit reference" in results_html(report)

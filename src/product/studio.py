@@ -1067,8 +1067,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     "or <b>Exact</b> (1.5-2 hours on a T4, the same parts as the full search), then press "
                     "<b>Diagnose</b>.",
                     "Watch each step. When it finishes: did compression make your model more biased, which parts "
-                    "to keep at 8-bit, and the files to ship the repair. About 4B parameters fit a free T4 (about "
-                    "3B next to the live demo). The check needs a model that answers \"can't tell\" when the story "
+                    "to keep at 8-bit, and the files to ship the repair. Models up to about 8B parameters "
+                    "run on a free T4: above ~4B they are built layer by layer and compared with an 8-bit reference "
+                    "(slower: 1.5-2.5 hours for 8B). The check needs a model that answers \"can't tell\" when the story "
                     "doesn't say: instruction-tuned chat models of 1.5B or more usually do.",
                 ))
                 if byom is None or byom.runner is None:
@@ -1077,6 +1078,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     byom_model = gr.Textbox(label="Model name", placeholder="Qwen/Qwen2.5-3B-Instruct", scale=3)
                     byom_mode = gr.Radio(list(BYOM_MODES.values()), value=BYOM_MODES["fast"], label="Mode", scale=3)
                     byom_bits = gr.Radio(list(BYOM_BITS.values()), value=BYOM_BITS[0], label="Compress to", scale=2)
+                byom_token = gr.Textbox(label="Hugging Face token: only for gated models such as Meta's Llama (accept "
+                                              "the model's licence on its Hugging Face page first). Used for this "
+                                              "download only, never saved.", type="password",
+                                        placeholder="hf_... (leave empty for open models)")
                 byom_budget = gr.Radio(list(BYOM_BUDGETS.values()), value=BYOM_BUDGETS[0.10],
                                        label="Repair budget: the most of the model kept at 8-bit (smaller keeps it "
                                              "smaller; larger brings more fairness back)")
@@ -1164,7 +1169,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 after_job(backend, runner)
                 return byom_view(runner)
 
-            def byom_start(model, mode, bits, budget):
+            def byom_start(model, mode, bits, budget, token=""):
                 if getattr(backend, "reloading", False):
                     gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
                                "(about a minute). Press Diagnose again in a moment.")
@@ -1175,7 +1180,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Info("Tab 6's API (serving your last repaired model) was stopped to make room for this "
                             "diagnosis.")
                 try:
-                    runner.start(model, mode, bits, budget)
+                    runner.start(model, mode, bits, budget, hf_token=token)
                 except (ValueError, JobBusy, RuntimeError) as error:
                     gr.Warning(str(error))
                 else:
@@ -1187,7 +1192,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Info("Nothing is running.")
                 return byom_view(runner)
 
-            byom_go.click(byom_start, [byom_model, byom_mode, byom_bits, byom_budget], byom_outputs,
+            byom_go.click(byom_start, [byom_model, byom_mode, byom_bits, byom_budget, byom_token], byom_outputs,
                           concurrency_id="byom")
             byom_cancel.click(byom_stop, None, byom_outputs, concurrency_id="byom")
             gr.Timer(1.5).tick(byom_refresh, None, byom_outputs, concurrency_id="byom", show_progress="hidden")
@@ -1218,7 +1223,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     api.start(backend.model, backend.tokenizer, backend.device, "phi-3.5-mini-fairgate",
                               f"Phi-3.5, 3-bit with {len(backend.restored())} parts restored in tab 3")
                 else:
-                    from src.product.kit_files.fairgate_repair import load_repaired
+                    from src.quant.streaming import load_streaming
 
                     if byom is None or byom.runner is None:
                         raise RuntimeError("Tab 5 isn't on in this launch.")
@@ -1232,7 +1237,12 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                                            "\"Repaired\" first.")
                     patch = json.loads((job / "patch.json").read_text(encoding="utf-8"))
                     make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
-                    model, tokenizer, device = load_repaired(patch, device=getattr(backend, "device", None))
+                    import torch
+
+                    device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
+                    # Built layer by layer, so a big model's repair is served without a 16-bit copy in memory.
+                    model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device,
+                                                      keep={path: patch["nbits"] for path in patch["modules"]})
                     api.start(model, tokenizer, device, patch["model_id"].split("/")[-1] + "-fairgate",
                               f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} "
                               "parts restored in tab 5")
