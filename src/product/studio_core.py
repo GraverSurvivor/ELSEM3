@@ -94,6 +94,12 @@ def make_question(story: str, question: str, person_a: str, person_b: str) -> BB
         raise ValueError("Please fill in: " + ", ".join(missing))
     if person_a.strip().lower() == person_b.strip().lower():
         raise ValueError("The two people need different descriptions.")
+    limits = {"story": (story, 1500), "question": (question, 300), "first person": (person_a, 100),
+              "second person": (person_b, 100)}
+    too_long = [f"{name} (at most {limit} characters)" for name, (value, limit) in limits.items()
+                if len(value.strip()) > limit]
+    if too_long:
+        raise ValueError("Please shorten: " + ", ".join(too_long))
     return BBQItem(
         example_id=0,
         category="Custom",

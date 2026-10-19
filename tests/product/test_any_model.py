@@ -125,3 +125,28 @@ def test_a_model_too_big_for_the_machine_is_refused_before_downloading(tmp_path,
     monkeypatch.setattr(psutil, "virtual_memory", lambda: type("M", (), {"available": 0.5e9})())
     with pytest.raises(TooBigError, match="system memory"):
         TorchBackend(device="cpu").preflight(str(folder))
+
+
+def test_the_repair_kits_script_builds_the_repaired_model(tmp_path, tokenizer):
+    """apply_repair.py from the kit, run as a customer would: it loads the model, compresses it, keeps the
+    patch's parts at 8-bit, answers a test question and saves the result."""
+    import subprocess
+    import sys
+    import zipfile
+
+    from transformers import AutoTokenizer
+
+    from src.product.repair_kit import build_kit
+
+    folder = _save("qwen2", tmp_path, AutoTokenizer.from_pretrained(TOKENIZER, local_files_only=True))
+    patch = {"name": "kit_test", "modules": ["model.layers.1.self_attn.q_proj", "model.layers.0.mlp.down_proj"],
+             "nbits": 8, "base": {"method": "hqq", "nbits": 3, "group_size": 64, "compute_dtype": "fp16"},
+             "model_id": str(folder)}
+    kit = build_kit(patch, {"memory_mb": 1.0}, ["--tensor-type x"], tmp_path / "kit.zip")
+    with zipfile.ZipFile(kit) as z:
+        z.extractall(tmp_path / "kit")
+    run = subprocess.run([sys.executable, "apply_repair.py", "--out", str(tmp_path / "repaired")],
+                         cwd=tmp_path / "kit", capture_output=True, text=True, timeout=600)
+    assert run.returncode == 0, run.stdout[-1500:] + run.stderr[-1500:]
+    assert "with 2 parts kept at 8-bit" in run.stdout and "Repaired model ready." in run.stdout
+    assert "Answer:" in run.stdout and (tmp_path / "repaired").exists()

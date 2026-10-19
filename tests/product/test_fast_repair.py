@@ -393,7 +393,7 @@ def test_a_scan_that_keeps_nothing_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(fr, "run_scan", lambda *a, **k: (type("R", (), {"kept": [], "pool": [], "trials": [],
                                                                          "stop_reason": "x"})(),
                                                          fr.scan_config(FastRepairConfig(model_id="x/y"), 28), 10))
-    report, _, out = _run(tmp_path)
+    report, _, out = _run(tmp_path, until_fair=False)
     assert report["outcome"] == "no_gain" and report["patch"] is None
     assert "No single part" in [e for e in _events(out) if e["stage"] == "scan"][-1]["message"]
     assert report["recovery"]["point"] == 0.0 or report["recovery"]["point"] is None  # nothing restored
@@ -487,7 +487,7 @@ def test_a_repair_that_makes_fairness_worse_on_held_out_questions_is_rejected(tm
             fr.scan_config(FastRepairConfig(model_id="x/y"), 28), 10
 
     monkeypatch.setattr(fr, "run_scan", scan_keeping_x)
-    report, _, out = _run(tmp_path, backend=BreaksFairness())
+    report, _, out = _run(tmp_path, backend=BreaksFairness(), until_fair=False)
     assert report["outcome"] == "rejected" and "made fairness worse" in report["outcome_reason"]
     assert report["patch"] is None and not (out / "patch.json").exists()  # never offered to ship
     assert report["kept"] == [X] and report["repaired"]["usr"] < report["compressed"]["usr"]
@@ -590,3 +590,41 @@ def test_automatic_precision_switches_to_four_bits_when_three_bits_breaks_the_mo
 def test_automatic_precision_keeps_three_bits_when_they_are_fine(tmp_path):
     report, _, _ = _run(tmp_path)
     assert report["base_nbits"] == 3 and report["precision_note"] == ""
+
+
+# --- repair until fair: damage spread over every part still gets repaired, and earns a real PASS ---
+
+PARTS = adapter_for(TINY).candidates()
+
+
+class DiffuseDamage(FakeBackend):
+    """Each flipped answer comes back only when its own one of the 28 parts is restored: no few parts can
+    repair this model (like Qwen2.5-3B at 3-bit)."""
+
+    def _answer(self, view, item, restored):
+        i = item.example_id % 10_000
+        if view == "original" or item.label != item.unknown_index:
+            return super()._answer(view, item, restored)
+        broken = i % 3 == 0 and i % 10 != 0 and PARTS[(i // 3) % len(PARTS)] not in restored
+        return item.stereotype_index if (broken or i % 10 == 0) else item.unknown_index
+
+
+def test_damage_spread_over_the_whole_model_is_still_repaired_to_a_real_pass(tmp_path):
+    report, _, out = _run(tmp_path, backend=DiffuseDamage(), questions=400)
+    assert len(report["kept"]) > 8  # more than the scan's few parts were needed
+    assert report["gate"] == "PASS" and report["outcome"] == "repaired" and report["repair_verdict"] == "IMPROVED"
+    assert report["recovery"]["lower"] > 0.8  # measured on held-out questions no decision saw
+    assert 0 < report["restored_share"] <= 1
+    import zipfile
+
+    with zipfile.ZipFile(out / "repair_kit.zip") as kit:
+        assert sorted(kit.namelist()) == ["README.md", "apply_repair.py", "llama_cpp.txt", "patch.json"]
+        readme = kit.read("README.md").decode()
+        assert "python apply_repair.py" in readme and "Fairness recovered" in readme
+        assert json.loads(kit.read("patch.json"))["modules"] == report["kept"]
+        compile(kit.read("apply_repair.py").decode(), "apply_repair.py", "exec")  # valid Python
+
+
+def test_without_until_fair_the_same_model_is_only_partly_repaired(tmp_path):
+    report, _, _ = _run(tmp_path, backend=DiffuseDamage(), questions=400, until_fair=False)
+    assert len(report["kept"]) <= 8 and report["gate"] == "FAIL"

@@ -360,6 +360,8 @@ def results_html(report: dict) -> str:
     if checked.get("ambiguous"):
         facts.append(f"cards measured on {int(checked['ambiguous']) + int(checked.get('stated_answer', 0)):,} "
                      "questions the scan never saw")
+    if report.get("restored_share"):
+        facts.append(f"{100 * float(report['restored_share']):.1f}% of the model kept at 8-bit")
     if report.get("memory_mb") is not None:
         facts.append(f"+{float(report['memory_mb']):.0f} MB")
     if report.get("minutes") is not None:
@@ -390,7 +392,13 @@ def results_html(report: dict) -> str:
         verdict = ('<div class="by-gate by-gate-na">FairGate verdict: <b>not applicable</b> '
                    '<span>(no fair answers to compare)</span></div>')
     else:
-        verdict = f'<div class="by-gate by-gate-{gate.lower()}">FairGate verdict: <b>{html.escape(gate)}</b></div>'
+        verdict = (f'<div class="by-gate by-gate-{gate.lower()}">FairGate verdict: <b>{html.escape(gate)}</b> <span>('
+                   f'{"as fair as the original, on questions the repair never saw" if gate == "PASS" else "not yet as fair as the original"}'
+                   ')</span></div>')
+    repair_verdict = report.get("repair_verdict") or ("IMPROVED" if outcome == "repaired" else
+                                                      "WORSE" if outcome == "rejected" else "NOT IMPROVED")
+    verdict = (f'<div class="by-repair-verdict by-rv-{repair_verdict.split()[-1].lower()}">Repair verdict: '
+               f'<b>{repair_verdict}</b> <span>{"fair answers measurably came back on questions the scan never saw" if repair_verdict == "IMPROVED" else ""}</span></div>') + verdict
     other = "".join(f"<li>{html.escape(str(d))}</li>" for d in report.get("other_damage") or [])
     other_html = (f'<div class="by-other"><b>Other damage the fairness verdict doesn\'t cover</b><ul>{other}</ul></div>'
                   if other else "")

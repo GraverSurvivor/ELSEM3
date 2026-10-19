@@ -503,6 +503,8 @@ td.fg-cell {display: table-cell}
 .by-outcome-repaired {border-color: #bbf7d0; background: #f0fdf4}
 .by-outcome-not_applicable, .by-outcome-no_gain {border-color: #fde68a; background: #fffbeb}
 .by-outcome-rejected {border-color: #fecaca; background: #fef2f2}
+.by-repair-verdict {font-size: 18px; margin: 6px 0} .by-repair-verdict span {font-size: 13px; opacity: .8}
+.by-rv-improved b {color: #15803d} .by-rv-worse b {color: #b91c1c} .by-rv-improved, .by-rv-worse {}
 .by-note-precision {margin: 4px 0; padding: 6px 12px; border-left: 3px solid #6366f1; background: #eef2ff}
 .by-card-none p {font-size: 13px; opacity: .85}
 .by-gate-na {background: #f3f4f6}
@@ -580,7 +582,7 @@ def byom_view(runner: JobRunner) -> tuple:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         llama = f"# The llama.cpp settings couldn't be written for this model ({error}); patch.json still applies."
     return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report),
-            str(patch_path) if patch_path.exists() else None, llama)
+            str(job_dir / "repair_kit.zip") if (job_dir / "repair_kit.zip").exists() else str(patch_path), llama)
 
 
 def gr_update(**kwargs):
@@ -872,7 +874,11 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
         summary = (f"**Your repair: {len(paths)} part{'s' if len(paths) != 1 else ''}, {pct_weights(paths):.1f}% of the weights, "
                    f"+{backend.overhead_mb():.0f} MB.**  \nAdd these to `llama-quantize` to ship the same "
                    "repair in a llama.cpp model:")
-        return summary, "\n".join(llamacpp_overrides(patch)), str(out)
+        from src.product.repair_kit import build_kit
+
+        lines = llamacpp_overrides(patch)
+        kit = build_kit(patch.to_dict(), {"memory_mb": backend.overhead_mb()}, lines, out.with_suffix(".zip"))
+        return summary, "\n".join(lines), str(kit)
 
     # --- layout ------------------------------------------------------------------------------------
     with gr.Blocks(**blocks_kwargs) as app:
@@ -987,7 +993,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                 export_btn = gr.Button("⬇ Download my repair", variant="primary")
                 export_md = gr.Markdown()
                 export_code = gr.Code(label="llama.cpp settings", language="shell")
-                export_file = gr.File(label="Patch file")
+                export_file = gr.File(label="Repair kit (.zip): README, apply_repair.py, patch, llama.cpp settings")
 
             with gr.Tab("5 · Your model", id="byom"):
                 gr.HTML(_help(
@@ -1019,7 +1025,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None):
                     gr.Markdown("#### Parts kept at 8-bit")
                     byom_grid = gr.HTML()
                     gr.Markdown("#### Ship the repair")
-                    byom_patch = gr.File(label="Patch file (patch.json)")
+                    gr.Markdown("**Download the repair kit** (one .zip): a README in plain words, `apply_repair.py` "
+                                "(run it to get the repaired model: one command, works offline), the patch, and "
+                                "llama.cpp settings.")
+                    byom_patch = gr.File(label="Repair kit (.zip)")
                     byom_llama = gr.Code(label="llama.cpp settings (add to llama-quantize)", language="shell")
 
         # --- events ----------------------------------------------------------------------------
