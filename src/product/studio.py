@@ -1197,8 +1197,11 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 return (f'<div class="api-status api-off">Not serving. {html_escape(note)}</div>', "", "", "")
             base = api_base_url()
             minutes = (time.time() - api.started) / 60
+            source = (f"Phi-3.5, 3-bit with {len(backend.restored())} parts restored: it follows tab 3, so "
+                      "changing the repair there changes what the API answers with"
+                      if api.name.startswith("phi-3.5") else api.source)
             status = (f'<div class="api-status api-on">● Serving <b>{html_escape(api.name)}</b> '
-                      f'({html_escape(api.source)}) · {api.requests} request{"s" * (api.requests != 1)} · '
+                      f'({html_escape(source)}) · {api.requests} request{"s" * (api.requests != 1)} · '
                       f'up {minutes:.0f} min. {html_escape(note)}</div>')
             return status, base, api.key, snippets(base, api.key, api.name)
 
