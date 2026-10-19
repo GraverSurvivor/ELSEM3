@@ -235,6 +235,12 @@ costs over 25 points of right answers. `repair_verdict` IMPROVED / NOT IMPROVED 
 repair kit (`src/product/repair_kit.py`): README, a standalone `apply_repair.py` (transformers + hqq),
 patch.json, llama.cpp lines; tested by running the script on a tiny model. Typed questions are capped
 (story 1500, question 300, people 100 characters).
+**Studio tab 6, "API"** (`src/product/api_server.py`): serves a repaired model as an OpenAI-compatible API
+on the Studio's own server (`/fairgate/v1/chat/completions`, `/fairgate/v1/models`, `/fairgate/health`; on
+Colab the share link exposes it too): the Phi-3.5 demo model with tab 3's repair (the live model itself), or
+tab 5's latest repaired model rebuilt from its patch. Each start makes a new key (`fg-`, 256 bits; rotate /
+stop on screen); the API shares LiveBackend's lock so it never answers while parts are swapped for a
+"compressed" comparison. The repair kit's `serve_repair.py` is the same API for customers' own machines.
 `tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
