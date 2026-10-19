@@ -7,6 +7,7 @@ catch. So with the penalty the scan should keep A and B, and without it, H.
 """
 
 import json
+from pathlib import Path
 from contextlib import contextmanager
 
 import pytest
@@ -670,3 +671,68 @@ def test_fairness_bought_by_hedging_never_passes(tmp_path):
     assert H in report["kept"]  # repairing until fair had to go through the hedging part
     assert report["repaired"]["false_unknown"] > 0.3  # and the model now hedges
     assert report["gate"] == "FAIL" and any("states the answer" in f for f in report["gate_failures"])
+
+
+# --- repair until fair, on its own: batches, then trimming the overshoot ------------------------------
+
+class Swaps:
+    """A registry with revert, like SwapRegistry before release_baselines."""
+
+    def __init__(self):
+        self.active, self.trying, self.reverts = {}, None, 0
+
+    def commit(self, path, nbits):
+        self.active[path] = nbits
+
+    def revert(self, path):
+        del self.active[path]
+        self.reverts += 1
+
+
+class NeedsParts:
+    """Ambiguous question i is answered fairly once part i % need is restored (the original: always);
+    part k's scan gain makes the parts come in order P0, P1, ..."""
+
+    def __init__(self, need, parts=30):
+        self.parts = [f"model.layers.{k}.mlp.down_proj" for k in range(parts)]
+        self.need, self.registry = need, Swaps()
+
+    def score(self, view, items, on_progress=None):
+        on = set(self.registry.active)
+        picks = []
+        for it in items:
+            if it.label != it.unknown_index:  # stated answer: always right, never hedges
+                picks.append(it.label)
+                continue
+            k = it.example_id % self.need
+            fixed = k < len(self.parts) and self.parts[k] in on
+            picks.append(it.unknown_index if fixed else it.stereotype_index)
+        return picks
+
+
+def _until_fair(need, parts=30):
+    from src.attribution.greedy_search import Trial
+    from src.product.fast_repair import Events, repair_until_fair
+
+    backend = NeedsParts(need, parts)
+    scan = type("S", (), {"trials": [Trial(round=1, path=p, usr=0, gain=1 - k / 100, kept=False)
+                                     for k, p in enumerate(backend.parts)]})()
+    items = AMBIG[:200]
+    original = {id(it): it.unknown_index for it in items} | {id(it): it.label for it in DISAMBIG[:50]}
+    import tempfile
+
+    events = Events(Path(tempfile.mkdtemp()))
+    events.stage = "scan"
+    kept = repair_until_fair(backend, scan, backend.parts, [], items, original,
+                             FastRepairConfig(model_id="x/y"), events, stated=DISAMBIG[:50])
+    return backend, kept
+
+
+def test_the_overshoot_of_the_last_batch_is_trimmed_to_what_is_needed():
+    backend, kept = _until_fair(need=10)  # batches 4 + 8 = 12 > 10
+    assert kept == backend.parts[:10] and set(backend.registry.active) == set(kept) and backend.registry.reverts > 0
+
+
+def test_without_enough_parts_everything_is_restored_and_nothing_trimmed():
+    backend, kept = _until_fair(need=40, parts=30)  # never fair: 30 parts can't cover 40 kinds
+    assert kept == backend.parts and backend.registry.reverts == 0

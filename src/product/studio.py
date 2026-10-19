@@ -1104,16 +1104,15 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 api_sources = []
                 if backend.live:
                     api_sources.append(API_PHI)
-                if byom is not None and byom.runner is not None:
-                    api_sources.append(API_YOURS)
-                if not getattr(backend, "live", False):
+                if byom is not None and byom.runner is not None and byom.runner.pipeline == "real":
+                    api_sources.append(API_YOURS)  # also in --byom alone: its GPU is there for tab 5's model
+                if not api_sources:
                     gr.Markdown("*The API serves a model running on this machine's GPU. In preview mode there is "
                                 "none: start the Studio live (`--byom --live`) to use it.*")
                 api_choice = gr.Radio(api_sources or [API_PHI], value=(api_sources or [API_PHI])[0],
                                       label="Which repaired model to serve")
                 with gr.Row():
-                    api_start_btn = gr.Button("▶ Start the API", variant="primary",
-                                              interactive=bool(getattr(backend, "live", False)))
+                    api_start_btn = gr.Button("▶ Start the API", variant="primary", interactive=bool(api_sources))
                     api_key_btn = gr.Button("↻ New key")
                     api_stop_btn = gr.Button("■ Stop")
                 api_status = gr.HTML()
@@ -1166,6 +1165,11 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
                                "(about a minute). Press Diagnose again in a moment.")
                     return byom_view(runner)
+                if api.running and not api.name.startswith("phi-3.5"):
+                    # Tab 6 is serving a tab-5 model: the GPU takes one such model at a time.
+                    api_stop_model()
+                    gr.Info("Tab 6's API (serving your last repaired model) was stopped to make room for this "
+                            "diagnosis.")
                 try:
                     runner.start(model, mode, bits)
                 except (ValueError, JobBusy, RuntimeError) as error:

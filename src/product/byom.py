@@ -33,7 +33,7 @@ from pathlib import Path
 # The pipeline's stages, in order (contract C4), with the words the screen uses for them.
 STAGES = (
     ("download", "Download the model"),
-    ("quantize", "Compress to 3-bit"),
+    ("quantize", "Compress the model"),
     ("score_original", "Ask the original model"),
     ("score_3bit", "Ask the compressed model"),
     ("find_damage", "Find the damage"),
