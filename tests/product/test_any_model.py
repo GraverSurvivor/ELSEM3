@@ -128,8 +128,8 @@ def test_a_model_too_big_for_the_machine_is_refused_before_downloading(tmp_path,
 
 
 def test_the_repair_kits_script_builds_the_repaired_model(tmp_path, tokenizer):
-    """apply_repair.py from the kit, run as a customer would: it loads the model, compresses it, keeps the
-    patch's parts at 8-bit, answers a test question and saves the result."""
+    """fairgate.py from the kit, run as a customer would: it loads the model, compresses it, keeps the
+    patch's parts at 8-bit and answers a question; `save` keeps the result."""
     import subprocess
     import sys
     import zipfile
@@ -145,15 +145,20 @@ def test_the_repair_kits_script_builds_the_repaired_model(tmp_path, tokenizer):
     kit = build_kit(patch, {"memory_mb": 1.0}, ["--tensor-type x"], tmp_path / "kit.zip")
     with zipfile.ZipFile(kit) as z:
         z.extractall(tmp_path / "kit")
-    run = subprocess.run([sys.executable, "apply_repair.py", "--out", str(tmp_path / "repaired")],
+    assert sorted(zipfile.ZipFile(kit).namelist()) == ["README.md", "fairgate.py", "patch.json"]
+    run = subprocess.run([sys.executable, "fairgate.py", "chat", "Who was late?"],
                          cwd=tmp_path / "kit", capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stdout[-1500:] + run.stderr[-1500:]
     assert "with 2 parts kept at 8-bit" in run.stdout and "Repaired model ready" in run.stdout
-    assert "Answer:" in run.stdout and (tmp_path / "repaired").exists()
+    assert "Question: Who was late?" in run.stdout and "Answer:" in run.stdout
+    run = subprocess.run([sys.executable, "fairgate.py", "save", str(tmp_path / "repaired")],
+                         cwd=tmp_path / "kit", capture_output=True, text=True, timeout=600)
+    assert run.returncode == 0, run.stdout[-1500:] + run.stderr[-1500:]
+    assert (tmp_path / "repaired" / "qmodel.pt").exists()
 
 
 def test_the_repaired_model_is_served_as_an_api_behind_a_key(tmp_path, tokenizer):
-    """serve_repair.py from the kit: the repaired tiny model behind an OpenAI-compatible API. No key or a
+    """`fairgate.py serve` from the kit: the repaired tiny model behind an OpenAI-compatible API. No key or a
     wrong key is refused; the right key gets a chat completion in OpenAI's format."""
     import importlib
     import sys
@@ -171,8 +176,7 @@ def test_the_repaired_model_is_served_as_an_api_behind_a_key(tmp_path, tokenizer
         z.extractall(tmp_path / "kit")
     sys.path.insert(0, str(tmp_path / "kit"))
     try:
-        repair = importlib.import_module("fairgate_repair")
-        serve = importlib.import_module("serve_repair")
+        repair = serve = importlib.import_module("fairgate")
         model, tok, device = repair.load_repaired(repair.read_patch(tmp_path / "kit" / "patch.json"), device="cpu")
         key = serve.make_key(tmp_path / "api_key.txt")
         assert key.startswith("fg-") and len(key) > 40 and (tmp_path / "api_key.txt").read_text().strip() == key
@@ -199,8 +203,7 @@ def test_the_repaired_model_is_served_as_an_api_behind_a_key(tmp_path, tokenizer
                            headers={"Authorization": f"Bearer {key}"}).status_code == 400
     finally:
         sys.path.remove(str(tmp_path / "kit"))
-        for name in ("fairgate_repair", "serve_repair"):
-            sys.modules.pop(name, None)
+        sys.modules.pop("fairgate", None)
 
 
 @pytest.mark.parametrize("model_type", ["qwen2", "gpt2"])

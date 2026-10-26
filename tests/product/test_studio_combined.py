@@ -131,8 +131,8 @@ def test_ship_says_there_is_nothing_to_ship_when_nothing_was_restored(tmp_path, 
             return ""
 
     monkeypatch.setattr(studio, "progress_html", lambda state, info=None: "")  # the stages aren't checked here
-    _, _, _, results, grid, patch_file, llama = byom_view(Done())
-    assert patch_file is None and "Errno" not in llama and llama.startswith("# Nothing to ship")
+    _, _, _, results, grid, ship_button, note = byom_view(Done())
+    assert ship_button["visible"] is False and "Errno" not in note and note.startswith("*Nothing to ship")
     assert "No repair made" in results and "No parts were kept" in grid
 
 

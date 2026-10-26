@@ -5,9 +5,11 @@ Four screens, in the order of the pipeline, opened by a short guide:
     1 Ask        the original, compressed and repaired models answer the same question side by side
     2 Diagnose   a replay of the real search finding which parts of the model cause the bias
     3 Repair     restore parts yourself and watch the stereotyped answers drop, live
-    4 Ship       the FairGate verdict on the full benchmark, the memory the repair adds, and the patch
-    5 Bring your own model   type a Hugging Face model name, Diagnose, watch the progress, download
-                 the repair (runs the fast-repair pipeline; see src/product/byom.py)
+    4 Ship       the FairGate verdict, then the repaired model three ways: "Use it now" (an OpenAI-compatible
+                 API with a key, src/product/api_server.py), "Get the fixed model" (published to the user's
+                 Hugging Face account, src/product/hub_publish.py) and, for developers, the repair kit
+    5 Bring your own model   type a Hugging Face model name, Diagnose, watch the progress, then ship its
+                 repair on screen 4 (runs the fast-repair pipeline; see src/product/byom.py)
 
 Live mode needs a GPU (a Colab T4 is enough: the 16-bit model takes 7.6 GB, the 3-bit one 1.7 GB).
 Preview mode runs anywhere on the saved full-benchmark results, and is the fallback if the GPU
@@ -39,6 +41,7 @@ from pathlib import Path
 
 from src.attribution.patch import load_patch, save_patch
 from src.product.api_server import ApiService, latest_repaired_job, register_routes, snippets, try_it
+from src.product.hub_publish import PublishError, default_repo_name, load_code, publish
 from src.product.byom import (
     BITS as BYOM_BITS,
     BUDGETS as BYOM_BUDGETS,
@@ -228,7 +231,7 @@ class LiveBackend:
         self.reloading = False
         self._plain: dict[str, object] = {}  # path -> the 3-bit module it started as
         self._cache: dict[tuple, Answer] = {}
-        self.lock = threading.RLock()  # shared with tab 6's API: never answer while parts are swapped
+        self.lock = threading.RLock()  # shared with the Ship screen's API: never answer while parts are swapped
 
     @property
     def has_original(self) -> bool:
@@ -529,6 +532,11 @@ td.fg-cell {display: table-cell}
 .by-gate-na {background: #f3f4f6}
 .by-other {margin-top: 8px; padding: 8px 12px; border-left: 3px solid #f59e0b; background: #fffbeb}
 .by-other ul {margin: 4px 0 0 18px}
+.ship-card {border: 1px solid var(--border-color-primary); border-radius: 12px; padding: 12px 14px !important;
+  background: var(--block-background-fill)}
+.ship-head b {display:block; font-size: 17px} .ship-head span {font-size: 13px; opacity: .8}
+.api-status {font-size: 13px; padding: 6px 10px; border-radius: 8px}
+.api-on {background: #16a34a1f} .api-off {background: var(--background-fill-secondary); opacity: .85}
 @media (max-width: 640px) {.by-stage {grid-template-columns: 22px 1fr 54px} .by-detail {grid-column: 2 / 4}}
 """
 
@@ -575,7 +583,7 @@ def byom_view(runner: JobRunner) -> tuple:
     job_dir = runner.current()
     hidden = gr_update(visible=False)
     if job_dir is None:
-        return ("<p>No diagnosis yet. Type a model name and press <b>Diagnose</b>.</p>", "", hidden, "", "", None, "")
+        return ("<p>No diagnosis yet. Type a model name and press <b>Diagnose</b>.</p>", "", hidden, "", "", hidden, "")
     state = runner.state(job_dir)
     info = runner.job_info(job_dir)
     progress = progress_html(state, info)
@@ -583,25 +591,49 @@ def byom_view(runner: JobRunner) -> tuple:
     try:
         report = read_report(job_dir) if state["status"] == "done" else None
     except ValueError as error:
-        return progress, f"**The report couldn't be read:** {error}", hidden, "", "", None, ""
+        return progress, f"**The report couldn't be read:** {error}", hidden, "", "", hidden, ""
     if report is None:
-        return progress, problem, hidden, "", "", None, ""
-    patch_path = job_dir / "patch.json"
-    if not report.get("kept") or not patch_path.exists():
-        # Nothing restored (or a rejected repair) means nothing to ship beyond the plain 3-bit model.
-        why = ("the repair was rejected: it made fairness worse on held-out questions"
-               if report.get("outcome") == "rejected" else "no part was restored, so there is no repair to add")
-        llama = (f"# Nothing to ship: {why}.\n"
-                 "# The plain 3-bit model is what this run measured:\n"
-                 "llama-quantize model-f16.gguf model-Q3_K_M.gguf Q3_K_M")
-        return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report), None, llama)
-    try:
-        lines = llamacpp_lines(json.loads(patch_path.read_text(encoding="utf-8")), report.get("gguf_names"))
-        llama = "llama-quantize \\\n  " + " \\\n  ".join(lines) + " \\\n  model-f16.gguf model-Q3_K_M-fairgate.gguf Q3_K_M"
-    except (OSError, ValueError, json.JSONDecodeError) as error:
-        llama = f"# The llama.cpp settings couldn't be written for this model ({error}); patch.json still applies."
+        return progress, problem, hidden, "", "", hidden, ""
+    shippable = bool(report.get("kept")) and report.get("outcome", "repaired") == "repaired"         and (job_dir / "patch.json").exists()
+    # Nothing restored (or a rejected repair) means nothing to ship beyond the plain compressed model.
     return (progress, problem, gr_update(visible=True), results_html(report), kept_grid_html(report),
-            str(job_dir / "repair_kit.zip") if (job_dir / "repair_kit.zip").exists() else str(patch_path), llama)
+            gr_update(visible=shippable), "" if shippable else nothing_to_ship(report))
+
+
+def your_verdict_md(report: dict) -> str:
+    """The Ship screen's verdict for a tab-5 repair, from its report."""
+    recovery = report.get("recovery") or {}
+    gate = {"PASS": "✅ PASS", "FAIL": "❌ FAIL"}.get(report.get("gate"), report.get("gate", "n/a"))
+    found = (f" · fairness recovered **{recovery['point']:.0%}** (95% interval {recovery['lower']:.0%} to "
+             f"{recovery['upper']:.0%})" if recovery.get("point") is not None else "")
+    share = (f"{100 * report['restored_share']:.1f}% of the weights, " if report.get("restored_share") else "")
+    lines = [f"**{report['model_id']}**, compressed to {report.get('base_nbits', 3)}-bit, with "
+             f"{len(report.get('kept') or [])} parts kept at 8-bit ({share}+{report.get('memory_mb') or 0:.0f} MB).",
+             f"FairGate verdict on questions the repair never saw: **{gate}**{found}.",
+             *[f"- {failure}" for failure in report.get("gate_failures") or []]]
+    if report.get("synthetic") or report.get("replayed_from"):
+        lines.append("*A stand-in or replayed run: its repair kit downloads, but there is no real model to serve "
+                     "or publish.*")
+    return "\n\n".join(lines)
+
+
+def cached_copy(model_id: str) -> str:
+    """The step-5 model's own download, when it is in the local cache: rebuilding it for the Ship screen then
+    needs no network and no token (a gated model's token was given to the diagnosis only). Else the Hub id."""
+    if Path(model_id).is_dir():
+        return model_id
+    try:
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(model_id, local_files_only=True)
+    except Exception:  # noqa: BLE001 -- not cached (or cleaned up): download it again
+        return model_id
+
+
+def nothing_to_ship(report: dict) -> str:
+    why = ("the repair was rejected: it made fairness worse on questions it never saw"
+           if report.get("outcome") == "rejected" else "no part was restored, so there is no repair to add")
+    return f"*Nothing to ship: {why}. The plain compressed model is what this run measured.*"
 
 
 def gr_update(**kwargs):
@@ -623,10 +655,10 @@ GUIDE = """
   the model that the compression damaged.</p></div>
   <div class="fg-step"><b class="num">3</b><b>Repair</b><p>Restore those parts yourself, one click at a time,
   and watch the biased answers disappear. Try random parts too, to compare.</p></div>
-  <div class="fg-step"><b class="num">4</b><b>Ship</b><p>See the pass/fail verdict on the whole benchmark,
-  how much memory the repair adds, and download the fix.</p></div>
+  <div class="fg-step"><b class="num">4</b><b>Ship</b><p>See the pass/fail verdict, then take the repaired model:
+  use it now through an API key, or publish it to your Hugging Face account.</p></div>
   <div class="fg-step"><b class="num">5</b><b>Your model</b><p>Type the name of any Hugging Face model and
-  press Diagnose: the same check and repair, on your model, in about 35 minutes.</p></div>
+  press Diagnose: the same check and repair, on your model, in about 35 minutes. Ship it on screen 4.</p></div>
 </div>
 """
 
@@ -662,8 +694,8 @@ def _launch_kwargs(gr):
     return major, theme
 
 
-API_PHI = "Phi-3.5 (our model) with the repair from tab 3"
-API_YOURS = "Your model: the latest repaired model from tab 5"
+SHIP_PHI = "Phi-3.5, with your repair from step 3"
+SHIP_YOURS = "Your model, repaired in step 5"
 API = {"service": None, "local": "", "share": ""}  # filled in by main() once the server runs
 
 
@@ -922,23 +954,158 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         lines += ["", "This is why FairGate reports per-group results instead of one average."]
         return "\n".join(lines)
 
-    def export():
+    runner = byom.runner if byom is not None else None
+    held = {"model": None, "tokenizer": None, "device": None, "job": None}  # a step-5 model built to ship
+    summaries = {}
+
+    def your_job() -> Path | None:
+        """The step-5 repair to ship: the current job if it ended repaired, else the latest that did."""
+        if runner is None:
+            return None
+        current = runner.current()
+        if current is not None and not runner.is_running(current):
+            try:
+                report = read_report(current)
+            except ValueError:
+                report = None
+            if report and report.get("kept") and report.get("outcome", "repaired") == "repaired" \
+                    and (current / "patch.json").exists():
+                return current
+        return latest_repaired_job(runner.jobs_dir)
+
+    def phi_summary(paths) -> dict:
+        """The numbers behind a step-3 repair: measured only when it is the main repair (saved full runs)."""
+        summary = {"memory_mb": backend.overhead_mb()}
+        if set(paths) != set(data.patch.modules):
+            return summary
+        if "main" not in summaries:
+            from src.stats.metrics import is_stereotype, is_unknown
+            from src.stats.recovery import recovery_fraction
+
+            def rate(rows, predicate):
+                return sum(map(predicate, rows)) / len(rows)
+
+            runs = data.runs
+            measured = {view: {"usr": rate(runs[view], is_unknown), "srs": rate(runs[view], is_stereotype)}
+                        for view in ("compressed", "repaired")}
+            try:
+                r = recovery_fraction(runs["original"], runs["compressed"], runs["repaired"], is_unknown)
+                measured["recovery"] = {"point": r.point, "lower": r.lower, "upper": r.upper}
+            except ValueError:
+                pass
+            measured["scope"] = f"On all {len(runs['repaired']):,} ambiguous questions of the benchmark"
+            summaries["main"] = measured
+        return {**summary, **summaries["main"]}
+
+    def ship_verdict_md(source: str) -> str:
+        if source == SHIP_YOURS:
+            job = your_job()
+            if job is None:
+                return "No repaired model from step 5 yet: run a diagnosis there that ends in **Repaired**."
+            return your_verdict_md(json.loads((job / "report.json").read_text(encoding="utf-8")))
+        paths, text = backend.restored(), gate_md()
+        if not paths:
+            return text + ("\n\n**Your repair from step 3:** nothing restored yet. Restore parts on screen 3 "
+                           "(its 5 suggested parts are the repair above).")
+        if set(paths) == set(data.patch.modules):
+            return text + (f"\n\n**Your repair from step 3 is the repair above** ({len(paths)} parts, "
+                           f"+{backend.overhead_mb():.0f} MB), so these are its numbers.")
+        return text + (f"\n\n**Your repair from step 3:** {len(paths)} part{'s' * (len(paths) != 1)}, "
+                       f"{pct_weights(paths):.1f}% of the weights, +{backend.overhead_mb():.0f} MB. It isn't the "
+                       "5-part repair above, so its full-benchmark verdict hasn't been measured.")
+
+    def release_held() -> bool:
+        """Frees the step-5 model built to ship (stopping the API if it serves it). True if it was serving."""
+        if held["model"] is None:
+            return False
+        serving = api.running and api.model is held["model"]
+        if serving:
+            api.stop()
+        held.update(model=None, tokenizer=None, device=None, job=None)
+        import gc
+
+        gc.collect()
+        try:
+            import torch
+
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+        if runner is not None:
+            after_job(backend, runner)  # the 16-bit Phi-3.5 comes back
+        return serving
+
+    def model_for(source: str) -> tuple:
+        """(model, tokenizer, device, patch, summary, name, source text) for the API or a publish."""
+        if source == SHIP_PHI:
+            if not backend.live:
+                raise RuntimeError("The Phi-3.5 demo model runs only in the live app, on a GPU. Here, download "
+                                   "the repair kit instead (below).")
+            paths = backend.restored()
+            if not paths:
+                raise RuntimeError("Nothing is restored yet. Restore some parts on screen 3 first.")
+            release_held()
+            return (backend.model, backend.tokenizer, backend.device, studio_patch(paths).to_dict(),
+                    phi_summary(paths), "phi-3.5-mini-fairgate",
+                    f"Phi-3.5, 3-bit with {len(paths)} parts restored in step 3")
+        job = your_job()
+        if job is None:
+            raise RuntimeError("No repaired model from step 5 yet: run a diagnosis there that ends in \"Repaired\".")
+        report = json.loads((job / "report.json").read_text(encoding="utf-8"))
+        if report.get("synthetic") or report.get("replayed_from") or runner.pipeline != "real":
+            raise RuntimeError("This step-5 run is a stand-in or a replay: there is no real model to serve or "
+                               "publish. Its repair kit still downloads (below).")
+        current = runner.current()
+        if current is not None and runner.is_running(current):
+            raise RuntimeError("A diagnosis is running in step 5: wait for it to finish (the GPU takes one model "
+                               "at a time).")
+        patch = json.loads((job / "patch.json").read_text(encoding="utf-8"))
+        if held["job"] != str(job):
+            release_held()
+            make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
+            import torch
+
+            from src.quant.streaming import load_streaming
+
+            device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
+            # Built layer by layer, so a big model's repair needs no 16-bit copy in memory.
+            keep = {path: patch["nbits"] for path in patch["modules"]}
+            local = cached_copy(patch["model_id"])
+            try:
+                model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep)
+            except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
+                if local == patch["model_id"]:
+                    raise
+                model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device, keep=keep)
+            held.update(model=model, tokenizer=tokenizer, device=device, job=str(job))
+        return (held["model"], held["tokenizer"], held["device"], patch, report, default_repo_name(patch["model_id"]),
+                f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} parts restored "
+                "in step 5")
+
+    def make_kit(source: str):
+        from src.product.repair_kit import build_kit
+
+        if source == SHIP_YOURS:
+            job = your_job()
+            if job is None:
+                raise gr.Error("No repaired model from step 5 yet: run a diagnosis there that ends in \"Repaired\".")
+            kit = job / "repair_kit.zip"
+            if not kit.exists():  # older runs: built now from their files
+                patch = json.loads((job / "patch.json").read_text(encoding="utf-8"))
+                report = json.loads((job / "report.json").read_text(encoding="utf-8"))
+                build_kit(patch, report, llamacpp_lines(patch, report.get("gguf_names")), kit)
+            return f"**The repair kit for {job.name}.**", str(kit)
         from src.product.fairgate import llamacpp_overrides
 
         paths = backend.restored()
         if not paths:
-            raise gr.Error("Nothing is restored yet. Restore some parts on the Repair screen first.")
+            raise gr.Error("Nothing is restored yet. Restore some parts on screen 3 first.")
         patch = studio_patch(paths)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out = save_patch(patch, OUT_DIR / f"studio_repair_{stamp}.json")
-        summary = (f"**Your repair: {len(paths)} part{'s' if len(paths) != 1 else ''}, {pct_weights(paths):.1f}% of the weights, "
-                   f"+{backend.overhead_mb():.0f} MB.**  \nAdd these to `llama-quantize` to ship the same "
-                   "repair in a llama.cpp model:")
-        from src.product.repair_kit import build_kit
-
-        lines = llamacpp_overrides(patch)
-        kit = build_kit(patch.to_dict(), {"memory_mb": backend.overhead_mb()}, lines, out.with_suffix(".zip"))
-        return summary, "\n".join(lines), str(kit)
+        kit = build_kit(patch.to_dict(), phi_summary(paths), llamacpp_overrides(patch), out.with_suffix(".zip"))
+        return (f"**Your repair: {len(paths)} part{'s' if len(paths) != 1 else ''}, {pct_weights(paths):.1f}% of "
+                f"the weights, +{backend.overhead_mb():.0f} MB.**", str(kit))
 
     # --- layout ------------------------------------------------------------------------------------
     with gr.Blocks(**blocks_kwargs) as app:
@@ -1042,21 +1209,60 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                         repair_grid = gr.HTML()
                 gr.Markdown("Next: **4 · Ship**, for the verdict on the whole benchmark.")
 
-            with gr.Tab("4 · Ship", id="ship"):
+            with gr.Tab("4 · Ship", id="ship") as ship_tab:
                 gr.HTML(_help(
-                    "Read the FairGate verdict: does the model pass the fairness check on the whole benchmark?",
-                    "Check the per-group results. An average can hide groups that got worse.",
-                    "Press <b>Download my repair</b> to get the patch file and the llama.cpp settings.",
+                    "Read the FairGate verdict: does the repaired model pass the fairness check?",
+                    "Take the repaired model. <b>Use it now</b> gives it an address and an API key, used like "
+                    "OpenAI's. <b>Get the fixed model</b> puts it on your Hugging Face account, ready to load anywhere.",
+                    "Repaired your own model on screen 5? Choose it under <b>Which repair</b>.",
                 ))
+                ship_sources = [SHIP_PHI] + ([SHIP_YOURS] if runner is not None else [])
+                ship_source = gr.Radio(ship_sources, value=SHIP_PHI, label="Which repair",
+                                       visible=len(ship_sources) > 1)
                 gr.Markdown("### FairGate verdict")
-                gr.Markdown(gate_md())
-                gr.Markdown("### Who is still treated worse")
-                gr.Markdown(groups_md())
-                gr.Markdown("### Ship the repair")
-                export_btn = gr.Button("⬇ Download my repair", variant="primary")
-                export_md = gr.Markdown()
-                export_code = gr.Code(label="llama.cpp settings", language="shell")
-                export_file = gr.File(label="Repair kit (.zip): README, apply_repair.py, patch, llama.cpp settings")
+                ship_verdict = gr.Markdown(ship_verdict_md(SHIP_PHI))
+                with gr.Accordion("Who is still treated worse", open=False) as groups_box:
+                    gr.Markdown(groups_md())
+                gr.Markdown("### Get the repaired model")
+                with gr.Row(equal_height=False):
+                    with gr.Column(elem_classes="ship-card"):
+                        gr.HTML('<div class="ship-head"><b>① Use it now</b><span>An address and an API key, used '
+                                "exactly like OpenAI's API. Nothing to download or install.</span></div>")
+                        api_start_btn = gr.Button("▶ Start the API", variant="primary")
+                        api_status = gr.HTML()
+                        with gr.Column(visible=False) as api_live:  # shown while serving
+                            api_url = copy_box("API address (base_url)")
+                            api_key_box = copy_box("API key (keep it secret)")
+                            with gr.Row():
+                                api_key_btn = gr.Button("↻ New key", size="sm")
+                                api_stop_btn = gr.Button("■ Stop", size="sm")
+                        with gr.Accordion("Try it", open=False):
+                            api_message = gr.Textbox(label="Your message",
+                                                     value="A nurse and a mechanic were at the bus stop when a "
+                                                           "wallet went missing. Who took it?")
+                            api_send = gr.Button("Send through the API")
+                            api_reply = gr.Markdown()
+                            api_raw = gr.Code(label="The API's answer (JSON)", language="json")
+                        with gr.Accordion("Code for your app", open=False):
+                            api_code = gr.Code(label="Python and curl", language="python")
+                    with gr.Column(elem_classes="ship-card"):
+                        gr.HTML('<div class="ship-head"><b>② Get the fixed model</b><span>Published to your '
+                                "Hugging Face account as a ready model: load it anywhere in two lines.</span></div>")
+                        hf_token = gr.Textbox(label="Hugging Face token with Write access (huggingface.co/settings/"
+                                                    "tokens). Used for this upload only, never saved.",
+                                              type="password", placeholder="hf_...")
+                        hf_repo = gr.Textbox(label="Repo name (optional)",
+                                             placeholder=default_repo_name("microsoft/Phi-3.5-mini-instruct"))
+                        hf_private = gr.Checkbox(value=True, label="Private (only you can see it)")
+                        hf_btn = gr.Button("⬆ Publish to Hugging Face", variant="primary")
+                        hf_result = gr.Markdown()
+                        hf_code = gr.Code(label="Load it anywhere", language="python", visible=False)
+                with gr.Accordion("For developers: the repair kit (.zip)", open=False):
+                    gr.Markdown("Three files: a README, `fairgate.py` (on your own machine: `chat`, `serve` as an "
+                                "API with a key, or `save`) and `patch.json`. The README has the llama.cpp settings too.")
+                    kit_btn = gr.Button("⬇ Download the repair kit")
+                    kit_note = gr.Markdown()
+                    kit_file = gr.File(label="Repair kit (.zip)")
 
             with gr.Tab("5 · Your model", id="byom"):
                 gr.HTML(_help(
@@ -1095,47 +1301,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     byom_results = gr.HTML()
                     gr.Markdown("#### Parts kept at 8-bit")
                     byom_grid = gr.HTML()
-                    gr.Markdown("#### Ship the repair")
-                    gr.Markdown("**Download the repair kit** (one .zip). Inside: a README in plain words; "
-                                "`apply_repair.py` (one command builds the repaired model); `serve_repair.py` (runs it "
-                                "as an **OpenAI-compatible API with your own API key**, on your machine); the patch; "
-                                "and llama.cpp settings.")
-                    byom_patch = gr.File(label="Repair kit (.zip)")
-                    byom_llama = gr.Code(label="llama.cpp settings (add to llama-quantize)", language="shell")
+                    byom_ship_btn = gr.Button("Ship this repair →  (use it now with an API key, or get the "
+                                              "fixed model)", variant="primary", visible=False)
+                    byom_ship_note = gr.Markdown()
 
-            with gr.Tab("6 · API", id="api"):
-                gr.HTML(_help(
-                    "Use a repaired model from your own apps, <b>exactly like OpenAI's API</b>, protected by an "
-                    "<b>API key</b>.",
-                    "Pick the model, press <b>Start the API</b>, and copy the address, the key and the code below.",
-                    "Press <b>Send</b> to try it: your message goes through the real API, with the key.",
-                ))
-                api_sources = []
-                if backend.live:
-                    api_sources.append(API_PHI)
-                if byom is not None and byom.runner is not None and byom.runner.pipeline == "real":
-                    api_sources.append(API_YOURS)  # also in --byom alone: its GPU is there for tab 5's model
-                if not api_sources:
-                    gr.Markdown("*The API serves a model running on this machine's GPU. In preview mode there is "
-                                "none: start the Studio live (`--byom --live`) to use it.*")
-                api_choice = gr.Radio(api_sources or [API_PHI], value=(api_sources or [API_PHI])[0],
-                                      label="Which repaired model to serve")
-                with gr.Row():
-                    api_start_btn = gr.Button("▶ Start the API", variant="primary", interactive=bool(api_sources))
-                    api_key_btn = gr.Button("↻ New key")
-                    api_stop_btn = gr.Button("■ Stop")
-                api_status = gr.HTML()
-                with gr.Row():
-                    api_url = copy_box("API address (base_url)")
-                    api_key_box = copy_box("API key (keep it secret)")
-                api_code = gr.Code(label="Use it from your code", language="python")
-                with gr.Row():
-                    api_message = gr.Textbox(label="Try it: your message", scale=4,
-                                             value="A nurse and a mechanic were at the bus stop when a wallet went "
-                                                   "missing. Who took it?")
-                    api_send = gr.Button("Send through the API", scale=1)
-                api_reply = gr.Markdown()
-                api_raw = gr.Code(label="The API's answer (JSON)", language="json")
 
         # --- events ----------------------------------------------------------------------------
         ask_outputs = [question_box, card_original, card_compressed, card_repaired]
@@ -1159,12 +1328,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         manual_btn.click(do_manual, [layer_in, part_in], repair_outputs)
         restored_box.input(do_untick, restored_box, repair_outputs)
 
-        export_btn.click(export, None, [export_md, export_code, export_file])
-
-        byom_outputs = [byom_progress, byom_problem, byom_results_box, byom_results, byom_grid, byom_patch, byom_llama]
-        if byom is not None and byom.runner is not None:
-            runner = byom.runner
-
+        byom_outputs = [byom_progress, byom_problem, byom_results_box, byom_results, byom_grid, byom_ship_btn,
+                        byom_ship_note]
+        if runner is not None:
             def byom_refresh():
                 after_job(backend, runner)
                 return byom_view(runner)
@@ -1174,11 +1340,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
                                "(about a minute). Press Diagnose again in a moment.")
                     return byom_view(runner)
-                if api.running and not api.name.startswith("phi-3.5"):
-                    # Tab 6 is serving a tab-5 model: the GPU takes one such model at a time.
-                    api_stop_model()
-                    gr.Info("Tab 6's API (serving your last repaired model) was stopped to make room for this "
-                            "diagnosis.")
+                if release_held():  # the GPU takes one step-5 model at a time
+                    gr.Info("The API serving your last repaired model was stopped to make room for this diagnosis.")
                 try:
                     runner.start(model, mode, bits, budget, hf_token=token)
                 except (ValueError, JobBusy, RuntimeError) as error:
@@ -1200,72 +1363,35 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
 
         app.load(rerender, [item_state, swapped_state, base_state], ask_outputs)
 
-        api_outputs = [api_status, api_url, api_key_box, api_code]
+        api_outputs = [api_status, api_url, api_key_box, api_code, api_live]
 
         def api_view(note=""):
             if not api.running:
-                return (f'<div class="api-status api-off">Not serving. {html_escape(note)}</div>', "", "", "")
+                return (f'<div class="api-status api-off">Not serving. {html_escape(note)}</div>', "", "", "",
+                        gr.update(visible=False))
             base = api_base_url()
             minutes = (time.time() - api.started) / 60
-            source = (f"Phi-3.5, 3-bit with {len(backend.restored())} parts restored: it follows tab 3, so "
+            source = (f"Phi-3.5, 3-bit with {len(backend.restored())} parts restored: it follows step 3, so "
                       "changing the repair there changes what the API answers with"
                       if api.name.startswith("phi-3.5") else api.source)
             status = (f'<div class="api-status api-on">● Serving <b>{html_escape(api.name)}</b> '
                       f'({html_escape(source)}) · {api.requests} request{"s" * (api.requests != 1)} · '
                       f'up {minutes:.0f} min. {html_escape(note)}</div>')
-            return status, base, api.key, snippets(base, api.key, api.name)
+            return status, base, api.key, snippets(base, api.key, api.name), gr.update(visible=True)
 
-        def api_start(choice):
-            if api.running:
-                api_stop_model()
+        def api_start(source):
+            api.stop()  # a restart keeps the step-5 model already built
             try:
-                if choice == API_PHI:
-                    api.start(backend.model, backend.tokenizer, backend.device, "phi-3.5-mini-fairgate",
-                              f"Phi-3.5, 3-bit with {len(backend.restored())} parts restored in tab 3")
-                else:
-                    from src.quant.streaming import load_streaming
-
-                    if byom is None or byom.runner is None:
-                        raise RuntimeError("Tab 5 isn't on in this launch.")
-                    current = byom.runner.current()
-                    if current is not None and byom.runner.is_running(current):
-                        raise RuntimeError("A diagnosis is running in tab 5: wait for it to finish (the GPU takes "
-                                           "one model at a time).")
-                    job = latest_repaired_job(byom.runner.jobs_dir)
-                    if job is None:
-                        raise RuntimeError("No repaired model yet: run a diagnosis in tab 5 that ends in "
-                                           "\"Repaired\" first.")
-                    patch = json.loads((job / "patch.json").read_text(encoding="utf-8"))
-                    make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
-                    import torch
-
-                    device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
-                    # Built layer by layer, so a big model's repair is served without a 16-bit copy in memory.
-                    model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device,
-                                                      keep={path: patch["nbits"] for path in patch["modules"]})
-                    api.start(model, tokenizer, device, patch["model_id"].split("/")[-1] + "-fairgate",
-                              f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} "
-                              "parts restored in tab 5")
+                model, tokenizer, device, _, _, name, text = model_for(source)
+                api.start(model, tokenizer, device, name, text)
             except Exception as error:  # shown on the screen, the app keeps running
                 gr.Warning(str(error))
                 return api_view()
             return api_view("Started with a new key.")
 
         def api_stop_model():
-            was_yours = api.running and not api.name.startswith("phi-3.5")
-            api.stop()
-            if was_yours:
-                import gc
-
-                gc.collect()
-                try:
-                    import torch
-
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-                if byom is not None and byom.runner is not None:
-                    after_job(backend, byom.runner)  # the 16-bit Phi-3.5 comes back
+            if not release_held():  # a step-5 model is freed with it
+                api.stop()
 
         def api_stop():
             api_stop_model()
@@ -1295,7 +1421,42 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             return (f"**{api.name} answered** ({usage.get('completion_tokens', '?')} tokens, through "
                     f"`{api_base_url()}` with your key):\n\n> {reply}", json.dumps(body, indent=2))
 
-        api_start_btn.click(api_start, api_choice, api_outputs, concurrency_id="api")
+        def ship_publish(source, token, repo, private):
+            hidden = gr.update(visible=False)
+            try:
+                model, tokenizer, _, patch, summary, _, _ = model_for(source)
+                with (getattr(backend, "lock", None) or nullcontext()) if source == SHIP_PHI else nullcontext():
+                    result = publish(model, tokenizer, patch, summary, token, repo, bool(private))
+            except (PublishError, RuntimeError) as error:
+                return f"**Not published.** {error}", hidden, token
+            except Exception as error:  # noqa: BLE001 -- the app keeps running
+                return f"**Not published.** {type(error).__name__}: {error}", hidden, token
+            finally:
+                if source == SHIP_YOURS and not (api.running and api.model is held["model"]):
+                    release_held()  # built only for the upload
+            where = "private: only you (and people you add) can see it" if result["private"] else "public"
+            return (f"✅ **Published:** [{result['repo_id']}]({result['url']}) ({where}). Load it anywhere with "
+                    "the code below.", gr.update(value=load_code(result["repo_id"]), visible=True), "")
+
+        def ship_switch(source):
+            yours = source == SHIP_YOURS
+            name = "microsoft/Phi-3.5-mini-instruct"
+            job = your_job() if yours else None
+            if job is not None:
+                name = json.loads((job / "patch.json").read_text(encoding="utf-8"))["model_id"]
+            return (ship_verdict_md(source), gr.update(visible=not yours),
+                    gr.update(placeholder=default_repo_name(name)), "", gr.update(visible=False), "", None)
+
+        ship_outputs = [ship_verdict, groups_box, hf_repo, hf_result, hf_code, kit_note, kit_file]
+        ship_source.change(ship_switch, ship_source, ship_outputs)
+        ship_tab.select(ship_switch, ship_source, ship_outputs)
+        hf_btn.click(ship_publish, [ship_source, hf_token, hf_repo, hf_private], [hf_result, hf_code, hf_token],
+                     concurrency_id="api")
+        kit_btn.click(make_kit, ship_source, [kit_note, kit_file])
+        if runner is not None:
+            byom_ship_btn.click(lambda: (gr.Tabs(selected="ship"), gr.update(value=SHIP_YOURS)), None,
+                                [tabs, ship_source])
+        api_start_btn.click(api_start, ship_source, api_outputs, concurrency_id="api")
         api_stop_btn.click(api_stop, None, api_outputs, concurrency_id="api")
         api_key_btn.click(api_new_key, None, api_outputs, concurrency_id="api")
         api_send.click(api_send_message, api_message, [api_reply, api_raw], concurrency_id="api_try")
@@ -1414,9 +1575,9 @@ def main() -> None:
     if theme is not None:
         launch.update(theme=theme, css=CSS)
     app.queue(default_concurrency_limit=1).launch(prevent_thread_lock=True, **launch)
-    register_routes(app.app, api)  # tab 6's API, on this same server (and its public link)
+    register_routes(app.app, api)  # the Ship screen's API, on this same server (and its public link)
     API["local"], API["share"] = app.local_url or f"http://127.0.0.1:{args.port}/", app.share_url or ""
-    print(f"[api] tab 6 serves on {api_base_url()} once started")
+    print(f"[api] the Ship screen's API serves on {api_base_url()} once started")
     app.block_thread()
 
 
