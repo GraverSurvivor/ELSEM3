@@ -20,3 +20,6 @@ pandas>=2.2
 matplotlib>=3.9
 seaborn>=0.13
 tqdm>=4.66
+# The store (src/db): the local SQLite copy and the shared Postgres one use the same code.
+sqlalchemy>=2.0
+psycopg[binary]>=3.1

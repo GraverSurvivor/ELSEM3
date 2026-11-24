@@ -109,3 +109,29 @@ python -m src.product.fast_repair --model <HF id> --mode fast|exact --questions 
   one job at a time; Cancel; reload-safe.
 * `python -m src.product.studio --byom` starts Studio without the Phi-3.5 models (the GPU is for the
   customer's model); `--byom-pipeline fake` and `--byom-replay <run dir>` need no GPU.
+
+## C9. The store (v2, Person 3): `src/db/`
+```python
+open_store(url=None, path=None, ran_by=None) -> Store   # url: DATABASE_URL by default; none = local only
+store.status_line()                  # "database: connected" / "database: local only ..."
+store.start_run(run_id, hub_id, job=, source=, pipeline=, method=, base_bits=, budget=, mode=, questions=, versions=)
+store.save_events(run_id, events, offset=0)
+store.finish_run(run_id, status, report=, patch=, message=, ended_at=, kit=(name, sha256))
+store.save_answers(run_id, answers)                     # answers.json (C4)
+store.set_weights(run_id, url, private=True)            # a link, never weights
+store.save_question(story, question, person_a, person_b, {view: {"pick", "answer", "consistency", "probs"}}, run_id=)
+store.start_api_session(key, model_name, run_id=) -> id; store.end_api_session(id, requests)   # the key's hash only
+store.runs(search="", outcome=None, method=None); store.run(run_id); store.answers(run_id); store.recent_questions()
+store.delete_run(run_id)                                # the record; nothing on Hugging Face
+```
+* Every write goes to a local SQLite file and its `outbox` in one transaction; a background thread upserts to
+  Postgres by id and fetches other machines' rows. Every read is local: a screen never waits on the network.
+* Ids are worked out from what a row is (`src/db/records.py`), so syncing, importing or retrying twice adds nothing.
+  The newer write wins (`updated_at`). A deleted run leaves a row in `deletions` and can't come back.
+* Tables and columns: `src/db/schema.py`. A change adds a step to `MIGRATIONS` and raises `SCHEMA_VERSION`; an
+  app older than the database works locally and says so.
+* Secrets: `scrub` (src/db/scrub.py) cuts tokens, API keys and database addresses out of every value written.
+* Optional `report.json` key `strategies` (Person 1): a list of `{"name", "extra_mb", "parts", "chosen", ...}`; other
+  keys are kept as the strategy's `validation`.
+* `answers` of other machines' runs are fetched only when asked for (`fetch_answers`): 2,000 rows a run.
+* Tests: `pytest tests/db`; with `TEST_DATABASE_URL` the same tests also run on Postgres, in a throw-away schema.
