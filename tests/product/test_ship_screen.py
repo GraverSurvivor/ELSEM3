@@ -97,7 +97,9 @@ def test_end_to_end_from_diagnosis_to_a_published_model(tmp_path, data, monkeypa
     """The whole chain on a real tiny model: the fast-repair pipeline (answers from the rule-based stand-in,
     everything else real) writes its report, patch and kit; the kit's script builds and answers; the Ship
     screen shows the verdict, serves the repair behind a key and publishes it (the real publish code, a fake
-    Hub); and the model card's code loads the published model and answers."""
+    Hub); and the model card's code loads the published model and answers. Every step is recorded, and a new
+    session with none of the files finds the model in My models, rebuilds it, checks its 50 fingerprint
+    answers and serves it."""
     import functools
     import subprocess
     import sys
@@ -129,6 +131,21 @@ def test_end_to_end_from_diagnosis_to_a_published_model(tmp_path, data, monkeypa
                  load_questions=lambda: (AMBIG, DISAMBIG))
     (job / "job.json").write_text(json.dumps({"model_id": str(folder), "mode": "fast", "ended": True}))
     assert report["outcome"] == "repaired" and report["gate"] == "PASS" and report["kept"]
+    # The stand-in answered by rules; the fingerprint must be what this tiny repaired model itself answers.
+    from src.eval.option_scorer import score_items
+    from src.quant.streaming import load_streaming
+
+    items = {"ambig": {it.question_id: it for it in AMBIG}, "stated": {it.question_id: it for it in DISAMBIG}}
+    assert len(report["fingerprint"]) == 50
+    measured, measured_tok = load_streaming(str(folder), report.get("base_nbits") or 3, device="cpu",
+                                            keep=dict.fromkeys(report["kept"], 8))
+    picks = score_items(measured, measured_tok, [items[e["set"]][e["question_id"]] for e in report["fingerprint"]],
+                        "cpu", batch_size=16)
+    report["fingerprint"] = [{**e, "pick": p} for e, p in zip(report["fingerprint"], picks)]
+    (job / "report.json").write_text(json.dumps(report))
+    from src.db.store import Store, sqlite_engine
+
+    store = Store(sqlite_engine(tmp_path / "server_copy.sqlite"), ran_by="Asha")
 
     # 2. The kit, run as a customer would.
     with zipfile.ZipFile(job / "repair_kit.zip") as kit:
@@ -143,7 +160,9 @@ def test_end_to_end_from_diagnosis_to_a_published_model(tmp_path, data, monkeypa
     monkeypatch.setattr(studio, "publish", functools.partial(publish, api=hub))
     api = ApiService()
     backend = SavedBackend(data.runs, list(data.patch.modules), repairs=data.saved_repairs)
-    app, _ = studio.build_app(backend, data, studio.ByomSetup(JobRunner(tmp_path / "jobs", pipeline="real")), api)
+    runner = JobRunner(tmp_path / "jobs", pipeline="real", store=store)
+    runner.sync_all()
+    app, _ = studio.build_app(backend, data, studio.ByomSetup(runner), api)
     handlers = {f.fn.__name__: f.fn for f in app.fns.values() if getattr(f, "fn", None) is not None}
     verdict = handlers["ship_switch"](studio.SHIP_YOURS)[0]
     assert "✅ PASS" in verdict and f"{len(report['kept'])} parts kept at 8-bit" in verdict
@@ -160,6 +179,35 @@ def test_end_to_end_from_diagnosis_to_a_published_model(tmp_path, data, monkeypa
 
     # 4. The published model, loaded with the model card's own code.
     exec(compile(load_code(str(tmp_path / "uploaded").replace("\\", "/"), device="cpu"), "card", "exec"), {})
+
+    # 5. A new session: a new app, no job folders, only the database. Reopened from My models.
+    from src.product import reopen as reopening
+
+    monkeypatch.setattr(reopening, "benchmark_items", lambda: items)
+    api = ApiService()
+    empty = JobRunner(tmp_path / "new session", pipeline="real", store=store)
+    app, _ = studio.build_app(SavedBackend(data.runs, list(data.patch.modules), repairs=data.saved_repairs), data,
+                              studio.ByomSetup(empty), api)
+    handlers = {f.fn.__name__: f.fn for f in app.fns.values() if getattr(f, "fn", None) is not None}
+    status, rows, picker, *_ = handlers["mm_list"]()
+    assert "database: local only · 1 run" in status and rows[0][1] == "HQQ" and rows[0][3] == "PASS"
+    [(label, run_id)] = picker["choices"]
+    assert run_id == runner.run_id(job) and "Repaired" in label
+    page = handlers["mm_show"](run_id, None)[0]
+    assert "FairGate verdict: <b>PASS</b>" in page and report["kept"][0].split(".")[2] in page
+    note, _, *shown = handlers["mm_serve_model"](run_id)
+    assert "Matches what was measured, 50/50" in note and "rebuilt from its recipe" in note
+    assert api.running and "Serving" in shown[0] and shown[2] == api.key
+    assert api.reply([{"role": "user", "content": "Hi"}], 4, 0.0)["choices"]
+    handlers["api_stop"]()
+    assert not api.running
+    with store.read() as connection:
+        from src.db.schema import api_sessions
+
+        sessions = connection.execute(api_sessions.select().order_by(api_sessions.c.started_at)).mappings().all()
+    assert [s["run_id"] for s in sessions] == [run_id, run_id] and [s["requests"] for s in sessions] == [1, 1]
+    assert all(s["stopped_at"] for s in sessions)
+    store.close()
 
 
 def test_preview_mode_explains_what_needs_the_gpu(screen):

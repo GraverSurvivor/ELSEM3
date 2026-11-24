@@ -135,12 +135,16 @@ def test_ask_and_api_history(store):
 
 def test_odd_values_are_stored_safely(store):
     report = {**REPORT, "gpu": "x" * 500, "minutes": float("nan"), "outcome_reason": "a\x00b",
-              "other_damage": [float("inf")], "original": {"usr": None}}
+              "other_damage": [float("inf")], "original": {"usr": None}, "questions": "many", "memory_mb": "12 MB",
+              "base_nbits": 3.0}
     store.start_run("r", MODEL)
     store.finish_run("r", "done", report=report, patch=PATCH)
     run = store.run("r")
     assert len(run["gpu"]) == 100 and run["minutes"] is None and run["outcome_reason"] == "ab"
     assert run["report"]["other_damage"] == [None]
+    assert run["questions"] is None and run["extra_mb"] is None and run["base_bits"] == 3  # numbers or nothing
+    store.save_answers("r", {"ambig": {"Age:1": {"original": True, "compressed": 10**12, "repaired": "2"}}})
+    assert [store.answers("r")[0][v] for v in ("original", "compressed", "repaired")] == [None, None, None]
 
 
 # --- secrets ---------------------------------------------------------------------------------------

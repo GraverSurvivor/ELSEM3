@@ -42,6 +42,7 @@ from pathlib import Path
 from src.attribution.patch import load_patch, save_patch
 from src.product.api_server import ApiService, latest_repaired_job, register_routes, snippets, try_it
 from src.product.hub_publish import PublishError, default_repo_name, load_code, publish
+from src.product import my_models
 from src.product.byom import (
     BITS as BYOM_BITS,
     BUDGETS as BYOM_BUDGETS,
@@ -193,7 +194,11 @@ class LiveBackend:
     """Runs the models on a GPU. One 3-bit model serves both the "compressed" and the "repaired"
     answers: the restored parts are swapped out for the original 3-bit modules while the compressed
     answer is computed and put straight back. Swapping module objects is instant and exact (no
-    requantizing, the same rule SwapRegistry follows), and it saves holding a second 3-bit copy."""
+    requantizing, the same rule SwapRegistry follows), and it saves holding a second 3-bit copy.
+
+    By default it is the Phi-3.5 demo, its repair built on screen 3. Given a `patch` it is a model from
+    tab 6: the repaired model as it was saved, whose repair is fixed. Its compressed answers swap the
+    patch's parts for their compressed versions, built from the original's weights when first needed."""
 
     live = True
     mode_label = "Live on GPU"
@@ -202,9 +207,20 @@ class LiveBackend:
     # answers come from the saved full-benchmark run; it loads back when the job ends.
     ORIGINAL_AWAY = ("Saved answer from the full-benchmark run: the 16-bit model steps aside while tab 5 "
                      "diagnoses your model, and is back when it finishes.")
+    NO_SAVED_ANSWER = ("The 16-bit model steps aside while tab 5 diagnoses your model, and there is no "
+                       "saved answer for this question. Ask again when the diagnosis ends.")
+    _fixed: dict | None = None  # part -> bits, for a model from tab 6: its repair can't be edited
 
     def __init__(self, device: str = "cuda", load_original: bool = True, batch_size: int = 16,
-                 cache_dir: Path | None = None, saved_original: dict | None = None):
+                 cache_dir: Path | None = None, saved_original: dict | None = None, model_id: str | None = None,
+                 patch: dict | None = None, loaded: tuple | None = None, extra_mb: float | None = None,
+                 lock: threading.RLock | None = None):
+        """The Phi-3.5 demo by default. With a `model_id` (a Hub id or a folder) and a `patch`: that repaired
+        model, already `loaded` as (model, tokenizer) or rebuilt from the patch here."""
+        if patch is not None:
+            self._init_saved(device, batch_size, model_id or patch["model_id"], patch, loaded, saved_original,
+                             extra_mb, lock)
+            return
         import gc
 
         import torch
@@ -232,6 +248,41 @@ class LiveBackend:
         self._plain: dict[str, object] = {}  # path -> the 3-bit module it started as
         self._cache: dict[tuple, Answer] = {}
         self.lock = threading.RLock()  # shared with the Ship screen's API: never answer while parts are swapped
+
+    def _init_saved(self, device, batch_size, model_id, patch, loaded, saved_original, extra_mb, lock) -> None:
+        from src.db.records import patch_bits
+
+        self.device, self.batch_size = device, batch_size
+        self._fixed, self._base_bits, self._checkpoint = patch_bits(patch), patch["base"]["nbits"], model_id
+        if loaded is None:
+            from src.quant.streaming import load_streaming
+
+            loaded = load_streaming(model_id, self._base_bits, device=device, keep=self._fixed)
+        self.model, self.tokenizer = loaded
+        self.model_source, self.registry = "saved model", None
+        self._extra_mb = float(extra_mb or 0.0)
+        self.original, self.wants_original = None, False  # the original isn't loaded: its saved answers show
+        self.saved_original = saved_original or {}
+        self.original_away, self.reloading = True, False
+        self.ORIGINAL_AWAY = "Saved answer from this model's diagnosis: the original model isn't loaded."
+        self.NO_SAVED_ANSWER = ("The original model isn't loaded, and its diagnosis didn't ask this question.")
+        self._plain, self._cache = {}, {}
+        self.lock = lock or threading.RLock()
+
+    def _compressed_part(self, path: str):
+        """One of a saved model's restored parts, as the compressed model has it: the same weights, the same
+        HQQ settings, the base bits."""
+        from hqq.core.quantize import HQQLinear
+
+        from src.models.adapter import adapter_for_id
+        from src.quant.hqq_quantizer import build_quant_config
+        from src.quant.weight_source import CheckpointWeightSource
+
+        adapter = adapter_for_id(self._checkpoint)
+        transposed = {p for p in self._fixed if adapter.is_transposed(p)}
+        source = CheckpointWeightSource(self._checkpoint, transposed=lambda p: p in transposed)
+        return HQQLinear(source.get_linear(path, dtype=_fp16()), build_quant_config(nbits=self._base_bits),
+                         compute_dtype=_fp16(), device=self.device)
 
     @property
     def has_original(self) -> bool:
@@ -278,7 +329,7 @@ class LiveBackend:
         return None if pick is None else Answer(pick)
 
     def restored(self) -> list[str]:
-        return list(self.registry.active)
+        return list(self._fixed) if self._fixed is not None else list(self.registry.active)
 
     def _guard(self):
         return getattr(self, "lock", None) or nullcontext()
@@ -288,6 +339,8 @@ class LiveBackend:
             self._set_restored(paths)
 
     def _set_restored(self, paths) -> None:
+        if self._fixed is not None:
+            raise RuntimeError("This is a saved model: its repair can't be changed here.")
         from src.quant.module_swap import get_module_by_path
 
         target = list(dict.fromkeys(paths))
@@ -305,6 +358,10 @@ class LiveBackend:
         from src.quant.module_swap import get_module_by_path, set_module_by_path
 
         promoted = {path: get_module_by_path(self.model, path) for path in self.restored()}
+        if self._fixed is not None:
+            for path in promoted:
+                if path not in self._plain:
+                    self._plain[path] = self._compressed_part(path)
         for path in promoted:
             set_module_by_path(self.model, path, self._plain[path])
         try:
@@ -377,6 +434,8 @@ class LiveBackend:
         return count_answers(items, [a.pick for a in answers])
 
     def overhead_mb(self) -> float:
+        if self._fixed is not None:
+            return self._extra_mb
         return self.registry.deployed_overhead_bytes() / 2**20
 
 
@@ -538,7 +597,7 @@ td.fg-cell {display: table-cell}
 .api-status {font-size: 13px; padding: 6px 10px; border-radius: 8px}
 .api-on {background: #16a34a1f} .api-off {background: var(--background-fill-secondary); opacity: .85}
 @media (max-width: 640px) {.by-stage {grid-template-columns: 22px 1fr 54px} .by-detail {grid-column: 2 / 4}}
-"""
+""" + my_models.CSS
 
 
 @dataclass
@@ -752,11 +811,30 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
     labels = [example_label(it) for it in examples]
     suggested = list(data.patch.modules)
 
+    held = {"model": None, "tokenizer": None, "device": None, "job": None,  # a step-5 model built to ship,
+            "run": None, "backend": None, "asking": False,  # or a model from tab 6 (and the Ask screen asks it)
+            "fingerprint": None, "loading": False}
+
+    def asker():
+        """What the Ask screen asks: a model reopened from tab 6, else the demo."""
+        return held["backend"] if held["asking"] and held["backend"] is not None else backend
+
+    def card_sub(view: str) -> str | None:
+        """Under a card's title; None for the demo's own words (they give Phi-3.5's sizes)."""
+        asked = asker()
+        if view == "repaired":
+            return repaired_sub()
+        if asked is backend:
+            return None
+        return "not loaded in this session" if view == "original" else f"{asked._base_bits}-bit"
+
     def repaired_sub() -> str:
-        paths = backend.restored()
+        asked = asker()
+        paths = asked.restored()
         if not paths:
             return "3-bit, nothing restored yet"
-        return f"3-bit + {len(paths)} part{'s' if len(paths) != 1 else ''} restored (+{backend.overhead_mb():.0f} MB)"
+        bits = getattr(asked, "_base_bits", 3)
+        return f"{bits}-bit + {len(paths)} part{'s' if len(paths) != 1 else ''} restored (+{asked.overhead_mb():.0f} MB)"
 
     # --- Ask ---------------------------------------------------------------------------------------
     def all_orders(item):
@@ -764,7 +842,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         orders = answer_orders(item)
         answers, notes = {}, {}
         for view in VIEWS:
-            scored = backend.answers_for([o for o, _ in orders], view) if backend.live else None
+            scored = asker().answers_for([o for o, _ in orders], view) if asker().live else None
             if scored is None:
                 answers[view], notes[view] = None, ""
             else:
@@ -774,30 +852,29 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
     def answers_and_notes(item, swapped):
         if item.category == "Custom":
             return all_orders(item)
-        return backend.answers(item, swapped), dict.fromkeys(VIEWS, "")
+        return asker().answers(item, swapped), dict.fromkeys(VIEWS, "")
 
     def render(item, swapped, base_item=None):
         if item is None:
             return ("", "", "", "")
+        asked = asker()
         answers, notes = answers_and_notes(item, swapped)
         before = answers_and_notes(base_item, False)[0] if swapped and base_item is not None else {}
         cards = []
         for view in VIEWS:
             note = notes[view]
             if answers[view] is None:
-                if view == "original" and getattr(backend, "original_away", False):
-                    note = ("The 16-bit model steps aside while tab 5 diagnoses your model, and there is no "
-                            "saved answer for this question. Ask again when the diagnosis ends.")
-                elif view == "original" and not backend.has_original:
+                if view == "original" and getattr(asked, "original_away", False):
+                    note = getattr(asked, "NO_SAVED_ANSWER", LiveBackend.NO_SAVED_ANSWER)
+                elif view == "original" and not asked.has_original:
                     note = "Not loaded in this session."
-                elif not backend.live:
+                elif not asked.live:
                     note = "This needs the live app (GPU). Preview mode only has saved answers."
             elif swapped and base_item is not None:
                 note = " ".join(n for n in (swap_note(base_item, before.get(view), item, answers[view]), note) if n)
-            if view == "original" and answers[view] is not None and getattr(backend, "original_away", False):
-                note = " ".join(n for n in (note, LiveBackend.ORIGINAL_AWAY) if n)
-            sub = repaired_sub() if view == "repaired" else None
-            cards.append(answer_card_html(view, item, answers[view], subtitle=sub, note=note))
+            if view == "original" and answers[view] is not None and getattr(asked, "original_away", False):
+                note = " ".join(n for n in (note, getattr(asked, "ORIGINAL_AWAY", LiveBackend.ORIGINAL_AWAY)) if n)
+            cards.append(answer_card_html(view, item, answers[view], subtitle=card_sub(view), note=note))
         return (question_html(item, swapped), *cards)
 
     def no_change(n, message):
@@ -832,8 +909,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                        "probs": list(answer.probs) if answer.probs is not None else None}
                 for view, answer in answers.items() if answer is not None}
         if store is not None and said:
+            run = held["run"] if asker() is held["backend"] else None
             recorded(store.save_question, item.context, item.question, item.options[0], item.options[1], said,
-                     model_name="microsoft/Phi-3.5-mini-instruct")
+                     run_id=run["id"] if run else None,
+                     model_name=run["hub_id"] if run else "microsoft/Phi-3.5-mini-instruct")
 
     def ask_custom(story, question, a, b, dont_save=False):
         try:
@@ -981,7 +1060,6 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         return "\n".join(lines)
 
     runner = byom.runner if byom is not None else None
-    held = {"model": None, "tokenizer": None, "device": None, "job": None}  # a step-5 model built to ship
     summaries = {}
 
     def your_job() -> Path | None:
@@ -1047,7 +1125,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         serving = api.running and api.model is held["model"]
         if serving:
             api.stop()
-        held.update(model=None, tokenizer=None, device=None, job=None)
+        held.update(model=None, tokenizer=None, device=None, job=None, run=None, backend=None, asking=False,
+                    fingerprint=None)
         import gc
 
         gc.collect()
@@ -1057,9 +1136,76 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             torch.cuda.empty_cache()
         except Exception:  # noqa: BLE001
             pass
-        if runner is not None:
-            after_job(backend, runner)  # the 16-bit Phi-3.5 comes back
+        give_room_back()
         return serving
+
+    def give_room_back() -> None:
+        """The 16-bit Phi-3.5 comes back, once neither a diagnosis nor a held model needs its room."""
+        if held["model"] is not None or held["loading"]:
+            return
+        if runner is not None:
+            after_job(backend, runner)
+        elif getattr(backend, "original_away", False) and not backend.reloading and backend.wants_original:
+            backend.reload_original()
+
+    def refuse_while_busy() -> None:
+        current = runner.current() if runner is not None else None
+        if current is not None and runner.is_running(current):
+            raise RuntimeError("A diagnosis is running in step 5: wait for it to finish (the GPU takes one model "
+                               "at a time).")
+        if held["loading"]:
+            raise RuntimeError("Another model is being opened: wait for it (the GPU takes one model at a time).")
+        if getattr(backend, "reloading", False):
+            raise RuntimeError("The demo's 16-bit model is loading back (about a minute). Try again in a moment.")
+
+    def saved_device() -> str:
+        import torch
+
+        return getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    def open_saved(run_id: str) -> dict:
+        """Reopens a run's repaired model (tab 6) and checks its fingerprint; returns the run. One model on
+        the GPU at a time: whatever was held is freed first, and a running diagnosis is never disturbed."""
+        from src.product.reopen import CannotReopen, check_fingerprint, recipe_of, reopen
+
+        if store is None:
+            raise RuntimeError("The database is off in this launch.")
+        run = store.run(run_id) if run_id else None
+        if run is None:
+            raise RuntimeError("Pick a run first.")
+        recipe = recipe_of(run)
+        if held["model"] is not None and held["run"] and held["run"]["id"] == run_id:
+            return run
+        refuse_while_busy()
+        stop_held()
+        held["loading"] = True
+        try:
+            make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
+            opened = reopen(run, saved_device())
+            mark = check_fingerprint(run, opened.model, opened.tokenizer, opened.device)
+            original = {a["question_id"]: a["original"] for a in store.fetch_answers(run_id)
+                        if a["question_set"] == "ambig" and a["original"] is not None}
+            held.update(model=opened.model, tokenizer=opened.tokenizer, device=opened.device, job=f"run:{run_id}",
+                        run=run, fingerprint=(mark, opened),
+                        backend=LiveBackend(device=opened.device, model_id=opened.checkpoint, patch=recipe,
+                                            loaded=(opened.model, opened.tokenizer), saved_original=original,
+                                            extra_mb=run.get("extra_mb"), lock=api.lock))
+        except (CannotReopen, RuntimeError):
+            raise
+        except Exception as error:  # noqa: BLE001 -- shown on the screen, the app keeps running
+            from src.db.scrub import safe_error
+
+            raise RuntimeError(f"It couldn't be opened: {safe_error(error)}") from None
+        finally:
+            held["loading"] = False
+            give_room_back()
+        return run
+
+    def stop_held() -> None:
+        """Frees whatever is held, ending its API session if it was being served."""
+        requests = api.requests
+        if release_held():
+            record_api_stop(requests)
 
     def model_for(source: str) -> tuple:
         """(model, tokenizer, device, patch, summary, name, source text) for the API or a publish."""
@@ -1070,7 +1216,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             paths = backend.restored()
             if not paths:
                 raise RuntimeError("Nothing is restored yet. Restore some parts on screen 3 first.")
-            release_held()
+            stop_held()
             return (backend.model, backend.tokenizer, backend.device, studio_patch(paths).to_dict(),
                     phi_summary(paths), "phi-3.5-mini-fairgate",
                     f"Phi-3.5, 3-bit with {len(paths)} parts restored in step 3")
@@ -1081,29 +1227,30 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         if report.get("synthetic") or report.get("replayed_from") or runner.pipeline != "real":
             raise RuntimeError("This step-5 run is a stand-in or a replay: there is no real model to serve or "
                                "publish. Its repair kit still downloads (below).")
-        current = runner.current()
-        if current is not None and runner.is_running(current):
-            raise RuntimeError("A diagnosis is running in step 5: wait for it to finish (the GPU takes one model "
-                               "at a time).")
+        refuse_while_busy()
         patch = json.loads((job / "patch.json").read_text(encoding="utf-8"))
         if held["job"] != str(job):
-            release_held()
-            make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
-            import torch
-
-            from src.quant.streaming import load_streaming
-
-            device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
-            # Built layer by layer, so a big model's repair needs no 16-bit copy in memory.
-            keep = {path: patch["nbits"] for path in patch["modules"]}
-            local = cached_copy(patch["model_id"])
+            stop_held()
+            held["loading"] = True
             try:
-                model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep)
-            except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
-                if local == patch["model_id"]:
-                    raise
-                model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device, keep=keep)
-            held.update(model=model, tokenizer=tokenizer, device=device, job=str(job))
+                make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
+                from src.db.records import patch_bits
+                from src.quant.streaming import load_streaming
+
+                device = saved_device()
+                # Built layer by layer, so a big model's repair needs no 16-bit copy in memory.
+                keep = patch_bits(patch)
+                local = cached_copy(patch["model_id"])
+                try:
+                    model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep)
+                except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
+                    if local == patch["model_id"]:
+                        raise
+                    model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device, keep=keep)
+                held.update(model=model, tokenizer=tokenizer, device=device, job=str(job))
+            finally:
+                held["loading"] = False
+                give_room_back()
         return (held["model"], held["tokenizer"], held["device"], patch, report, default_repo_name(patch["model_id"]),
                 f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} parts restored "
                 "in step 5")
@@ -1161,6 +1308,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     "appear (word order).",
                     "Or write your own question below. Keep it so the story <i>doesn't</i> say who did it.",
                 ))
+                with gr.Row(visible=False) as asking_row:
+                    asking_note = gr.Markdown()
+                    asking_back = gr.Button("← Back to the Phi-3.5 demo", size="sm", scale=0, min_width=220)
                 with gr.Row():
                     example_dd = gr.Dropdown(labels, value=labels[0] if labels else None, label="Example question",
                                              scale=4)
@@ -1335,6 +1485,46 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                                               "fixed model)", variant="primary", visible=False)
                     byom_ship_note = gr.Markdown()
 
+            with gr.Tab("6 · My models", id="models") as models_tab:
+                gr.HTML(_help(
+                    "Every model diagnosed here or by the team. Search, or filter by outcome and method, then pick a run.",
+                    "Its page shows the full report. <b>Ask</b>, <b>Serve</b> and <b>Publish</b> first rebuild its "
+                    "repaired model (a minute or more on a GPU) and check that it still answers as it did when it was measured.",
+                    "Pick a second run to compare the two side by side.",
+                ))
+                mm_status = gr.HTML()
+                with gr.Row():
+                    mm_search = gr.Textbox(label="Search", placeholder="model, person, verdict...", scale=3)
+                    mm_outcome = gr.Dropdown(list(my_models.OUTCOMES), value=my_models.ANY, label="Outcome", scale=1)
+                    mm_method = gr.Dropdown([my_models.ANY], value=my_models.ANY, label="Method", scale=1)
+                    mm_refresh = gr.Button("↻ Refresh", scale=0, min_width=110)
+                mm_table = gr.Dataframe(headers=my_models.HEADERS, interactive=False, wrap=True)
+                with gr.Row():
+                    mm_run = gr.Dropdown([], label="Open a run", scale=3)
+                    mm_other = gr.Dropdown([], label="Compare it with", scale=3)
+                mm_note = gr.Markdown()
+                mm_page = gr.HTML()
+                with gr.Row():
+                    mm_ask = gr.Button("💬 Ask with this model", variant="primary")
+                    mm_serve = gr.Button("▶ Serve API")
+                    mm_check = gr.Button("✓ Re-check")
+                    mm_kit = gr.Button("⬇ Download kit")
+                    mm_report = gr.Button("⬇ Audit report")
+                    mm_delete = gr.Button("🗑 Delete", variant="stop")
+                with gr.Row(visible=False) as mm_sure:
+                    mm_sure_text = gr.Markdown()
+                    mm_yes = gr.Button("Yes, delete it", variant="stop", size="sm")
+                    mm_no = gr.Button("Keep it", size="sm")
+                mm_file = gr.File(label="File", visible=False)
+                with gr.Accordion("Publish to Hugging Face, or keep its weights there", open=False):
+                    mm_token = gr.Textbox(label="Hugging Face token with Write access. Used for this upload only, "
+                                                "never saved.", type="password", placeholder="hf_...")
+                    mm_repo = gr.Textbox(label="Repo name (optional)")
+                    mm_private = gr.Checkbox(value=True, label="Private (only you can see it)")
+                    with gr.Row():
+                        mm_publish = gr.Button("⬆ Publish")
+                        mm_keep = gr.Button("💾 Keep weights (private, for a faster reopen)")
+                mm_compare = gr.HTML()
 
         # --- events ----------------------------------------------------------------------------
         ask_outputs = [question_box, card_original, card_compressed, card_repaired]
@@ -1362,7 +1552,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                         byom_ship_note]
         if runner is not None:
             def byom_refresh():
-                after_job(backend, runner)
+                give_room_back()
                 runner.sync()  # local writes only: never waits on the network
                 return byom_view(runner)
 
@@ -1370,6 +1560,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 if getattr(backend, "reloading", False):
                     gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
                                "(about a minute). Press Diagnose again in a moment.")
+                    return byom_view(runner)
+                if held["loading"]:
+                    gr.Warning("A saved model is being opened: press Diagnose again when it is done (the GPU takes "
+                               "one model at a time).")
                     return byom_view(runner)
                 requests = api.requests
                 if release_held():  # the GPU takes one step-5 model at a time
@@ -1512,6 +1706,183 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         api_key_btn.click(api_new_key, None, api_outputs, concurrency_id="api")
         api_send.click(api_send_message, api_message, [api_reply, api_raw], concurrency_id="api_try")
         app.load(api_view, None, api_outputs)
+
+        # --- My models -------------------------------------------------------------------------
+        def mm_rows(search, outcome, method):
+            if store is None:
+                return []
+            return store.runs(search or "", my_models.OUTCOMES.get(outcome), None if method in (None, my_models.ANY) else method)
+
+        def mm_list(search="", outcome=my_models.ANY, method=my_models.ANY, run_id=None, other_id=None):
+            """The table, the pickers (keeping what is picked, if it is still there) and the database line."""
+            if store is None:
+                return ('<div class="mm-status">database: off in this launch, so nothing is recorded</div>', [],
+                        gr.update(choices=[], value=None), gr.update(choices=[], value=None), gr.update())
+            rows = mm_rows(search, outcome, method)
+            news = store.last_news([r["id"] for r in rows if r["status"] == "running"])
+            known = {r["id"] for r in rows}
+            picks = my_models.choices(rows)
+            return (f'<div class="mm-status">{html_escape(store.status_line())} · {len(rows)} run{"s" * (len(rows) != 1)}'
+                    f'{"" if not store.pending() else f" · {store.pending():,} rows waiting to be shared"}</div>',
+                    my_models.table(rows, news), gr.update(choices=picks, value=run_id if run_id in known else None),
+                    gr.update(choices=picks, value=other_id if other_id in known else None),
+                    gr.update(choices=[my_models.ANY, *store.methods()]))
+
+        def mm_load(run_id):
+            run = store.run(run_id) if store is not None and run_id else None
+            return run, (store.last_news([run_id]).get(run_id) if run else None)
+
+        def mm_show(run_id, other_id):
+            run, news = mm_load(run_id)
+            other, _ = mm_load(other_id)
+            hidden = gr.update(visible=False)
+            return (my_models.run_page(run, news), my_models.compare_html(run, other) if other_id else "", "", hidden,
+                    hidden)
+
+        def mm_opened() -> str:
+            """What the reopened model is and whether it is the one that was measured."""
+            mark, opened = held["fingerprint"]
+            notes = "".join(f"\n\n{note}" for note in opened.notes)
+            return f"**{held['run']['hub_id']}** is open ({opened.source}). {mark.text()}{notes}"
+
+        def mm_check_model(run_id):
+            try:
+                run = open_saved(run_id)
+                from src.product.reopen import check_fingerprint
+
+                with api.lock:  # asked again now, not the answer from when it was opened
+                    mark = check_fingerprint(run, held["model"], held["tokenizer"], held["device"])
+                held["fingerprint"] = (mark, held["fingerprint"][1])
+                return mm_opened()
+            except RuntimeError as error:
+                return f"**Not opened.** {error}"
+
+        def asking_view():
+            asking = held["asking"] and held["backend"] is not None
+            text = f"Asking **{held['run']['hub_id']}**, reopened from *My models*. {held['fingerprint'][0].text()}" if asking else ""
+            return gr.update(visible=asking), text
+
+        def mm_ask_model(run_id):
+            try:
+                open_saved(run_id)
+            except RuntimeError as error:
+                return f"**Not opened.** {error}", gr.update(), *asking_view()
+            held["asking"] = True
+            return mm_opened(), gr.Tabs(selected="ask"), *asking_view()
+
+        def ask_back():
+            held["asking"] = False
+            return asking_view()
+
+        def mm_serve_model(run_id):
+            try:
+                run = open_saved(run_id)
+            except RuntimeError as error:
+                return (f"**Not served.** {error}", gr.update(), *api_view())
+            record_api_stop()
+            api.stop()
+            bits, parts = run.get("base_bits") or 3, len(held["backend"].restored())
+            api.start(held["model"], held["tokenizer"], held["device"], default_repo_name(run["hub_id"]),
+                      f"{run['hub_id']}, {bits}-bit with {parts} parts restored, from My models")
+            record_api_start(run["id"])
+            return (mm_opened(), gr.Tabs(selected="ship"), *api_view("Started with a new key."))
+
+        def mm_publish_model(run_id, token, repo, private, keeping=False):
+            """Publishes the reopened model; the link is kept with the run, so it reopens from there."""
+            try:
+                run = open_saved(run_id)
+                summary = run.get("report") or {"memory_mb": run.get("extra_mb") or 0}
+                with api.lock:
+                    result = publish(held["model"], held["tokenizer"], held["run"]["artifact"]["recipe"], summary,
+                                     token, repo, True if keeping else bool(private))
+            except (PublishError, RuntimeError) as error:
+                return f"**Not published.** {error}", token
+            except Exception as error:  # noqa: BLE001 -- the app keeps running
+                from src.db.scrub import safe_error
+
+                return f"**Not published.** {safe_error(error)}", token
+            recorded(store.set_weights, run_id, result["url"], result["private"])
+            where = "private: only you (and people you add) can see it" if result["private"] else "public"
+            return (f"✅ **{'Weights kept' if keeping else 'Published'}:** [{result['repo_id']}]({result['url']}) ({where}). "
+                    "The link is saved with this run.", "")
+
+        def mm_keep_weights(run_id, token, repo):
+            return mm_publish_model(run_id, token, repo, True, keeping=True)
+
+        def mm_make_file(run_id, make):
+            run, news = mm_load(run_id)
+            if run is None:
+                return "Pick a run first.", gr.update(visible=False)
+            try:
+                path = make(run, news)
+            except RuntimeError as error:
+                return str(error), gr.update(visible=False)
+            return f"**{path.name}**", gr.update(value=str(path), visible=True)
+
+        def mm_make_kit(run_id):
+            return mm_make_file(run_id, lambda run, news: my_models.build_run_kit(run, OUT_DIR))
+
+        def mm_make_report(run_id):
+            def make(run, news):
+                opened = held["run"] and held["run"]["id"] == run_id and held["fingerprint"]
+                return my_models.write_audit_report(run, OUT_DIR, last_news=news,
+                                                    fingerprint=opened[0].text() if opened else "")
+
+            return mm_make_file(run_id, make)
+
+        def mm_ask_delete(run_id):
+            run, _ = mm_load(run_id)
+            if run is None:
+                return "Pick a run first.", gr.update(visible=False), ""
+            if my_models.status_of(run, store.last_news([run_id]).get(run_id)) == "running":
+                return "This run is still going: cancel it on screen 5 first.", gr.update(visible=False), ""
+            return "", gr.update(visible=True), (
+                f"Delete the record of **{my_models.title(run)}** ({my_models.day(run['started_at'])}) and its kit, for "
+                "everyone? It can't be undone. Nothing on Hugging Face is touched"
+                + (f": its saved weights stay at {run['artifact']['weights_url']}." if (run["artifact"] or {}).get("weights_url") else "."))
+
+        def mm_do_delete(run_id, search, outcome, method):
+            run, _ = mm_load(run_id)
+            note = "Already gone."
+            if run is not None:
+                if held["run"] and held["run"]["id"] == run_id:
+                    stop_held()
+                store.delete_run(run_id)
+                kits = [OUT_DIR / f"repair_kit_{run_id[:8]}.zip", OUT_DIR / f"fairgate_audit_{run_id[:8]}.html"]
+                if runner is not None and run.get("job") and Path(run["job"]).name == run["job"]:
+                    kits.append(runner.jobs_dir / run["job"] / "repair_kit.zip")
+                for kit in kits:
+                    kit.unlink(missing_ok=True)
+                note = f"Deleted: {my_models.title(run)}."
+            return (note, gr.update(visible=False), "", "", gr.update(visible=False),
+                    *mm_list(search, outcome, method), *asking_view())
+
+        mm_filters = [mm_search, mm_outcome, mm_method]
+        mm_list_out = [mm_status, mm_table, mm_run, mm_other, mm_method]
+        mm_list_in = [*mm_filters, mm_run, mm_other]
+        mm_show_out = [mm_page, mm_compare, mm_note, mm_sure, mm_file]
+        asking_out = [asking_row, asking_note]
+        models_tab.select(mm_list, mm_list_in, mm_list_out)
+        mm_refresh.click(mm_list, mm_list_in, mm_list_out)
+        for control in (mm_search.submit, mm_outcome.input, mm_method.input):
+            control(mm_list, mm_list_in, mm_list_out)
+        mm_run.change(mm_show, [mm_run, mm_other], mm_show_out)
+        mm_other.change(mm_show, [mm_run, mm_other], mm_show_out)
+        # Whatever opens a model shares the API's queue: two can't be opened at once.
+        mm_ask.click(mm_ask_model, mm_run, [mm_note, tabs, *asking_out], concurrency_id="api")
+        mm_serve.click(mm_serve_model, mm_run, [mm_note, tabs, *api_outputs], concurrency_id="api")
+        mm_check.click(mm_check_model, mm_run, mm_note, concurrency_id="api")
+        mm_publish.click(mm_publish_model, [mm_run, mm_token, mm_repo, mm_private], [mm_note, mm_token], concurrency_id="api")
+        mm_keep.click(mm_keep_weights, [mm_run, mm_token, mm_repo], [mm_note, mm_token], concurrency_id="api")
+        mm_kit.click(mm_make_kit, mm_run, [mm_note, mm_file])
+        mm_report.click(mm_make_report, mm_run, [mm_note, mm_file])
+        mm_delete.click(mm_ask_delete, mm_run, [mm_note, mm_sure, mm_sure_text])
+        mm_no.click(lambda: gr.update(visible=False), None, mm_sure)
+        mm_yes.click(mm_do_delete, [mm_run, *mm_filters], [mm_note, mm_sure, mm_page, mm_compare, mm_file, *mm_list_out, *asking_out],
+                     concurrency_id="api")
+        asking_back.click(ask_back, None, asking_out).then(
+            rerender, [item_state, swapped_state, base_state], ask_outputs)
+        ask_tab.select(asking_view, None, asking_out)
 
     return app, (theme if major >= 6 else None)
 

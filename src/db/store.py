@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 
-from sqlalchemy import String, Text, and_, bindparam, create_engine, delete, event, func, literal_column, or_, select, tuple_
+from sqlalchemy import Boolean, Float, Integer, String, Text, and_, bindparam, create_engine, delete, event, func, literal_column, or_, select, tuple_
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 
@@ -259,8 +259,10 @@ class Store:
                 value = None if value is None else str(value)[:column.type.length]
             elif isinstance(column.type, Text):
                 value = None if value is None else str(value)
-            elif isinstance(value, float) and not math.isfinite(value):
-                value = None
+            elif isinstance(column.type, (Integer, Float)):
+                value = _number(value, whole=isinstance(column.type, Integer))
+            elif isinstance(column.type, Boolean):
+                value = None if value is None else bool(value)
             out[key] = value
         return out
 
@@ -455,6 +457,16 @@ class Store:
             artifact = connection.execute(select(artifacts).where(artifacts.c.run_id == run_id)).mappings().first()
             out["artifact"] = dict(artifact) if artifact else None
         return out
+
+    def last_news(self, run_ids: list[str]) -> dict:
+        """run id -> when its newest progress line was written."""
+        found = {}
+        with self.read() as connection:
+            for chunk in _chunks(list(run_ids), BATCH):
+                found.update(connection.execute(
+                    select(run_events.c.run_id, func.max(run_events.c.updated_at))
+                    .where(run_events.c.run_id.in_(chunk)).group_by(run_events.c.run_id)).all())
+        return found
 
     def answers(self, run_id: str) -> list[dict]:
         with self.read() as connection:
@@ -679,6 +691,13 @@ def _plain_json(value):
         return v
 
     return json.loads(json.dumps(finite(value), default=str))
+
+
+def _number(value, whole: bool):
+    """A number the column can hold, or None: SQLite would keep anything, Postgres refuses the row."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return (int(value) if abs(value) < 2**31 else None) if whole else float(value)
 
 
 def _same(old, new) -> bool:
