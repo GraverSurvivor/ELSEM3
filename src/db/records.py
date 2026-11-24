@@ -100,17 +100,22 @@ def metric_rows(run_id: str, report: dict) -> list[dict]:
 
 
 def reference_metric_rows(run_id: str, summary: dict) -> list[dict]:
-    """A committed reference run's summary.json: overall and per category."""
+    """A committed reference run's summary.json: overall and per category. On stated-answer questions
+    saying "unknown" is a false "can't tell", not a fair answer."""
+    stated = summary.get("context") == "disambig"
     fairness = summary.get("fairness") or {}
     scopes = [("overall", None, fairness.get("overall") or {})]
     scopes += [("category", name, values) for name, values in (fairness.get("per_category") or {}).items()]
     rows = []
     for scope, name, values in scopes:
-        for metric in ("usr", "srs"):
-            if _number(values.get(metric)) is not None:
+        found = {"false_unknown": values.get("usr")} if stated else {m: values.get(m) for m in ("usr", "srs")}
+        if stated and scope == "overall":
+            found["accuracy"] = summary.get("accuracy")
+        for metric, value in found.items():
+            if _number(value) is not None:
                 rows.append({"id": stable_id(run_id, "metric", "repaired", metric, scope, name or ""),
                              "run_id": run_id, "view": "repaired", "metric": metric, "scope": scope, "name": name,
-                             "value": _number(values[metric]), "lower": None, "upper": None})
+                             "value": _number(value), "lower": None, "upper": None})
     return rows
 
 

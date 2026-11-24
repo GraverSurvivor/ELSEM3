@@ -552,13 +552,14 @@ class ByomSetup:
                    "(on a laptop add `--byom-pipeline fake` to try it with a stand-in).")
 
     @classmethod
-    def from_args(cls, args) -> "ByomSetup":
+    def from_args(cls, args, store=None) -> "ByomSetup":
         if not args.byom:
             reason = ("*This copy of Studio runs only the Phi-3.5 demo.* Start it with `--byom --live` to have "
                       "this tab too, in the same window." if not args.offline else cls.NOT_STARTED)
             return cls(None, reason)
         pipeline = "replay" if args.byom_replay else args.byom_pipeline
-        return cls(JobRunner(args.byom_jobs, pipeline=pipeline, replay=args.byom_replay, speed=args.byom_speed))
+        return cls(JobRunner(args.byom_jobs, pipeline=pipeline, replay=args.byom_replay, speed=args.byom_speed,
+                             store=store))
 
 
 def make_room_for_job(backend) -> None:
@@ -724,10 +725,23 @@ def copy_box(label: str):
     return gr.Textbox(label=label, interactive=False, **extra)
 
 
-def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=None):
+def recorded(action, *args, **kwargs):
+    """A write to the store that must never stop the screen: its result, or None (and one line) if it failed."""
+    try:
+        return action(*args, **kwargs)
+    except Exception as error:  # noqa: BLE001
+        from src.db.scrub import safe_error
+
+        print(f"[database] not saved ({safe_error(error)})", flush=True)
+        return None
+
+
+def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=None, store=None):
     import gradio as gr
 
     api = api or ApiService(lock=getattr(backend, "lock", None))
+    if store is None and byom is not None and byom.runner is not None:
+        store = byom.runner.store
 
     major, theme = _launch_kwargs(gr)
     blocks_kwargs = {"title": "FairGate Studio"}
@@ -812,7 +826,16 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 flipped = replace(flipped, example_id=-1)  # an edited copy: no saved answers apply
         return (flipped, True, *render(flipped, True, base_item))
 
-    def ask_custom(story, question, a, b):
+    def save_asked(item, answers, notes) -> None:
+        """A typed question into the Ask history (contract C9); nothing is kept when no model answered it."""
+        said = {view: {"pick": answer.pick, "answer": item.options[answer.pick], "consistency": notes[view],
+                       "probs": list(answer.probs) if answer.probs is not None else None}
+                for view, answer in answers.items() if answer is not None}
+        if store is not None and said:
+            recorded(store.save_question, item.context, item.question, item.options[0], item.options[1], said,
+                     model_name="microsoft/Phi-3.5-mini-instruct")
+
+    def ask_custom(story, question, a, b, dont_save=False):
         try:
             item = make_question(story, question, a, b)
         except ValueError as error:
@@ -821,7 +844,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         if missing:  # a hint, not a refusal: the story may describe them in other words
             gr.Info(f"Check the story mentions {' and '.join(missing)}: the models choose between the two people "
                     "it describes.")
-        return (item, item, False, *render(item, False))
+        shown = render(item, False)
+        if store is not None and not dont_save:
+            save_asked(item, *all_orders(item))  # just answered: the backend hands the same answers back
+        return (item, item, False, *shown)
 
     def fill_template(name):
         if name not in QUESTION_TEMPLATES:
@@ -1161,6 +1187,10 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                         "**Good to know:** compression doesn't break every question. A question with a weak "
                         "stereotype, or none, can stay fair in all three models, and that's a correct result."
                     )
+                    dont_save_box = gr.Checkbox(value=False, visible=store is not None,
+                                                label="Don't save my questions (otherwise typed questions and their "
+                                                      "answers are kept in the project's database, which the team "
+                                                      "can see)")
                     custom_btn = gr.Button("Ask all three models", variant="primary")
                     if not backend.live:
                         gr.Markdown("*Your own questions need the live app (GPU). Preview mode only has saved answers.*")
@@ -1314,7 +1344,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         example_dd.change(choose_example, example_dd, [item_state, base_state, swapped_state, *ask_outputs])
         swap_btn.click(toggle_swap, [base_state, swapped_state], [item_state, swapped_state, *ask_outputs])
         template_dd.change(fill_template, template_dd, [story_in, question_in, a_in, b_in])
-        custom_btn.click(ask_custom, [story_in, question_in, a_in, b_in],
+        custom_btn.click(ask_custom, [story_in, question_in, a_in, b_in, dont_save_box],
                          [item_state, base_state, swapped_state, *ask_outputs])
         ask_tab.select(rerender, [item_state, swapped_state, base_state], ask_outputs)
 
@@ -1333,6 +1363,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         if runner is not None:
             def byom_refresh():
                 after_job(backend, runner)
+                runner.sync()  # local writes only: never waits on the network
                 return byom_view(runner)
 
             def byom_start(model, mode, bits, budget, token=""):
@@ -1340,7 +1371,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
                                "(about a minute). Press Diagnose again in a moment.")
                     return byom_view(runner)
+                requests = api.requests
                 if release_held():  # the GPU takes one step-5 model at a time
+                    record_api_stop(requests)
                     gr.Info("The API serving your last repaired model was stopped to make room for this diagnosis.")
                 try:
                     runner.start(model, mode, bits, budget, hf_token=token)
@@ -1364,6 +1397,19 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         app.load(rerender, [item_state, swapped_state, base_state], ask_outputs)
 
         api_outputs = [api_status, api_url, api_key_box, api_code, api_live]
+        session = {"id": None, "run": None, "before": 0}  # the API session (one key's life) being recorded
+
+        def record_api_stop(requests=None):
+            if store is not None and session["id"]:
+                total = api.requests if requests is None else requests
+                recorded(store.end_api_session, session["id"], max(0, total - session["before"]))
+            session["id"] = None
+
+        def record_api_start(run_id=None):
+            record_api_stop()
+            if store is not None:
+                session.update(id=recorded(store.start_api_session, api.key, api.name, run_id), run=run_id,
+                               before=api.requests)
 
         def api_view(note=""):
             if not api.running:
@@ -1380,16 +1426,20 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             return status, base, api.key, snippets(base, api.key, api.name), gr.update(visible=True)
 
         def api_start(source):
+            record_api_stop()
             api.stop()  # a restart keeps the step-5 model already built
             try:
                 model, tokenizer, device, _, _, name, text = model_for(source)
                 api.start(model, tokenizer, device, name, text)
+                job = your_job() if source == SHIP_YOURS else None
+                record_api_start(runner.run_id(job) if job is not None else None)
             except Exception as error:  # shown on the screen, the app keeps running
                 gr.Warning(str(error))
                 return api_view()
             return api_view("Started with a new key.")
 
         def api_stop_model():
+            record_api_stop()
             if not release_held():  # a step-5 model is freed with it
                 api.stop()
 
@@ -1400,6 +1450,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
         def api_new_key():
             try:
                 api.rotate()
+                record_api_start(session["run"])
             except RuntimeError as error:
                 gr.Warning(str(error))
                 return api_view()
@@ -1516,6 +1567,19 @@ def verify_examples_live(backend, data) -> int:
     return len(verified)
 
 
+def open_database(path: Path | None = None):
+    """The store, or None (said in one line) if even the local file can't be opened: the app works without."""
+    try:
+        from src.db.store import open_store
+
+        return open_store(path=path)
+    except Exception as error:  # noqa: BLE001
+        from src.db.scrub import safe_error
+
+        print(f"[start-up] database: off, nothing is recorded ({safe_error(error)})")
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--offline", action="store_true", help="preview on saved results, no GPU")
@@ -1535,6 +1599,9 @@ def main() -> None:
     parser.add_argument("--byom-replay", type=Path, help="play back a recorded run's folder (presentation backup)")
     parser.add_argument("--byom-speed", type=float, default=30.0, help="speed-up for the stand-in or a replay")
     parser.add_argument("--byom-jobs", type=Path, default=Path("results/byom"), help="where diagnosis jobs are kept")
+    parser.add_argument("--db", type=Path, help="the local database file (default results/db/fairgate.sqlite); keep "
+                                                "it on this machine's disk, not on Google Drive")
+    parser.add_argument("--no-db", action="store_true", help="record nothing in a database: job folders only")
     args = parser.parse_args()
 
     started = time.perf_counter()
@@ -1542,7 +1609,10 @@ def main() -> None:
         data = StudioData()
     print(f"{len(data.examples)} example questions, {len(data.counter_items)} test questions, "
           f"{len(data.trials)} search trials")
-    byom = ByomSetup.from_args(args)
+    store = None if args.no_db else open_database(args.db)
+    byom = ByomSetup.from_args(args, store)
+    if byom.runner is not None:
+        byom.runner.sync_all()  # runs recorded by folders only, or by an app that died meanwhile
     if args.offline or (args.byom and not args.live):
         backend = SavedBackend(data.runs, list(data.patch.modules), repairs=data.saved_repairs)
         if args.byom:
@@ -1570,7 +1640,9 @@ def main() -> None:
 
     api = ApiService(lock=getattr(backend, "lock", None))
     API["service"] = api
-    app, theme = build_app(backend, data, byom, api)
+    app, theme = build_app(backend, data, byom, api, store)
+    if store is not None:
+        print(f"[start-up] {store.wait_settled()}")
     launch = {"share": args.share, "server_port": args.port}
     if theme is not None:
         launch.update(theme=theme, css=CSS)

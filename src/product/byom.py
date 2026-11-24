@@ -26,6 +26,9 @@ import re
 import signal
 import subprocess
 import sys
+import threading
+import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -574,10 +577,15 @@ class JobRunner:
     """
 
     def __init__(self, jobs_dir: Path, pipeline: str = "real", replay: Path | None = None, speed: float = 30.0,
-                 questions: int = DEFAULT_QUESTIONS):
+                 questions: int = DEFAULT_QUESTIONS, store=None):
         self.jobs_dir = Path(jobs_dir)
         self.pipeline, self.replay, self.speed, self.questions = pipeline, replay, speed, questions
+        self.store = store  # the database (contract C9); None: the folders are the only record
         self._processes: dict[str, subprocess.Popen] = {}
+        self._recorded: dict[str, dict] = {}  # job -> how much of it the store already has
+        self._record_lock = threading.Lock()
+        self._watched: set[str] = set()
+        self._said = ""
 
     # state
     def current(self) -> Path | None:
@@ -640,10 +648,17 @@ class JobRunner:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=Path.cwd(), env=env, **kwargs)
         log.close()  # the child has its own handle
         self._processes[job_dir.name] = process
-        self._write_info(job_dir, {"model_id": model_id, "mode": mode, "base_nbits": base_nbits,
-                                   "questions": self.questions,
-                                   "pipeline": self.pipeline, "started": _now_iso(), "pid": process.pid,
-                                   "command": command, "cancelled": False, "ended": None})
+        info = {"model_id": model_id, "mode": mode, "base_nbits": base_nbits, "budget": budget,
+                "questions": self.questions, "run_id": str(uuid.uuid4()),
+                "pipeline": self.pipeline, "started": _now_iso(), "pid": process.pid,
+                "command": command, "cancelled": False, "ended": None}
+        if self.store is not None:
+            from src.db.importer import library_versions
+
+            info.update(ran_by=self.store.ran_by, versions=library_versions())
+        self._write_info(job_dir, info)
+        self.sync(job_dir)
+        self._watch(job_dir)
         return job_dir
 
     def cancel(self, job_dir: Path | None = None) -> bool:
@@ -667,10 +682,84 @@ class JobRunner:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
-        info = self.job_info(job_dir)
-        info.update(cancelled=True, ended=_now_iso())
-        self._write_info(job_dir, info)
+        with self._record_lock:  # Windows can't replace a file the recorder is reading
+            info = self.job_info(job_dir)
+            info.update(cancelled=True, ended=_now_iso())
+            self._write_info(job_dir, info)
+        self.sync(job_dir)
         return True
+
+    # recording
+    def run_id(self, job_dir: Path) -> str:
+        from src.db.records import job_run_id
+
+        return job_run_id(Path(job_dir).name, self.job_info(job_dir))
+
+    def sync(self, job_dir: Path | None = None) -> None:
+        """Brings the store up to date with a job's folder (the current one by default). Local writes only,
+        and only of what is new: cheap enough for the screen's timer. Never raises."""
+        job_dir = Path(job_dir) if job_dir else self.current()
+        if self.store is None or job_dir is None:
+            return
+        with self._record_lock:
+            try:
+                seen = self._recorded.setdefault(job_dir.name, {})
+                if seen.get("final"):
+                    return
+                mark = self._mark(job_dir)
+                state = self.state(job_dir)
+                status = "running" if state["status"] == "idle" else state["status"]
+                alive = self.is_running(job_dir)
+                if (mark, status, alive) == seen.get("mark"):
+                    return
+                from src.db.importer import record_job
+
+                record_job(self.store, job_dir, status, message=failure_message(state), source="studio", seen=seen)
+                seen["mark"] = (mark, status, alive)
+                # A stage can finish a moment before its process does: final once both have.
+                seen["final"] = status != "running" and not alive
+            except Exception as error:  # noqa: BLE001 -- recording must never stop a run or the screen
+                from src.db.scrub import safe_error
+
+                text = safe_error(error)
+                if text != self._said:
+                    print(f"[database] {job_dir.name} could not be recorded ({text}); will try again", flush=True)
+                    self._said = text
+
+    @staticmethod
+    def _mark(job_dir: Path) -> tuple:
+        """Changes whenever one of the job's files does."""
+        out = []
+        for name in ("job.json", "events.jsonl", "report.json", "patch.json", "answers.json", "repair_kit.zip"):
+            try:
+                stat = (Path(job_dir) / name).stat()
+                out.append((stat.st_size, stat.st_mtime_ns))
+            except OSError:
+                out.append(None)
+        return tuple(out)
+
+    def sync_all(self) -> None:
+        """At start-up: every job folder, so a run the app died during is here again, with its progress."""
+        if self.store is None or not self.jobs_dir.exists():
+            return
+        for job_dir in sorted(p for p in self.jobs_dir.iterdir() if (p / "job.json").exists()):
+            self.sync(job_dir)
+        current = self.current()
+        if current is not None and self.is_running(current):
+            self._watch(current)
+
+    def _watch(self, job_dir: Path, every: float = 1.5) -> None:
+        """Records a running job to its end even when nobody has the page open."""
+        if self.store is None or job_dir.name in self._watched:
+            return
+        self._watched.add(job_dir.name)
+
+        def watch():
+            while not self._recorded.get(job_dir.name, {}).get("final"):
+                time.sleep(every)
+                self.sync(job_dir)
+
+        threading.Thread(target=watch, daemon=True, name=f"record-{job_dir.name}").start()
 
     @staticmethod
     def _write_info(job_dir: Path, info: dict) -> None:
