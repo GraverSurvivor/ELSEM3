@@ -10,7 +10,8 @@ from pathlib import Path
 
 from src.product.byom import METRICS, OUTCOME_TITLES, REPORT_KEYS, kept_grid_html, llamacpp_lines, results_html
 
-HEADERS = ["Model", "Method", "Bits", "Verdict", "Fairness recovered", "Extra MB", "Date", "Who ran it", "Outcome"]
+HEADERS = ["Model", "Method", "Bits", "Verdict", "Fairness recovered", "Extra MB", "Date (UTC)", "Who ran it", "Outcome"]
+COLUMN_WIDTHS = ["360px", "80px", "80px", "80px", "160px", "90px", "150px", "110px", "150px"]
 QUIET = timedelta(minutes=30)  # a "running" run that has said nothing for this long has lost its machine
 STATUS_WORDS = {"running": "Running", "failed": "Stopped with an error", "cancelled": "Cancelled",
                 "stopped": "Stopped without finishing", "done": "Finished", "interrupted": "Interrupted (its session ended)"}
@@ -27,14 +28,16 @@ def pct(value, digits: int = 1) -> str:
     return "–" if value is None else f"{100 * float(value):.{digits}f}%"
 
 
-def day(moment: datetime | None) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if moment else "–"
+def day(moment: datetime | None, zone: bool = True) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M" + (" UTC" if zone else "")) if moment else "–"
 
 
-def bits_text(run: dict) -> str:
+def bits_text(run: dict, short: bool = False) -> str:
     base, repair = run.get("base_bits"), run.get("repair_bits")
     if not base:
         return "–"
+    if short:
+        return f"{base} + {repair}" if repair else str(base)
     return f"{base}-bit + {repair}-bit parts" if repair else f"{base}-bit"
 
 
@@ -59,14 +62,18 @@ def outcome_text(run: dict, last_news: datetime | None = None) -> str:
 
 
 def title(run: dict) -> str:
-    """What to call a run: its model, and for a research run which one it is."""
-    return f"{run.get('hub_id') or 'unknown model'}" + (f" · {run['job']}" if run.get("source") == "reference" else "")
+    """What to call a run: its model, which research run it is, and first of all whether its numbers are
+    made up or played back (a stand-in must never pass for a measurement)."""
+    name = run.get("hub_id") or "unknown model"
+    if run.get("source") == "reference":
+        return f"{run['job']} · {name.split('/')[-1]}"
+    return {"fake": "[stand-in] ", "replay": "[replay] "}.get(run.get("pipeline"), "") + name
 
 
 def table(rows: list[dict], news: dict | None = None) -> list[list[str]]:
     news = news or {}
-    return [[title(r), (r.get("method") or "–").upper(), bits_text(r), r.get("verdict") or "–", pct(r.get("recovery")),
-             "–" if r.get("extra_mb") is None else f"{r['extra_mb']:+.0f}", day(r.get("started_at")),
+    return [[title(r), (r.get("method") or "–").upper(), bits_text(r, short=True), r.get("verdict") or "–", pct(r.get("recovery")),
+             "–" if r.get("extra_mb") is None else f"{r['extra_mb']:+.0f}", day(r.get("started_at"), zone=False),
              r.get("ran_by") or "–", outcome_text(r, news.get(r["id"]))] for r in rows]
 
 

@@ -34,9 +34,9 @@ def test_the_table_has_what_was_asked_for(store):
     save_everything(store)
     [row] = my_models.table(store.runs())
     shown = dict(zip(my_models.HEADERS, row))
-    assert shown["Model"] == MODEL and shown["Method"] == "HQQ" and shown["Bits"] == "3-bit + 8-bit parts"
+    assert shown["Model"] == MODEL and shown["Method"] == "HQQ" and shown["Bits"] == "3 + 8"
     assert shown["Verdict"] == "PASS" and shown["Fairness recovered"] == "90.0%" and shown["Extra MB"] == "+12"
-    assert shown["Who ran it"] == "Asha" and shown["Outcome"] == "Repaired" and shown["Date"].endswith("UTC")
+    assert shown["Who ran it"] == "Asha" and shown["Outcome"] == "Repaired" and len(shown["Date (UTC)"]) == 16
     [(label, run_id)] = my_models.choices(store.runs())
     assert MODEL in label and run_id == store.runs()[0]["id"]
 
@@ -49,7 +49,9 @@ def test_runs_without_results_still_show(store):
     store.finish_run("c", "done")
     outcomes = {r["id"]: my_models.outcome_text(r) for r in store.runs()}
     assert outcomes == {"a": "Running", "b": "Cancelled (stand-in)", "c": "Research run"}
-    assert "repair_random_s0" in my_models.title(store.run("c"))
+    assert my_models.title(store.run("c")).startswith("repair_random_s0")
+    assert my_models.title(store.run("b")).startswith("[stand-in]")  # seen before any of its numbers
+    assert "[stand-in]" in my_models.run_page(store.run("b")) and "[stand-in]" in my_models.choices(store.runs())[1][0]
     for run_id in "abc":
         assert "None" not in my_models.run_page(store.run(run_id))
 

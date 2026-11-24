@@ -1498,7 +1498,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     mm_outcome = gr.Dropdown(list(my_models.OUTCOMES), value=my_models.ANY, label="Outcome", scale=1)
                     mm_method = gr.Dropdown([my_models.ANY], value=my_models.ANY, label="Method", scale=1)
                     mm_refresh = gr.Button("↻ Refresh", scale=0, min_width=110)
-                mm_table = gr.Dataframe(headers=my_models.HEADERS, interactive=False, wrap=True)
+                mm_table = gr.Dataframe(headers=my_models.HEADERS, interactive=False, wrap=False,
+                                        column_widths=my_models.COLUMN_WIDTHS)
                 with gr.Row():
                     mm_run = gr.Dropdown([], label="Open a run", scale=3)
                     mm_other = gr.Dropdown([], label="Compare it with", scale=3)
@@ -1723,7 +1724,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             known = {r["id"] for r in rows}
             picks = my_models.choices(rows)
             return (f'<div class="mm-status">{html_escape(store.status_line())} · {len(rows)} run{"s" * (len(rows) != 1)}'
-                    f'{"" if not store.pending() else f" · {store.pending():,} rows waiting to be shared"}</div>',
+                    f'{"" if store.remote is None or not store.pending() else f" · {store.pending():,} rows waiting to be shared"}</div>',
                     my_models.table(rows, news), gr.update(choices=picks, value=run_id if run_id in known else None),
                     gr.update(choices=picks, value=other_id if other_id in known else None),
                     gr.update(choices=[my_models.ANY, *store.methods()]))
