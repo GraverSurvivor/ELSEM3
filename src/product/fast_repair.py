@@ -12,6 +12,7 @@ questions the scan never saw. It writes, as it goes (sprint contract C4, docs/CO
     DIR/events.jsonl   one line per update, for the Studio's progress view
     DIR/report.json    before/after numbers, recovery with its interval, the kept parts, the verdict
     DIR/patch.json     the repair, in the project's patch format (with the model's part shapes)
+    DIR/answers.json   every question's answer from each model, and what the question was used for
 
 The scan is Fast Scan (src/attribution/fast_scan.py, contract C2), the greedy search's own trial
 (restore a part to 8-bit, re-ask, objective with the hedging penalty) on the parts that can win:
@@ -45,6 +46,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Protocol
 
+# The real models live in torch_backend.py; re-exported here, where the rest of the code looks for them.
+from src.product.torch_backend import (  # noqa: F401
+    CHUNK,
+    PrecisionError,
+    TooBigError,
+    TorchBackend,
+    format_params,
+    memory_plan,
+)
+
 STAGES = ("download", "quantize", "score_original", "score_3bit", "find_damage", "scan", "verify", "report")
 MODES = ("fast", "exact")
 
@@ -62,7 +73,6 @@ OTHER_DAMAGE = 0.05       # accuracy loss / extra hedging on stated-answer quest
 
 # What a run concluded, in the report's "outcome" (contract C4).
 OUTCOMES = ("repaired", "rejected", "no_gain", "no_damage", "not_applicable")
-CHUNK = 128               # questions per progress update while scoring
 
 
 # --- configuration and events ---------------------------------------------------------------------
@@ -134,32 +144,6 @@ class Events:
         self.write(self.stage, "done", done, total, message)
 
 
-class PrecisionError(RuntimeError):
-    """A model whose scores overflow at fp16 (NaN): its answers would be meaningless."""
-
-
-class TooBigError(RuntimeError):
-    """The model can't be compressed and scanned with this machine's memory; said before downloading."""
-
-
-def memory_plan(n_params: int, n_linear: int, base_nbits: int = 3) -> dict:
-    """Bytes the pipeline needs for a model of `n_params` weights, `n_linear` of them in linear
-    layers (the ones HQQ compresses):
-    * system memory while compressing: the 16-bit model is loaded on the CPU first (2 bytes a weight);
-    * GPU memory while scanning: the 3-bit model (HQQ's real cost is ~3.75 bits a weight with its
-      scales, ~0.5 bytes with packing; the rest stays 16-bit) plus working room for the questions.
-    The 16-bit original also goes to the GPU once, to answer the questions; if it doesn't fit it
-    spills to system memory (slower, still exact) and is freed before the scan."""
-    # Worst case: repair-until-fair can end with every part at 8-bit (~1.06 bytes a weight), the
-    # compressed copies it displaced still held for reverting until the scan ends.
-    compressed = (1.06 + (0.5 if base_nbits == 3 else 0.62)) * n_linear + 2 * (n_params - n_linear)
-    return {"ram": 2.2 * n_params + 0.5e9, "gpu": 1.1 * compressed + 0.8e9, "original": 2.2 * n_params + 0.5e9}
-
-
-def format_params(n: int) -> str:
-    return f"{n / 1e9:.1f}B parameters" if n >= 1e9 else f"{n / 1e6:.0f}M parameters"
-
-
 def plain_error(error: BaseException) -> str:
     """A one-line reason a person can act on."""
     text = f"{type(error).__name__}: {error}".strip()
@@ -205,191 +189,6 @@ class Backend(Protocol):
     def score(self, view: str, items: list, on_progress: Callable[[int], None] | None = None) -> list[int]: ...
     def memory_mb(self) -> float: ...
     def gpu_name(self) -> str: ...
-
-
-class TorchBackend:
-    """The real models: the original at fp16 and the HQQ 3-bit copy whose parts the scan swaps."""
-
-    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda", base_nbits: int = 3,
-                 streaming: bool | None = None):
-        base_nbits = base_nbits or 3  # automatic starts at 3-bit
-        import torch
-
-        if device == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("No GPU found. Fast Repair needs a CUDA GPU (e.g. a Colab T4).")
-        self.device, self.nbits, self.batch_size, self.base_nbits = device, nbits, batch_size, base_nbits
-        self.original = self.compressed = self.tokenizer = self.registry = self._adapter = None
-        # Big models (the 16-bit copy doesn't fit the GPU or system memory): built layer by layer
-        # (src/quant/streaming.py), with an 8-bit reference standing in for the 16-bit original.
-        # None = decided by preflight from the free memory; True / False force it (tests).
-        self.streaming = streaming
-        self.reference_bits = 16
-        self._model_id = None
-
-    def preflight(self, model_id: str) -> str:
-        """Before downloading anything but config.json: does the model fit this machine? Counts the
-        model's weights on the meta device (no memory) and compares memory_plan with what is free
-        now (so a GPU shared with the live Phi-3.5 demo is judged by what is left of it)."""
-        import psutil
-        import torch
-        from transformers import AutoConfig
-
-        from src.models.adapter import meta_model
-
-        config = AutoConfig.from_pretrained(model_id)
-        model = meta_model(config)
-        n_params = sum(p.numel() for p in {id(p): p for p in model.parameters()}.values())
-        n_linear = sum(m.weight.numel() for m in model.modules()
-                       if type(m).__name__ in ("Linear", "Conv1D") and getattr(m, "weight", None) is not None)
-        plan = memory_plan(n_params, n_linear, 4)  # sized for 4-bit, so an automatic switch fits too
-        free_ram = psutil.virtual_memory().available
-        free_gpu = torch.cuda.mem_get_info()[0] if self.device == "cuda" else free_ram
-        size = format_params(n_params)
-        if self.streaming is None:
-            self.streaming = plan["ram"] > free_ram or plan["original"] > free_gpu
-        if self.streaming:
-            # Layer by layer: system memory holds one layer; the GPU holds one copy at a time, the
-            # largest being the 8-bit reference (and the repair, at most every part at 8-bit).
-            reference = 1.06 * n_linear + 2 * (n_params - n_linear) + 1.0e9
-            if reference > free_gpu:
-                largest = (free_gpu - 1.0e9) / 1.3 / 1e9
-                raise TooBigError(
-                    f"{model_id} has {size}. Even built layer by layer, its 8-bit reference needs about "
-                    f"{reference / 1e9:.0f} GB of GPU memory and this GPU has {free_gpu / 1e9:.0f} GB free. Models up "
-                    f"to about {max(largest, 0):.0f}B parameters fit here; a bigger GPU (L4, A100) runs this one.")
-            self.reference_bits = 8
-            return (size + " · too big for a 16-bit copy here, so it is built layer by layer and compared with "
-                    "an 8-bit reference (its answers match 16-bit's almost exactly)")
-        fits = plan["ram"] <= free_ram and plan["gpu"] <= free_gpu
-        if not fits:
-            largest = min((free_ram - 0.5e9) / 2.2, (free_gpu - 0.8e9) / 1.9) / 1e9
-            raise TooBigError(
-                f"{model_id} has {size}. Compressing and scanning it needs about {plan['ram'] / 1e9:.0f} GB of "
-                f"system memory and {plan['gpu'] / 1e9:.0f} GB of GPU memory; this machine has "
-                f"{free_ram / 1e9:.0f} GB and {free_gpu / 1e9:.0f} GB free. Models up to about "
-                f"{max(largest, 0):.1f}B parameters fit here; a bigger GPU (L4, A100) runs this one.")
-        spill = "" if plan["original"] <= free_gpu else " (the original will partly run from system memory: slower)"
-        return size + spill
-
-    def download(self, model_id: str) -> str:
-        from huggingface_hub import snapshot_download
-
-        if Path(model_id).is_dir():  # a local folder (tests, or a model saved on Drive)
-            path = Path(model_id)
-        else:
-            files = ["*.json", "*.model", "*.txt", "tokenizer*", "*.tiktoken"]
-            path = Path(snapshot_download(model_id, allow_patterns=files + ["*.safetensors"]))
-            if not any(path.rglob("*.safetensors")):  # an older checkpoint: weights only as .bin
-                path = Path(snapshot_download(model_id, allow_patterns=files + ["*.bin"]))
-        size = sum(f.stat().st_size for pattern in ("*.safetensors", "*.bin") for f in path.rglob(pattern)) / 1e9
-        if size == 0:
-            raise RuntimeError("The model has no weights in safetensors or pytorch_model.bin form.")
-        return f"{size:.1f} GB of weights"
-
-    def adapter(self, model_id: str):
-        from src.models.adapter import adapter_for_id
-
-        self._adapter = adapter_for_id(model_id)
-        return self._adapter
-
-    def load_compressed(self, model_id: str) -> str:
-        import gc
-
-        import torch
-
-        self.compressed = self.registry = None  # a second call (3-bit -> 4-bit) frees the first copy first
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        self._model_id = model_id
-        if self.streaming and self.original is None and self.tokenizer is None:
-            # Big model: the reference must answer first, alone on the GPU; this copy is built after it.
-            return f"HQQ {self.base_nbits}-bit, built layer by layer once the reference has answered"
-        if self.streaming:
-            self._build_streamed()
-            return f"HQQ {self.base_nbits}-bit, built layer by layer"
-
-        from src.quant.hqq_quantizer import load_hqq_3bit_model
-        from src.quant.module_swap import SwapRegistry
-        from src.quant.weight_source import CheckpointWeightSource
-
-        self.compressed, self.tokenizer = load_hqq_3bit_model(device=self.device, dtype="fp16", model_id=model_id,
-                                                              nbits=self.base_nbits)
-        adapter = self._adapter or self.adapter(model_id)
-        # GPT-2-style parts are stored (in, out) in the checkpoint; the 3-bit model holds them as nn.Linear.
-        transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
-        weights = CheckpointWeightSource(model_id, transposed=lambda path: path in transposed_paths)
-        self.registry = SwapRegistry(self.compressed, weights, device=self.device)
-        gc.collect()
-        torch.cuda.empty_cache()
-        return f"HQQ {self.base_nbits}-bit, group 64, fp16 compute"
-
-    def _build_streamed(self) -> None:
-        from src.quant.module_swap import SwapRegistry
-        from src.quant.streaming import load_streaming
-        from src.quant.weight_source import CheckpointWeightSource
-
-        self.compressed, tokenizer = load_streaming(self._model_id, self.base_nbits, device=self.device)
-        self.tokenizer = self.tokenizer or tokenizer
-        adapter = self._adapter or self.adapter(self._model_id)
-        transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
-        self.registry = SwapRegistry(self.compressed, CheckpointWeightSource(
-            self._model_id, transposed=lambda path: path in transposed_paths), device=self.device)
-
-    def load_original(self, model_id: str) -> str:
-        from src.eval.model_loader import load_model
-
-        if self.streaming:
-            from src.quant.streaming import load_streaming
-
-            self.original, self.tokenizer = load_streaming(model_id, 8, device=self.device)
-            return "8-bit reference, built layer by layer (the 16-bit original doesn't fit this GPU)"
-
-        self.original, _ = load_model("fp16", model_id=model_id,
-                                      device_map="auto" if self.device == "cuda" else self.device)
-        return "original model loaded at fp16"
-
-    def release_original(self) -> None:
-        """The original is only asked once, before the scan: free its GPU memory (2 bytes a weight,
-        ~6 GB for a 3B model) for the scan, the check and anything else sharing the GPU."""
-        import gc
-
-        import torch
-
-        self.original = None
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    def score(self, view: str, items: list, on_progress=None) -> list[int]:
-        import math
-
-        from src.eval.option_scorer import score_items_with_confidence
-
-        if view != "original" and self.compressed is None and self.streaming and self._model_id:
-            self._build_streamed()  # big model: built now that the reference has answered and been freed
-        model = self.original if view == "original" else self.compressed
-        picks = []
-        for start in range(0, len(items), CHUNK):
-            chunk, confidence = score_items_with_confidence(model, self.tokenizer, items[start:start + CHUNK],
-                                                            self.device, batch_size=self.batch_size)
-            if any(math.isnan(c) for c in confidence):
-                # NaN scores would make every answer "A" without any error: stop and say why instead.
-                raise PrecisionError(f"The {view} model's numbers overflow at 16-bit precision (fp16), so its "
-                                     "answers can't be trusted. Some model families (Gemma, for example) need "
-                                     "bf16, which a T4 can't run fast; try an L4 or A100, or another model.")
-            picks += chunk
-            if on_progress:
-                on_progress(len(picks))
-        return picks
-
-    def memory_mb(self) -> float:
-        return self.registry.deployed_overhead_bytes() / 2**20
-
-    def gpu_name(self) -> str:
-        import torch
-
-        return torch.cuda.get_device_name(0) if self.device == "cuda" else self.device
 
 
 # --- questions ---------------------------------------------------------------------------------------
@@ -714,6 +513,9 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         repaired_picks = (backend.score("repaired", held, lambda k: events.progress(k, len(held))) if kept
                           else [compressed[id(it)] for it in held])
         repaired = dict(zip(map(id, held), repaired_picks))
+        answers = answers_table(ambig, disambig, original, compressed, repaired,
+                                lambda it: "search" if in_search_half(it.question_id, config.seed) else "final")
+        write_json(out / "answers.json", answers)
         report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
                               held_ambig, held_disambig, original, compressed, repaired, started,
                               search=(len(scan_sample), len(probe)), outcome=outcome, reason=reason,
@@ -738,7 +540,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
 
     with events.stage_of("report"):
         if kept and outcome == "repaired":  # a rejected repair is reported, never offered to ship
-            patch = make_patch(config, adapter, kept, engine, used_bits)
+            patch = make_patch(config, adapter, kept, engine, used_bits, revision=getattr(backend, "revision", None))
+            report["fingerprint"] = fingerprint(answers, config.seed)
             (out / "patch.json").write_text(json.dumps(patch.to_dict(), indent=2) + "\n", encoding="utf-8")
             from src.product.byom import llamacpp_lines
             from src.product.repair_kit import build_kit
@@ -750,11 +553,40 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         # saw (the recovery's whole 95% interval above zero) -- the outcome checks already ensure that.
         report["repair_verdict"] = {"repaired": "IMPROVED", "rejected": "WORSE"}.get(outcome, "NOT IMPROVED")
         report["minutes"] = round((time.monotonic() - started) / 60, 1)
-        tmp = out / "report.json.tmp"
-        tmp.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(out / "report.json")
+        write_json(out / "report.json", report, indent=2)
         events.done(message=OUTCOME_HEADLINES[outcome] + (f" · verdict {report['gate']}" if report["gate"] != "N/A" else ""))
     return report
+
+
+def write_json(path: Path, value, indent: int | None = None) -> None:
+    """Written whole or not at all, so a reader never sees half a file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(value, indent=indent) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def answers_table(ambig: list, disambig: list, original: dict, compressed: dict, repaired: dict, split_of) -> dict:
+    """answers.json: set ("ambig" / "stated") -> question id -> the split it is in and each model's pick
+    (`repaired` is null where the repaired model wasn't asked). The two sets stay apart: their question
+    ids are separate in BBQ, but nothing here relies on that."""
+    return {name: {item.question_id: {"split": split_of(item), "original": original[id(item)],
+                                      "compressed": compressed[id(item)], "repaired": repaired.get(id(item))}
+                   for item in items}
+            for name, items in (("ambig", ambig), ("stated", disambig))}
+
+
+FINGERPRINT = 50  # questions whose repaired answers identify a repaired model when it is rebuilt
+
+
+def fingerprint(answers: dict, seed: int) -> list[dict]:
+    """A seeded handful of the final check's questions (half of each set) with the repaired model's picks:
+    a rebuilt copy that answers them the same is the model that was measured."""
+    out = []
+    for name, table in answers.items():
+        asked = sorted(q for q, a in table.items() if a["split"] == "final" and a["repaired"] is not None)
+        for q in sorted(random.Random(seed).sample(asked, min(FINGERPRINT // 2, len(asked)))):
+            out.append({"question_id": q, "set": name, "pick": table[q]["repaired"]})
+    return out
 
 
 def reject_reason(report: dict) -> str:
@@ -1019,7 +851,8 @@ def scan_block(config, adapter, scan, cfg, search) -> dict:
     return block
 
 
-def make_patch(config, adapter, kept, engine, used_bits: int = 3):
+def make_patch(config, adapter, kept, engine, used_bits: int = 3, module_bits: dict | None = None,
+               revision: str | None = None):
     from src.attribution.patch import Patch
 
     is_phi = adapter.arch == "phi3" and adapter.n_layers == 32
@@ -1029,7 +862,9 @@ def make_patch(config, adapter, kept, engine, used_bits: int = 3):
                          "seed": config.seed},
                  model_id=config.model_id,
                  part_shapes=None if is_phi else {k: tuple(v) for k, v in adapter.part_shapes.items()},
-                 n_layers=None if is_phi else adapter.n_layers)
+                 n_layers=None if is_phi else adapter.n_layers,
+                 module_bits={p: b for p, b in (module_bits or {}).items() if b != config.nbits} or None,
+                 revision=revision)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -42,7 +42,7 @@ def load_variant(variant: str, device: str, patch_path: Path | None = None):
     patch = load_patch(patch_path)
     registry = SwapRegistry(model, CheckpointWeightSource(MODEL_ID), device=device)
     for path in patch.modules:
-        registry.commit(path, patch.nbits)
+        registry.commit(path, patch.bits(path))
     registry.release_baselines()
     print(f"Applied patch {patch.name}: {len(patch.modules)} modules at {patch.nbits}-bit")
     return model, tokenizer, "hqq_repaired"

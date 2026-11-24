@@ -1,0 +1,902 @@
+{
+ "breaks_fairness": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "PASS",
+  "gate_failures": [],
+  "kept": [
+   "model.layers.2.self_attn.v_proj",
+   "model.layers.1.self_attn.q_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 0.0417,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.3.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.1.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.1.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.2.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "fully recovered (USR 1.0 on the sample)",
+   "survivors": 40,
+   "trials": 43
+  }
+ },
+ "breaks_still_fair": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "PASS",
+  "gate_failures": [],
+  "kept": [
+   "model.layers.2.self_attn.v_proj",
+   "model.layers.1.self_attn.q_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 0.0417,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.3.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.1.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.1.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.2.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "fully recovered (USR 1.0 on the sample)",
+   "survivors": 40,
+   "trials": 43
+  }
+ },
+ "broken_at_3_bits": {
+  "base_nbits": 4,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "PASS",
+  "gate_failures": [],
+  "kept": [
+   "model.layers.2.self_attn.v_proj",
+   "model.layers.1.self_attn.q_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 0.0417,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.3.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.1.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.1.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.2.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "fully recovered (USR 1.0 on the sample)",
+   "survivors": 40,
+   "trials": 43
+  }
+ },
+ "diffuse": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "FAIL",
+  "gate_failures": [
+   "stereotyped answers rose by 30.0 points (limit 1.0)",
+   "'unknown' answers fell by 30.0 points (limit 2.0)"
+  ],
+  "kept": [
+   "model.layers.1.self_attn.q_proj",
+   "model.layers.3.mlp.gate_proj",
+   "model.layers.0.self_attn.k_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 0.029411765,
+   "point": 0.089552239,
+   "upper": 0.166666667
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.384236453,
+   "usr": 0.615763547
+  },
+  "restored_share": 0.0972,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj",
+    "model.layers.1.mlp.gate_proj",
+    "model.layers.3.mlp.gate_proj",
+    "model.layers.2.mlp.up_proj",
+    "model.layers.2.mlp.down_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "reached max_rounds",
+   "survivors": 40,
+   "trials": 112
+  }
+ },
+ "diffuse_no_budget": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "PASS",
+  "gate_failures": [],
+  "kept": [
+   "model.layers.1.self_attn.q_proj",
+   "model.layers.3.mlp.gate_proj",
+   "model.layers.0.self_attn.k_proj",
+   "model.layers.1.self_attn.o_proj",
+   "model.layers.1.mlp.gate_proj",
+   "model.layers.2.mlp.up_proj",
+   "model.layers.2.mlp.down_proj",
+   "model.layers.0.self_attn.q_proj",
+   "model.layers.2.self_attn.k_proj",
+   "model.layers.3.self_attn.k_proj",
+   "model.layers.0.self_attn.v_proj",
+   "model.layers.2.self_attn.v_proj",
+   "model.layers.3.self_attn.v_proj",
+   "model.layers.2.self_attn.q_proj",
+   "model.layers.0.self_attn.o_proj",
+   "model.layers.3.self_attn.o_proj",
+   "model.layers.0.mlp.gate_proj",
+   "model.layers.0.mlp.up_proj",
+   "model.layers.3.mlp.up_proj",
+   "model.layers.1.mlp.down_proj",
+   "model.layers.3.self_attn.q_proj",
+   "model.layers.1.self_attn.k_proj",
+   "model.layers.1.self_attn.v_proj",
+   "model.layers.2.self_attn.o_proj",
+   "model.layers.2.mlp.gate_proj",
+   "model.layers.1.mlp.up_proj",
+   "model.layers.0.mlp.down_proj",
+   "model.layers.3.mlp.down_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 1.0,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj",
+    "model.layers.1.mlp.gate_proj",
+    "model.layers.3.mlp.gate_proj",
+    "model.layers.2.mlp.up_proj",
+    "model.layers.2.mlp.down_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "reached max_rounds",
+   "survivors": 40,
+   "trials": 112
+  }
+ },
+ "diffuse_scan_only": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "FAIL",
+  "gate_failures": [
+   "stereotyped answers rose by 26.6 points (limit 1.0)",
+   "'unknown' answers fell by 26.6 points (limit 2.0)"
+  ],
+  "kept": [
+   "model.layers.1.self_attn.q_proj",
+   "model.layers.3.mlp.gate_proj",
+   "model.layers.0.self_attn.k_proj",
+   "model.layers.1.self_attn.o_proj",
+   "model.layers.1.mlp.gate_proj",
+   "model.layers.2.mlp.up_proj",
+   "model.layers.2.mlp.down_proj",
+   "model.layers.0.self_attn.q_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 0.106021031,
+   "point": 0.194029851,
+   "upper": 0.295099284
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.349753695,
+   "usr": 0.650246305
+  },
+  "restored_share": 0.3194,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj",
+    "model.layers.1.mlp.gate_proj",
+    "model.layers.3.mlp.gate_proj",
+    "model.layers.2.mlp.up_proj",
+    "model.layers.2.mlp.down_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "reached max_rounds",
+   "survivors": 40,
+   "trials": 112
+  }
+ },
+ "diffuse_with_hedger": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "FAIL",
+  "gate_failures": [
+   "says \"can't tell\" on 48.5% of questions whose story states the answer, 48.5 points above the original (limit 3)"
+  ],
+  "kept": [
+   "model.layers.1.self_attn.q_proj",
+   "model.layers.3.mlp.gate_proj",
+   "model.layers.0.self_attn.k_proj",
+   "model.layers.1.self_attn.o_proj",
+   "model.layers.1.mlp.gate_proj",
+   "model.layers.2.mlp.up_proj",
+   "model.layers.2.mlp.down_proj",
+   "model.layers.0.self_attn.q_proj",
+   "model.layers.2.self_attn.k_proj",
+   "model.layers.3.self_attn.k_proj",
+   "model.layers.0.self_attn.v_proj",
+   "model.layers.2.self_attn.v_proj",
+   "model.layers.3.self_attn.v_proj",
+   "model.layers.2.self_attn.q_proj",
+   "model.layers.0.self_attn.o_proj",
+   "model.layers.3.self_attn.o_proj",
+   "model.layers.0.mlp.gate_proj",
+   "model.layers.0.mlp.up_proj",
+   "model.layers.3.mlp.up_proj",
+   "model.layers.1.mlp.down_proj",
+   "model.layers.3.self_attn.q_proj",
+   "model.layers.1.self_attn.k_proj",
+   "model.layers.1.self_attn.v_proj",
+   "model.layers.2.self_attn.o_proj",
+   "model.layers.2.mlp.gate_proj",
+   "model.layers.1.mlp.up_proj",
+   "model.layers.3.mlp.down_proj",
+   "model.layers.0.mlp.down_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 0.514851485,
+   "false_unknown": 0.485148515,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 1.0,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj",
+    "model.layers.1.mlp.gate_proj",
+    "model.layers.3.mlp.gate_proj",
+    "model.layers.2.mlp.up_proj",
+    "model.layers.2.mlp.down_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "reached max_rounds",
+   "survivors": 40,
+   "trials": 112
+  }
+ },
+ "fixable": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "PASS",
+  "gate_failures": [],
+  "kept": [
+   "model.layers.2.self_attn.v_proj",
+   "model.layers.1.self_attn.q_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 0.0417,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.3.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.1.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.1.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.2.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "fully recovered (USR 1.0 on the sample)",
+   "survivors": 40,
+   "trials": 43
+  }
+ },
+ "fixable_exact": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "PASS",
+  "gate_failures": [],
+  "kept": [
+   "model.layers.1.self_attn.q_proj",
+   "model.layers.2.self_attn.v_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 0.0417,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.3.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.1.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.1.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.2.self_attn.o_proj",
+    "model.layers.3.self_attn.o_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "fully recovered (USR 1.0 on the sample)",
+   "survivors": 40,
+   "trials": 43
+  }
+ },
+ "hedging_compressed": {
+  "base_nbits": 4,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 0.678217822,
+   "false_unknown": 0.321782178,
+   "srs": 0.413793103,
+   "usr": 0.586206897
+  },
+  "flipped": 120,
+  "gate": "FAIL",
+  "gate_failures": [
+   "says \"can't tell\" on 64.4% of questions whose story states the answer, 64.4 points above the original (limit 3)"
+  ],
+  "kept": [
+   "model.layers.2.self_attn.v_proj",
+   "model.layers.1.self_attn.q_proj",
+   "model.layers.0.mlp.down_proj"
+  ],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "repaired",
+  "recovery": {
+   "lower": 1.0,
+   "point": 1.0,
+   "upper": 1.0
+  },
+  "repair_verdict": "IMPROVED",
+  "repaired": {
+   "accuracy": 0.356435644,
+   "false_unknown": 0.643564356,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 0.0972,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "fast_scan",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "pool_parts": [
+    "model.layers.0.self_attn.q_proj",
+    "model.layers.1.self_attn.q_proj",
+    "model.layers.2.self_attn.q_proj",
+    "model.layers.3.self_attn.q_proj",
+    "model.layers.0.self_attn.k_proj",
+    "model.layers.1.self_attn.k_proj",
+    "model.layers.2.self_attn.k_proj",
+    "model.layers.3.self_attn.k_proj",
+    "model.layers.0.self_attn.v_proj",
+    "model.layers.1.self_attn.v_proj",
+    "model.layers.2.self_attn.v_proj",
+    "model.layers.3.self_attn.v_proj",
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj",
+    "model.layers.2.self_attn.o_proj",
+    "model.layers.0.mlp.down_proj"
+   ],
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 106,
+   "seed": 0,
+   "stop_reason": "fully recovered (USR 1.0 on the sample)",
+   "survivors": 40,
+   "trials": 43
+  }
+ },
+ "never_unsure": {
+  "base_nbits": 4,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 0.237623762,
+   "false_unknown": 0.242574257,
+   "srs": 0.487684729,
+   "usr": 0.275862069
+  },
+  "flipped": 2,
+  "gate": "N/A",
+  "gate_failures": [],
+  "kept": [],
+  "original": {
+   "accuracy": 0.52970297,
+   "false_unknown": 0.0,
+   "srs": 0.487684729,
+   "usr": 0.0
+  },
+  "outcome": "not_applicable",
+  "recovery": {
+   "lower": null,
+   "point": null,
+   "upper": null
+  },
+  "repair_verdict": "NOT IMPROVED",
+  "repaired": {
+   "accuracy": 0.237623762,
+   "false_unknown": 0.242574257,
+   "srs": 0.487684729,
+   "usr": 0.275862069
+  },
+  "restored_share": 0.0,
+  "safe": 4,
+  "scan": {
+   "candidates": 28,
+   "engine": "none",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 117,
+   "search_sample": 3,
+   "seed": 0,
+   "survivors": 40
+  }
+ },
+ "no_damage": {
+  "base_nbits": 3,
+  "checked_on": {
+   "ambiguous": 203,
+   "stated_answer": 202
+  },
+  "compressed": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "flipped": 0,
+  "gate": "PASS",
+  "gate_failures": [],
+  "kept": [],
+  "original": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "outcome": "no_damage",
+  "recovery": {
+   "lower": null,
+   "point": null,
+   "upper": null
+  },
+  "repair_verdict": "NOT IMPROVED",
+  "repaired": {
+   "accuracy": 1.0,
+   "false_unknown": 0.0,
+   "srs": 0.083743842,
+   "usr": 0.916256158
+  },
+  "restored_share": 0.0,
+  "safe": 360,
+  "scan": {
+   "candidates": 28,
+   "engine": "none",
+   "penalty_weight": 1.0,
+   "pool": 16,
+   "screen_probe": 40,
+   "screen_sample": 60,
+   "search_probe": 198,
+   "search_sample": 0,
+   "seed": 0,
+   "survivors": 40
+  }
+ }
+}
