@@ -10,6 +10,8 @@ Four screens, in the order of the pipeline, opened by a short guide:
                  Hugging Face account, src/product/hub_publish.py) and, for developers, the repair kit
     5 Bring your own model   type a Hugging Face model name, Diagnose, watch the progress, then ship its
                  repair on screen 4 (runs the fast-repair pipeline; see src/product/byom.py)
+    6 My models  every diagnosis in the database (src/db): its report, a comparison, and the repaired model
+                 reopened to ask, serve or publish (src/product/my_models.py, src/product/reopen.py)
 
 Live mode needs a GPU (a Colab T4 is enough: the 16-bit model takes 7.6 GB, the 3-bit one 1.7 GB).
 Preview mode runs anywhere on the saved full-benchmark results, and is the fallback if the GPU
@@ -719,6 +721,8 @@ GUIDE = """
   use it now through an API key, or publish it to your Hugging Face account.</p></div>
   <div class="fg-step"><b class="num">5</b><b>Your model</b><p>Type the name of any Hugging Face model and
   press Diagnose: the same check and repair, on your model, in about 35 minutes. Ship it on screen 4.</p></div>
+  <div class="fg-step"><b class="num">6</b><b>My models</b><p>Every model diagnosed so far, by you or the team:
+  open its report, compare two, or reopen one to ask it, serve it or publish it.</p></div>
 </div>
 """
 

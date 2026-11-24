@@ -265,6 +265,19 @@ models can't be rebuilt by it and are refused (the API and kit still work). A st
 repair is published with "not measured" instead of numbers. **For developers**: the repair kit; its
 `fairgate.py serve` is the same API for customers' own machines.
 `tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
+**The database (Nov 2026, `src/db/`, contract C9):** every diagnosis, its numbers, its recipe and the Ask history,
+in a local SQLite file first and in the team's Postgres (`DATABASE_URL`, pooled address) in the background. Records
+and links only, never weights. Writes go to SQLite and its `outbox` in one transaction; a thread upserts by id and
+fetches other machines' rows; every read is local, so no screen waits on the network. Ids are worked out from what a
+row is (`records.py`): syncing, importing or retrying twice adds nothing. A deleted run leaves a tombstone.
+`scrub.py` cuts tokens, keys and database addresses out of every value. `byom.JobRunner(store=...)` records a run as
+it goes (the pipeline process never talks to a database; `store=None` = folders only); `src/db/importer.py` imports job
+folders and the reference summaries. **Tab 6, "My models"** (`my_models.py`): table, run page, comparison, printable
+audit report, delete. **Reopening** (`reopen.py`): saved weights if there is a link, else rebuilt from the recipe at the
+saved commit with each part at its own bits, then its 50 fingerprint questions (below 48: a warning naming the library
+versions that differ). `LiveBackend(model_id=, patch=)` asks such a model; one model on the GPU at a time. Keep the live
+SQLite file on local disk, never on Google Drive (`Store.backup` makes a safe copy). Tests: `pytest tests/db`, and on
+Postgres too with `TEST_DATABASE_URL` (a throw-away schema).
 **Version 1 is pinned (Nov 2026):** `tests/product/test_v1_unchanged.py` checks that the pipeline decides exactly
 what `e434817` did on 12 stand-in models (`golden_v1.json`); v2 (accuracy work, docs/CONTRACTS.md C4/C7) is compared
 with it. The real models are in `src/product/torch_backend.py`; each run also writes `answers.json`.

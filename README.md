@@ -88,6 +88,12 @@ tab 5, next to the live Phi-3.5 demo (`--byom --live`). Screen 4, Ship, takes ei
 Hugging Face account, loaded anywhere with `AutoHQQHFModel.from_quantized`). Developers can still download
 a 3-file repair kit whose `fairgate.py` chats with, serves or saves the repaired model on their own machine. Contracts: docs/CONTRACTS.md.
 
+## Database
+
+Every diagnosis, its repair recipe and the Ask history are kept in a local SQLite file (`results/db/`) and, when
+`DATABASE_URL` is set, in the team's Postgres. The Studio's tab 6, *My models*, lists them and reopens the repaired
+models. Setup and checks: [RUNBOOK.md](RUNBOOK.md), "The shared database".
+
 ## Deck
 
 `deck/ELSEM3_deck.pptx` is generated, not hand-edited: every number on it is read from the committed

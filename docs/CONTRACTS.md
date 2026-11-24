@@ -155,4 +155,8 @@ store.delete_run(run_id)                                # the record; nothing on
 * Optional `report.json` key `strategies` (Person 1): a list of `{"name", "extra_mb", "parts", "chosen", ...}`; other
   keys are kept as the strategy's `validation`.
 * `answers` of other machines' runs are fetched only when asked for (`fetch_answers`): 2,000 rows a run.
+* `JobRunner(store=...)` records a job from the 1.5 s screen timer and a background thread; `job.json` gains `run_id`,
+  `ran_by`, `versions`, `budget`. `python -m src.db.importer --jobs results/byom --references` imports what exists.
+* Reopening (`src/product/reopen.py`): `reopen(run, device)` and `check_fingerprint(run, model, tokenizer, device)`.
+  Until Person 4's `load_repaired` is merged it rebuilds with `load_streaming(checkpoint, base, keep=patch_bits(recipe))`.
 * Tests: `pytest tests/db`; with `TEST_DATABASE_URL` the same tests also run on Postgres, in a throw-away schema.

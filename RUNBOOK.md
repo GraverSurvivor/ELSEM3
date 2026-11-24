@@ -209,3 +209,21 @@ Backup if Colab dies: the notebook's last cell (saved results, no GPU), or on a 
 | 3 | ~6 |
 | 4 | ~14.5 |
 | **Total** | **~26** (Kaggle gives 30 h per account per week; there are three accounts) |
+
+---
+
+## The shared database (v2)
+
+1. **Once, the project lead:** a free Postgres (Neon suggested). Copy its **pooled** address (Colab reaches the internet
+   over IPv4 only, and some direct addresses are IPv6) into a Colab secret named `DATABASE_URL`. Never paste it into a
+   cell, a chat or a commit: it holds the password. `sslmode=require` is added if it is missing. The tables are made on
+   the first start.
+2. **Every session:** the notebook reads the secret without printing it. The app prints `database: connected` or
+   `database: local only`. Local only means the records wait on this machine and are sent when the server answers; on
+   Colab they are lost if the session ends first.
+3. **Old diagnoses and the research runs:** `python -m src.db.importer --jobs results/byom --references` (again is safe).
+4. **Check it on the real server:** `TEST_DATABASE_URL=<address> python -m pytest tests/db -q`. It works in its own
+   temporary schema and drops it.
+5. **The real-run check (needs a T4):** diagnose `Qwen/Qwen2.5-1.5B-Instruct` in tab 5, wait for *Finished* and for
+   tab 6 to show no rows waiting, end the session, start a new one, and on tab 6 press **Re-check**: it must say
+   "Matches what was measured, 50/50".
