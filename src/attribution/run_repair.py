@@ -75,6 +75,10 @@ class RepairPlan:
     search_run_id: str
     patch_name: str | None = None
     patch_source: dict | None = None
+    module_bits: dict | None = None  # modules restored to something other than `nbits`
+
+    def bits(self, path: str) -> int:
+        return (self.module_bits or {}).get(path, self.nbits)
 
 
 def plan_from_patch(patch: Patch) -> RepairPlan:
@@ -86,6 +90,7 @@ def plan_from_patch(patch: Patch) -> RepairPlan:
         search_run_id=patch.source.get("search_run_id") or patch.name,
         patch_name=patch.name,
         patch_source=dict(patch.source),
+        module_bits=patch.module_bits,
     )
 
 
@@ -135,11 +140,11 @@ def apply_repair(
     """
     before = memory_allocated()
     for path in plan.modules:
-        registry.commit(path, plan.nbits)
+        registry.commit(path, plan.bits(path))
     registry.release_baselines()
     after = memory_allocated()
 
-    if registry.active != {path: plan.nbits for path in plan.modules}:
+    if registry.active != {path: plan.bits(path) for path in plan.modules}:
         raise RuntimeError(f"registry reports {registry.active} after applying {plan.modules}")
     return RepairMemory(
         deployed_overhead_bytes=registry.deployed_overhead_bytes(),
@@ -285,6 +290,7 @@ def main() -> None:
         "accuracy": accuracy,
         "modules": list(plan.modules),
         "nbits": plan.nbits,
+        **({"module_bits": plan.module_bits} if plan.module_bits else {}),
         "fairness": {
             "overall": {"usr": overall.usr, "srs": overall.srs, "n_items": overall.n_items},
             "per_category": {s.category: {"usr": s.usr, "srs": s.srs, "n_items": s.n_items} for s in summaries},

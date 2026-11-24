@@ -59,6 +59,39 @@ def test_detects_a_hand_edited_size(tmp_path):
         patch_from_dict(data)
 
 
+def test_every_committed_patch_rewrites_identically(tmp_path):
+    """Version 2's keys are optional: not one byte of an existing patch file changes."""
+    from pathlib import Path
+
+    paths = sorted(Path("results/patches").glob("*.json"))
+    assert len(paths) >= 10
+    for path in paths:
+        again = save_patch(load_patch(path), tmp_path / path.name)
+        assert again.read_text(encoding="utf-8") == path.read_text(encoding="utf-8"), path.name
+
+
+def test_mixed_bits_round_trip_and_follow_the_prefix(tmp_path):
+    patch = Patch(name="mixed", modules=("model.layers.1.self_attn.qkv_proj", "model.layers.2.mlp.down_proj",
+                                         "model.layers.3.self_attn.o_proj"), nbits=8,
+                  module_bits={"model.layers.2.mlp.down_proj": 4}, revision="abc123", prompt_style="examples")
+    assert [patch.bits(p) for p in patch.modules] == [8, 4, 8]
+    again = load_patch(save_patch(patch, tmp_path / "mixed.json"))
+    assert again == patch and again.to_dict()["module_bits"] == {"model.layers.2.mlp.down_proj": 4}
+    assert patch.prefix(1).module_bits is None and patch.prefix(2).bits("model.layers.2.mlp.down_proj") == 4
+    assert patch.prefix(2).revision == "abc123" and patch.prefix(2).prompt_style == "examples"
+    with pytest.raises(KeyError, match="doesn't restore"):
+        patch.bits("model.layers.9.self_attn.o_proj")
+
+
+@pytest.mark.parametrize("bits", [{"model.layers.1.self_attn.qkv_proj": 3}, {"model.layers.1.self_attn.qkv_proj": 32},
+                                  {"model.layers.1.self_attn.qkv_proj": 4.0}, {"model.layers.5.self_attn.qkv_proj": 4}])
+def test_rejects_bits_that_restore_nothing(bits):
+    with pytest.raises(ValueError):
+        Patch(name="bad", modules=("model.layers.1.self_attn.qkv_proj",), nbits=8, module_bits=bits)
+    with pytest.raises(ValueError, match="prompt style"):
+        Patch(name="bad", modules=("model.layers.1.self_attn.qkv_proj",), nbits=8, prompt_style="poem")
+
+
 def test_prefixes_keep_restore_order():
     patch = Patch(name="search_top5", modules=tuple(SEARCH_TOP5), nbits=8, source={"kind": "search", "search_run_id": "s"})
     top2 = patch.prefix(2)

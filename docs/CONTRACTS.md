@@ -104,6 +104,27 @@ python -m src.product.fast_repair --model <HF id> --mode fast|exact --questions 
 
 `<dir>/patch.json`: the project's patch format, with `part_shapes` and `n_layers` for non-Phi models.
 
+Added for v2 (Nov 2026):
+* `<dir>/answers.json`: `{"ambig": {question id: {"split": "search"|"final", "original": 2, "compressed": 0,
+  "repaired": 2}}, "stated": {...}}`. Every question's pick from each model; `repaired` is null where the
+  repaired model wasn't asked.
+* `report.json` -> `fingerprint` (only for a repair worth shipping): 50 of the final check's questions with the
+  repaired model's picks, `[{"question_id", "set", "pick"}]`. A rebuilt copy that answers them the same is the
+  model that was measured.
+* The real models moved to `src/product/torch_backend.py` (re-exported from `fast_repair`); `TorchBackend.probs`
+  returns every choice's probability and `.revision` is the model's commit on Hugging Face.
+
+## C7. Patch, version 2: `src/attribution/patch.py`
+Three optional keys; a patch without them reads and re-writes byte-identically (tested on every committed patch):
+```json
+{"module_bits": {"model.layers.1.self_attn.q_proj": 4}, "revision": "<commit>", "prompt_style": "examples"}
+```
+* `Patch.bits(path)`: what a module is restored to (`module_bits` if listed, else `nbits`). `run_repair --patch`,
+  `model_variants` and `check_reproduction` apply it. On a plain dict:
+  `{p: patch.get("module_bits", {}).get(p, patch["nbits"]) for p in patch["modules"]}`.
+* The kit, publishing and llama.cpp lines still assume one bit-width: they learn `module_bits` before any
+  pipeline writes it.
+
 ## C5. Studio (Person 3): `src/product/byom.py` (on branch sprint/p3-studio-byom)
 * Reads only `events.jsonl`, `report.json` and `patch.json`; starts the pipeline as a subprocess,
   one job at a time; Cancel; reload-safe.

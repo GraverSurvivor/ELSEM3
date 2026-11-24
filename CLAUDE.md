@@ -265,6 +265,9 @@ models can't be rebuilt by it and are refused (the API and kit still work). A st
 repair is published with "not measured" instead of numbers. **For developers**: the repair kit; its
 `fairgate.py serve` is the same API for customers' own machines.
 `tests/product/test_any_model.py` runs the real backend end to end on tiny Qwen2, GPT-2, GPT-NeoX, OPT, Gemma 2.
+**Version 1 is pinned (Nov 2026):** `tests/product/test_v1_unchanged.py` checks that the pipeline decides exactly
+what `e434817` did on 12 stand-in models (`golden_v1.json`); v2 (accuracy work, docs/CONTRACTS.md C4/C7) is compared
+with it. The real models are in `src/product/torch_backend.py`; each run also writes `answers.json`.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
 hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see
