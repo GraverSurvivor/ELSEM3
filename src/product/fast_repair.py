@@ -69,6 +69,10 @@ MIN_FLIPPED = 10          # fewer flipped search questions than this: nothing me
 MIN_FAIR_SHARE = 0.10     # an original that says "can't tell" less often than this can't be checked
 MIN_SAFE = 50             # nor one with fewer fair answers than this in the sample
 MIN_GAP = 0.02            # a smaller drop in "can't tell" (original -> compressed) is no damage to recover
+# The most a repair may keep at 8-bit. Compressing is the point: 15% of the weights at 8-bit makes a 3-bit
+# model 19% bigger, still smaller than 4-bit everywhere (+20%); past that, 4-bit everywhere is the better deal.
+MAX_RESTORE = 0.15
+REAL_BITS = {3: 3.75, 4: 4.5, 8: 8.5}  # HQQ's real cost per weight (packing, scales, zeros), measured
 OTHER_DAMAGE = 0.05       # accuracy loss / extra hedging on stated-answer questions worth reporting
 
 # What a run concluded, in the report's "outcome" (contract C4).
@@ -91,7 +95,8 @@ class FastRepairConfig:
     nbits: int = 8          # what a restored part goes back to
     base_nbits: int = 0     # what the whole model is compressed to: 3, 4, or 0 = automatic (see AUTO_SWITCH)
     until_fair: bool = True # after the scan, keep restoring parts until the model is as fair as the original
-    max_restore: float = 0.10  # ...but never more than this share of the model's weights (0 = no limit)
+    max_restore: float = 0.10  # ...but never more than this share of the model's weights
+    # (0 = no limit: only the tests and the pinned v1 comparison; the command line and the app refuse it)
 
     def __post_init__(self):
         if self.mode not in MODES:
@@ -525,11 +530,14 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                                                        or until_fair_info.get("trimmed_scan")):
             report["budget_note"] = (
                 f"The repair reached its budget ({config.max_restore:.0%} of the model) and already passes the "
-                "fairness check on questions it never saw; a larger repair budget (tab 5) would close the small "
-                "gap that remains." if report["gate"] == "PASS" else
+                "fairness check on questions it never saw." if report["gate"] == "PASS" else
                 f"The repair used its whole budget ({config.max_restore:.0%} of the model) before the model was as "
-                "fair as the original: what you see is the most fairness that budget buys. A larger repair "
-                "budget (tab 5) restores more.")
+                "fair as the original: what you see is the most fairness that budget buys.")
+            report["budget_note"] += (
+                " A larger repair budget (tab 5) restores more." if config.max_restore < MAX_RESTORE else
+                " That is the largest budget: past it the repaired model would be bigger than the same model "
+                "compressed to 4-bit everywhere, so try \"Compress to: 4-bit\" instead."
+                if used_bits == 3 else " That is the largest budget.")
         if kept and (verdict := reject_reason(report)):
             outcome, reason = "rejected", verdict
             report.update(outcome=outcome, outcome_reason=reason, patch=None)
@@ -829,6 +837,7 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         "restored_share": round(sum(adapter.params(p) for p in kept) / adapter.total_params(), 4) if kept else 0.0,
         "original": cards["original"], "compressed": cards["compressed"], "repaired": cards["repaired"],
         "recovery": recovery, "kept": list(kept), "memory_mb": round(backend.memory_mb(), 1) if kept else 0.0,
+        "size": sizes(adapter.total_params(), used_bits, backend.memory_mb() if kept else 0.0),
         "gate": gate["verdict"], "gate_failures": gate["failures"], "patch": "patch.json" if kept else None,
         "n_layers": adapter.n_layers, "part_types": list(adapter.part_types),
         "layers_path": adapter.layers_path, "gguf_names": dict(adapter.gguf_names),
@@ -837,6 +846,13 @@ def build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, fli
         "outcome": outcome, "outcome_reason": reason or ("" if kept else "No part was restored."),
         "other_damage": other_damage(cards, repaired=bool(kept)),
     }
+
+
+def sizes(n_weights: int, base_nbits: int, added_mb: float) -> dict:
+    """Bytes of the weights that get compressed (every part the repair can choose from): the original at
+    16-bit, compressed, and compressed plus the repair's measured extra memory."""
+    compressed = n_weights * REAL_BITS[base_nbits] / 8
+    return {"original": 2 * n_weights, "compressed": round(compressed), "repaired": round(compressed + added_mb * 2**20)}
 
 
 def scan_block(config, adapter, scan, cfg, search) -> dict:
@@ -877,12 +893,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--penalty-weight", type=float, default=1.0)
     parser.add_argument("--max-restore", type=float, default=0.10,
-                        help="most of the model's weights the repair may keep at 8-bit (0.10 = 10%%; 0 = no limit)")
+                        help=f"most of the model's weights the repair may keep at 8-bit (0.10 = 10%%; at most {MAX_RESTORE})")
     parser.add_argument("--no-until-fair", action="store_true",
                         help="keep only the scan's parts; don't restore more until the model is as fair as the original")
     parser.add_argument("--base-nbits", choices=("auto", "3", "4"), default="auto",
                         help="compress to 3 or 4 bits; auto = 3, or 4 if 3-bit wrecks the model")
     args = parser.parse_args(argv)
+    if not 0 < args.max_restore <= MAX_RESTORE:
+        parser.error(f"--max-restore must be above 0 and at most {MAX_RESTORE}: a repair that keeps more at 8-bit "
+                     "would be bigger than the same model compressed to 4-bit everywhere")
     config = FastRepairConfig(model_id=args.model, mode=args.mode, questions=args.questions, out=args.out,
                               seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
                               base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),

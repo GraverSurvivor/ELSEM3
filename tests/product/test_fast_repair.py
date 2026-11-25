@@ -751,6 +751,52 @@ def test_the_repair_stays_within_its_budget_and_says_so(tmp_path):
     assert "most fairness that budget buys" in results_html(report)
 
 
+def test_a_repair_can_never_undo_the_compression():
+    """"No limit" could restore the whole model to 8-bit. The largest budget now keeps a 3-bit model
+    smaller than the same model compressed to 4-bit everywhere, and nothing offered goes past it."""
+    from src.product import fast_repair
+    from src.product.byom import BUDGETS, check_budget
+    from src.product.fast_repair import MAX_RESTORE, REAL_BITS
+
+    largest = REAL_BITS[3] + MAX_RESTORE * (REAL_BITS[8] - REAL_BITS[3])
+    assert largest < REAL_BITS[4] < REAL_BITS[8]
+    assert max(BUDGETS) == MAX_RESTORE and min(BUDGETS) > 0
+    for share, label in BUDGETS.items():  # the size each choice promises
+        extra = 100 * share * (REAL_BITS[8] - REAL_BITS[3]) / REAL_BITS[3]
+        assert f"+{extra:.0f}% size" in label and check_budget(label) == share
+    for refused in (0, 0.0, 0.2, 1, "No limit: as fair as the original, whatever it takes"):
+        with pytest.raises(ValueError, match="5%, 10% or 15%"):
+            check_budget(refused)
+    for refused in ("0", "0.2", "1", "-0.1", "nan"):
+        with pytest.raises(SystemExit):
+            fast_repair.main(["--model", "x/y", "--out", "unused", "--max-restore", refused])
+
+
+def test_the_largest_budget_holds_and_its_note_suggests_four_bits(tmp_path):
+    report, _, _ = _run(tmp_path, backend=DiffuseDamage(), questions=400, max_restore=0.15)
+    assert 0.10 < report["restored_share"] <= 0.15 + 1e-9
+    assert "largest budget" in report["budget_note"] and "Compress to: 4-bit" in report["budget_note"]
+    smaller, _, _ = _run(tmp_path / "b", backend=DiffuseDamage(), questions=400, max_restore=0.05)
+    assert "A larger repair budget" in smaller["budget_note"] and "largest budget" not in smaller["budget_note"]
+
+
+def test_the_results_show_what_the_repair_costs_in_size(tmp_path):
+    from src.product.byom import results_html, size_html
+
+    report, backend, _ = _run(tmp_path)
+    n = adapter_for(TINY).total_params()
+    assert report["size"]["original"] == 2 * n and report["size"]["compressed"] == round(n * 3.75 / 8)
+    assert report["size"]["repaired"] - report["size"]["compressed"] == round(report["memory_mb"] * 2**20)
+    assert "Size after the repair" in results_html(report)
+    # Phi-3.5's numbers: 3.62B weights, +81 MB
+    phi = {"size": {"original": 7.25e9, "compressed": 1.70e9, "repaired": 1.70e9 + 81 * 2**20}, "kept": ["a"]}
+    line = size_html(phi, repaired=True)
+    assert "1.78 GB" in line and "+5%" in line and "4.1× smaller" in line and "7.25 GB" in line
+    rejected = size_html(phi, repaired=False)  # nothing shipped: only the compressed size is claimed
+    assert "Size after the repair" not in rejected and "1.70 GB" in rejected and "4.3× smaller" in rejected
+    assert size_html({}, repaired=True) == ""  # runs from before sizes were recorded
+
+
 def test_small_parts_that_help_come_before_big_ones():
     """Ranked by fairness per weight: an attention part that brings back as much as an MLP part five
     times its size goes first."""

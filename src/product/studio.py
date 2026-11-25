@@ -530,6 +530,7 @@ td.fg-cell {display: table-cell}
 .by-note-precision {margin: 4px 0; padding: 6px 12px; border-left: 3px solid #6366f1; background: #eef2ff}
 .by-card-none p {font-size: 13px; opacity: .85}
 .by-gate-na {background: #f3f4f6}
+.by-size {font-size: 16px; margin: 4px 0} .by-size span {font-size: 13px; opacity: .8}
 .by-other {margin-top: 8px; padding: 8px 12px; border-left: 3px solid #f59e0b; background: #fffbeb}
 .by-other ul {margin: 4px 0 0 18px}
 .ship-card {border: 1px solid var(--border-color-primary); border-radius: 12px; padding: 12px 14px !important;

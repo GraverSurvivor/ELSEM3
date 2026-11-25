@@ -104,15 +104,18 @@ def check_model_id(text: str | None) -> str:
     return model_id
 
 
-BUDGETS = {0.05: "Small: up to 5% of the model", 0.10: "Balanced: up to 10% (recommended)",
-           0.0: "No limit: as fair as the original, whatever it takes"}
+# There is no "no limit": past 15% at 8-bit the repaired model would be bigger than 4-bit everywhere
+# (fast_repair.MAX_RESTORE; a test keeps the two in step). The sizes are for a model compressed to 3-bit.
+BUDGETS = {0.05: "Small: up to 5% of the model (about +6% size)",
+           0.10: "Balanced: up to 10% (about +13% size, recommended)",
+           0.15: "Largest: up to 15% (about +19% size)"}
 
 
 def check_budget(budget) -> float:
     for key, label in BUDGETS.items():
         if budget == label or (isinstance(budget, (int, float)) and abs(float(budget) - key) < 1e-9):
             return key
-    raise ValueError("Pick a repair budget.")
+    raise ValueError("Pick a repair budget: 5%, 10% or 15% of the model.")
 
 
 BITS = {0: "Automatic: 3-bit, or 4-bit if 3-bit breaks the model",
@@ -340,6 +343,26 @@ def report_outcome(report: dict) -> tuple[str, str]:
     return "no_damage", "No part was restored, so the model stays as compressed."
 
 
+def format_bytes(n: float) -> str:
+    return f"{n / 1e9:.2f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+
+def size_html(report: dict, repaired: bool) -> str:
+    """What the repair costs, next to what compression saves: the repair must not undo the compression."""
+    size = report.get("size") or {}
+    if not all(size.get(key) for key in ("original", "compressed", "repaired")):
+        return ""  # older runs didn't record it
+    if not repaired:
+        return (f'<div class="by-size">Size of the compressed weights: <b>{format_bytes(size["compressed"])}</b> '
+                f'<span>({size["original"] / size["compressed"]:.1f}× smaller than the original\'s '
+                f'{format_bytes(size["original"])})</span></div>')
+    extra = 100 * (size["repaired"] / size["compressed"] - 1)
+    return (f'<div class="by-size">Size after the repair: <b>{format_bytes(size["repaired"])}</b> '
+            f'<span>(+{extra:.0f}% over the compressed {format_bytes(size["compressed"])}; still '
+            f'<b>{size["original"] / size["repaired"]:.1f}× smaller</b> than the original\'s '
+            f'{format_bytes(size["original"])}). Compressed weights only.</span></div>')
+
+
 def results_html(report: dict) -> str:
     """What the run concluded, the before/after cards, the recovery, the gate verdict and the facts.
     A run that restored nothing shows no "repaired" card: it would only repeat the compressed one."""
@@ -394,6 +417,7 @@ def results_html(report: dict) -> str:
     elif report.get("replayed_from"):
         banner = (f'<div class="by-banner">A recorded real run ({html.escape(str(report["replayed_from"]))}), '
                   'replayed for the demo.</div>')
+    size = size_html(report, repaired=outcome == "repaired")
     budget_note = report.get("budget_note")
     note = report.get("precision_note")
     headline = (f'<div class="by-note-precision">{html.escape(note)}.</div>' if note else "") + (f'<div class="by-outcome by-outcome-{outcome}"><b>{html.escape(OUTCOME_TITLES[outcome])}</b>'
@@ -421,7 +445,7 @@ def results_html(report: dict) -> str:
                   if other else "")
     return (
         f'{banner}{headline}<div class="by-cards">{"".join(cards)}</div>{damage}'
-        f'<div class="by-summary">{recovered}{verdict}'
+        f'<div class="by-summary">{size}{recovered}{verdict}'
         + (f'<ul class="by-reasons">{reasons}</ul>' if reasons else "")
         + f'{other_html}<div class="by-facts">{" · ".join(facts)}</div></div>'
     )
