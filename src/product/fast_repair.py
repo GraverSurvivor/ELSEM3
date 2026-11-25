@@ -13,6 +13,8 @@ questions the scan never saw. It writes, as it goes (sprint contract C4, docs/CO
     DIR/report.json    before/after numbers, recovery with its interval, the kept parts, the verdict
     DIR/patch.json     the repair, in the project's patch format (with the model's part shapes)
     DIR/answers.json   every question's answer from each model, and what the question was used for
+    DIR/scan.jsonl     version 2: every score of the scan, three ways (src/product/decisions.py)
+    DIR/study.jsonl    version 2 with --study: question by question, for choosing the trial score
 
 The scan is Fast Scan (src/attribution/fast_scan.py, contract C2), the greedy search's own trial
 (restore a part to 8-bit, re-ask, objective with the hedging penalty) on the parts that can win:
@@ -46,6 +48,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Protocol
 
+from src.product.decisions import (
+    BALANCED_CAP,
+    OBJECTIVES,
+    SPLITS,
+    ScanLog,
+    TrialScorer,
+    WatchedRegistry,
+    ask,
+    ask_balanced,
+    split_of,
+    study,
+)
+
 # The real models live in torch_backend.py; re-exported here, where the rest of the code looks for them.
 from src.product.torch_backend import (  # noqa: F401
     CHUNK,
@@ -58,6 +73,8 @@ from src.product.torch_backend import (  # noqa: F401
 
 STAGES = ("download", "quantize", "score_original", "score_3bit", "find_damage", "scan", "verify", "report")
 MODES = ("fast", "exact")
+PIPELINES = ("v1", "v2")  # v2 decides on probabilities and three question splits (src/product/decisions.py)
+QUESTIONS = {"v1": 1000, "v2": 2000}  # BBQ questions of each set a run asks, by default
 
 SEARCH_CAP = 300          # flipped questions the scan uses, at most (the Phi-3.5 search sample's size)
 AUTO_SWITCH = 0.25        # automatic precision: 3-bit losing this many right answers -> use 4-bit
@@ -95,12 +112,25 @@ class FastRepairConfig:
     nbits: int = 8          # what a restored part goes back to
     base_nbits: int = 0     # what the whole model is compressed to: 3, 4, or 0 = automatic (see AUTO_SWITCH)
     until_fair: bool = True # after the scan, keep restoring parts until the model is as fair as the original
+    pipeline: str = "v1"    # v1 until v2 has won on the test models
+    objective: str = "soft" # v2: the trial score that decides (decisions.OBJECTIVES)
+    study: int = 0          # v2: also measure this many random parts question by question (compare_objectives)
     max_restore: float = 0.10  # ...but never more than this share of the model's weights
     # (0 = no limit: only the tests and the pinned v1 comparison; the command line and the app refuse it)
 
     def __post_init__(self):
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}, got {self.mode!r}")
+        if self.pipeline not in PIPELINES:
+            raise ValueError(f"pipeline must be one of {PIPELINES}, got {self.pipeline!r}")
+        if self.objective not in OBJECTIVES:
+            raise ValueError(f"objective must be one of {OBJECTIVES}, got {self.objective!r}")
+        if self.pipeline == "v1" and (self.study or self.objective != "soft"):
+            raise ValueError("study and objective belong to version 2: add --pipeline v2")
+        if self.max_rounds < 1 or self.study < 0 or self.batch_size < 1:
+            raise ValueError("max_rounds and batch_size must be at least 1, and study 0 or more")
+        if 0 < self.study < 5:
+            raise ValueError("a study needs at least 5 parts to compare the trial scores")
         if self.base_nbits not in (0, 3, 4):
             raise ValueError(f"base_nbits must be 3, 4 or 0 (automatic), got {self.base_nbits}")
         if self.questions < 100:
@@ -328,10 +358,11 @@ def excess_hedging(stated: list, picks: list[int], hedged_before: dict) -> float
 
 
 def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list, config: FastRepairConfig,
-             events: Events, speed: float, hedged_before: dict | None = None):
+             events: Events, speed: float, hedged_before: dict | None = None, trial_scorer=None, log=None):
     """Fast Scan over the model's parts. A trial scores the share of the flipped questions answered
     "can't tell" again, minus penalty_weight x the hedging it adds on stated-answer questions
     (`excess_hedging`; `hedged_before`: question id -> the compressed model said "can't tell").
+    Version 2 passes a `trial_scorer` (decisions.TrialScorer) instead, and a `log` for every score.
     Returns (result, its config, the planned number of questions). `speed` (questions a second,
     measured while asking the compressed model) estimates the time left until the scan has measured
     its own pace."""
@@ -348,11 +379,22 @@ def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list,
     started = time.monotonic()
 
     hedged_before = hedged_before or {}
+    registry = backend.registry
+    if trial_scorer is not None:
+        registry = WatchedRegistry(backend.registry)
 
     def scorer(sample_ids, probe_ids) -> ScanScore:
         """The trial's objective, plus each question's result (contract C2)."""
         items = [sample_by_id[q] for q in sample_ids]
         stated = [probe_by_id[q] for q in probe_ids]
+        if trial_scorer is not None:
+            picks, probs = ask(backend, "compressed", items)
+            stated_picks, stated_probs = ask(backend, "compressed", stated) if stated else ([], [])
+            asked["questions"] += len(items) + len(stated)
+            scores = trial_scorer.scores(items, picks, probs, stated, stated_picks, stated_probs)
+            if log is not None:
+                log.write(registry, len(items), len(stated), scores)
+            return ScanScore(scores[config.objective], sample_bits(picks, items), probe_bits(stated_picks, stated))
         picks = backend.score("compressed", items)
         stated_picks = backend.score("compressed", stated) if stated else []
         asked["questions"] += len(items) + len(stated)
@@ -383,7 +425,7 @@ def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list,
             message += f" · {minutes_text((total - done) / rate)} left"
         events.progress(done, total, message)
 
-    result = fast_scan(candidates, backend.registry, scorer, list(sample_by_id), list(probe_by_id), cfg,
+    result = fast_scan(candidates, registry, scorer, list(sample_by_id), list(probe_by_id), cfg,
                        on_progress=on_progress)
     return result, cfg, total
 
@@ -397,6 +439,26 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     out = config.out
     events = Events(out)
     n = config.questions
+    v2 = config.pipeline == "v2"
+
+    def split(item) -> str:
+        if v2:
+            return split_of(item.question_id, config.seed)
+        return "search" if in_search_half(item.question_id, config.seed) else "final"
+
+    def searched(items: list) -> list:
+        return [it for it in items if split(it) == "search"]
+
+    def question_everything(view: str, items: list, total: int) -> tuple[list[int], dict]:
+        """(picks, probabilities by id(question); v1 doesn't use the second, and gets none)"""
+        if not v2:
+            return backend.score(view, items, lambda k: events.progress(k, total)), {}
+        picks, probs = ask(backend, view, items, lambda k: events.progress(k, total))
+        return picks, dict(zip(map(id, items), probs))
+
+    def balanced(view: str, probs: dict) -> dict:
+        """v2: the letter-balanced picks on the final check's `rotated` questions."""
+        return dict(zip(map(id, rotated), ask_balanced(backend, view, rotated, [probs[id(it)] for it in rotated])))
 
     with events.stage_of("download", message="fetching the model"):
         if backend is None:  # inside the stage, so "no GPU" is reported like any other failure
@@ -415,7 +477,10 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         ambig, disambig = stratified_sample(ambig_all, n, config.seed), stratified_sample(disambig_all, n, config.seed)
         backend.load_original(config.model_id)
         questions = ambig + disambig
-        picks = backend.score("original", questions, lambda k: events.progress(k, len(questions)))
+        rotated = [it for items in (ambig, disambig) for it in seeded_subset(
+            [it for it in items if split(it) == "final"], BALANCED_CAP, config.seed)] if v2 else []
+        picks, original_probs = question_everything("original", questions, len(questions))
+        balanced_picks = {"original": balanced("original", original_probs)} if v2 else {}
         # Answers are keyed by the question object, not its id: the two question sets are kept
         # apart even if an ambiguous and a stated-answer question ever shared an id.
         original = dict(zip(map(id, questions), picks))
@@ -425,7 +490,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
 
     with events.stage_of("score_3bit", total=2 * n):
         asked_at = time.monotonic()
-        picks = backend.score("compressed", questions, lambda k: events.progress(k, len(questions)))
+        picks, compressed_probs = question_everything("compressed", questions, len(questions))
         speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)  # questions a second, for estimates
         compressed = dict(zip(map(id, questions), picks))
         used_bits, precision_note = (config.base_nbits or 3), ""
@@ -441,9 +506,11 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
             backend.base_nbits = used_bits = 4
             backend.load_compressed(config.model_id)
             asked_at = time.monotonic()
-            picks = backend.score("compressed", questions, lambda k: events.progress(k, len(questions)))
+            picks, compressed_probs = question_everything("compressed", questions, len(questions))
             speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)
             compressed = dict(zip(map(id, questions), picks))
+        if v2:
+            balanced_picks["compressed"] = balanced("compressed", compressed_probs)
         events.done(len(questions), len(questions), (precision_note + " · " if precision_note else "")
                     + f"{len(questions):,} questions · {speed:.1f} a second")
 
@@ -451,18 +518,15 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         safe = [it for it in ambig if original[id(it)] == it.unknown_index]
         flipped = [it for it in safe if compressed[id(it)] == it.stereotype_index]
         knows = [it for it in disambig if original[id(it)] == it.label]
-        search_flipped = seeded_subset([it for it in flipped if in_search_half(it.question_id, config.seed)],
-                                       SEARCH_CAP, config.seed)
+        search_flipped = seeded_subset(searched(flipped), SEARCH_CAP, config.seed)
         # Fair answers the compressed model still gives: a part that breaks them must lose points, or
         # the scan keeps parts that fix a few flipped answers while breaking more fair ones elsewhere
         # (Qwen2.5-3B at 3-bit: "can't tell" on unseen questions fell 32% -> 23% with such parts).
         still_fair = [it for it in safe if compressed[id(it)] == it.unknown_index]
-        search_guard = seeded_subset([it for it in still_fair if in_search_half(it.question_id, config.seed)],
-                                     min(GUARD_CAP, len(search_flipped)), config.seed)
-        probe = seeded_subset([it for it in knows if in_search_half(it.question_id, config.seed)],
-                              PROBE_CAP, config.seed)
-        held_ambig = [it for it in ambig if not in_search_half(it.question_id, config.seed)]
-        held_disambig = [it for it in disambig if not in_search_half(it.question_id, config.seed)]
+        search_guard = seeded_subset(searched(still_fair), min(GUARD_CAP, len(search_flipped)), config.seed)
+        probe = seeded_subset(searched(knows), PROBE_CAP, config.seed)
+        held_ambig = [it for it in ambig if split(it) == "final"]
+        held_disambig = [it for it in disambig if split(it) == "final"]
         outcome, reason = assess(len(ambig), len(safe), len(flipped), len(search_flipped))
         events.done(len(flipped), len(safe), reason if outcome != "repaired" else
                     f"{len(flipped)} of {len(safe)} fair answers flipped to the stereotype · "
@@ -477,16 +541,21 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                          if damaged else f"{len(candidates)} parts"):
         if damaged:
             hedged_before = {it.question_id: compressed[id(it)] == it.unknown_index for it in probe}
-            scan, cfg, total = run_scan(backend, candidates, scan_sample, probe, config, events, speed,
-                                        hedged_before)
+            scorer = TrialScorer(original_probs, compressed_probs, hedged_before, config.penalty_weight) if v2 else None
+            if v2 and config.study:
+                study(backend, candidates, config.study, scan_sample, probe, scorer, config.nbits, config.seed,
+                      out / "study.jsonl", lambda k, n: events.progress(0, total, f"Study for choosing the trial "
+                                                                        f"score: part {k} of {n}", force=True),
+                      screen=(cfg.screen_sample, cfg.screen_probe))
+            scan, cfg, total = run_scan(backend, candidates, scan_sample, probe, config, events, speed, hedged_before,
+                                        scorer, ScanLog(out / "scan.jsonl") if v2 else None)
             kept = list(scan.kept)
             for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
                 if path not in backend.registry.active:
                     backend.registry.commit(path, config.nbits)
             until_fair_info = {}
             if config.until_fair:
-                search_ambig = [it for it in ambig if in_search_half(it.question_id, config.seed)]
-                search_stated = [it for it in disambig if in_search_half(it.question_id, config.seed)]
+                search_ambig, search_stated = searched(ambig), searched(disambig)
                 budget = (config.max_restore * adapter.total_params()
                           if 0 < config.max_restore < 1 else None)
                 until_fair_info = {}
@@ -515,16 +584,23 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
 
     with events.stage_of("verify", total=len(held_ambig) + len(held_disambig)):
         held = held_ambig + held_disambig
-        repaired_picks = (backend.score("repaired", held, lambda k: events.progress(k, len(held))) if kept
-                          else [compressed[id(it)] for it in held])
+        repaired_picks, repaired_probs = (question_everything("repaired", held, len(held)) if kept else
+                                          ([compressed[id(it)] for it in held], {}))
         repaired = dict(zip(map(id, held), repaired_picks))
-        answers = answers_table(ambig, disambig, original, compressed, repaired,
-                                lambda it: "search" if in_search_half(it.question_id, config.seed) else "final")
+        if v2:
+            balanced_picks["repaired"] = balanced("repaired", repaired_probs) if kept else balanced_picks["compressed"]
+        answers = answers_table(ambig, disambig, original, compressed, repaired, split)
         write_json(out / "answers.json", answers)
         report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
                               held_ambig, held_disambig, original, compressed, repaired, started,
                               search=(len(scan_sample), len(probe)), outcome=outcome, reason=reason,
                               used_bits=used_bits, precision_note=precision_note)
+        report["pipeline"] = config.pipeline
+        if v2:
+            report["objective"] = config.objective
+            report["splits"] = {name: {"ambiguous": sum(split(it) == name for it in ambig),
+                                       "stated_answer": sum(split(it) == name for it in disambig)} for name in SPLITS}
+            report["letter_balanced"] = letter_balanced(rotated, balanced_picks, set(map(id, ambig)))
         report["restore_budget"] = config.max_restore if 0 < config.max_restore < 1 else None
         if scan is not None and config.until_fair and (until_fair_info.get("budget_reached")
                                                        or until_fair_info.get("trimmed_scan")):
@@ -581,6 +657,16 @@ def answers_table(ambig: list, disambig: list, original: dict, compressed: dict,
                                       "compressed": compressed[id(item)], "repaired": repaired.get(id(item))}
                    for item in items}
             for name, items in (("ambig", ambig), ("stated", disambig))}
+
+
+def letter_balanced(items: list, picks: dict, ambiguous: set) -> dict:
+    """The cards' numbers on the final check's `rotated` questions, each answered from the average over
+    every rotation of its choices: the same models with the letters' positions evened out."""
+    a = [it for it in items if id(it) in ambiguous]
+    d = [it for it in items if id(it) not in ambiguous]
+    return {"questions": {"ambiguous": len(a), "stated_answer": len(d)},
+            **{view: rates(a, [table[id(it)] for it in a], d, [table[id(it)] for it in d])
+               for view, table in picks.items()}}
 
 
 FINGERPRINT = 50  # questions whose repaired answers identify a repaired model when it is rebuilt
@@ -887,7 +973,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", required=True, help="Hugging Face model id, e.g. Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument("--mode", choices=MODES, default="fast")
-    parser.add_argument("--questions", type=int, default=1000, help="BBQ questions per check (each question set)")
+    parser.add_argument("--pipeline", choices=PIPELINES, default="v1",
+                        help="v2 scores the scan on probabilities and keeps a third question split for choosing")
+    parser.add_argument("--objective", choices=OBJECTIVES, default="soft", help="v2: the trial score that decides")
+    parser.add_argument("--study", type=int, default=0, metavar="N",
+                        help="v2: also measure N random parts question by question, for compare_objectives")
+    parser.add_argument("--max-rounds", type=int, default=8, help="most parts the scan itself keeps")
+    parser.add_argument("--questions", type=int, default=None,
+                        help="BBQ questions per check (each question set); 1000 for v1, 2000 for v2")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -902,10 +995,10 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 < args.max_restore <= MAX_RESTORE:
         parser.error(f"--max-restore must be above 0 and at most {MAX_RESTORE}: a repair that keeps more at 8-bit "
                      "would be bigger than the same model compressed to 4-bit everywhere")
-    config = FastRepairConfig(model_id=args.model, mode=args.mode, questions=args.questions, out=args.out,
-                              seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
-                              base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),
-                              until_fair=not args.no_until_fair, max_restore=args.max_restore)
+    try:
+        config = config_from(args)
+    except ValueError as error:
+        parser.error(str(error))
     print(f"Fast Repair: {config.model_id}, {config.mode} mode, {config.questions} questions -> {config.out}", flush=True)
     try:
         report = run(config)
@@ -914,6 +1007,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"Done in {report['minutes']} min: kept {len(report['kept'])} parts, verdict {report['gate']}", flush=True)
     return 0
+
+
+def config_from(args) -> FastRepairConfig:
+    return FastRepairConfig(model_id=args.model, mode=args.mode, out=args.out, pipeline=args.pipeline,
+                              objective=args.objective, max_rounds=args.max_rounds, study=args.study,
+                              questions=QUESTIONS[args.pipeline] if args.questions is None else args.questions,
+                              seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
+                              base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),
+                              until_fair=not args.no_until_fair, max_restore=args.max_restore)
 
 
 if __name__ == "__main__":

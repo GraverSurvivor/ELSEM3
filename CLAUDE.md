@@ -269,6 +269,14 @@ repair is published with "not measured" instead of numbers. **For developers**: 
 **Version 1 is pinned (Nov 2026):** `tests/product/test_v1_unchanged.py` checks that the pipeline decides exactly
 what `e434817` did on 12 stand-in models (`golden_v1.json`); v2 (accuracy work, docs/CONTRACTS.md C4/C7) is compared
 with it. The real models are in `src/product/torch_backend.py`; each run also writes `answers.json`.
+**Version 2 (`--pipeline v2`, off by default; `src/product/decisions.py`, Nov 2026):** trials are scored on the
+probability of the right answer (`soft`; `kl` and version 1's `count` are computed too and logged to scan.jsonl),
+charged for harm added to stated answers but never rewarded for general repair (the Qwen2.5-3B trap above);
+questions split 40/20/40 into search / validation (reserved for PR A2) / final; compare v1 and v2 only with the
+same `--questions` (the sample depends on it); a trial sees 36+24 questions on a 252-part model, not 60+40; the final check also reports letter-balanced numbers.
+Which score predicts best is measured with `--study N` + `python -m src.product.compare_objectives DIR`. On the
+saved Phi-3.5 runs a 60-question count is ~4 points off, and parts that fix stereotyped flips fix the others
+equally (correlation 0.999), so the damage definition is unchanged.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
 hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see

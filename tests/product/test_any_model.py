@@ -70,6 +70,13 @@ class FairOriginal(TorchBackend):
             return picks
         return super().score(view, items, on_progress)
 
+    def probs(self, view, items, on_progress=None):
+        if view == "original":
+            if on_progress:
+                on_progress(len(items))
+            return [tuple(0.98 if i == it.label else 0.01 for i in range(3)) for it in items]
+        return super().probs(view, items, on_progress)
+
 
 def _questions(context, n=300):
     """Answer positions rotate (as in BBQ), so a model with a fixed favourite letter -- what a tiny random
@@ -114,6 +121,27 @@ def test_the_real_pipeline_runs_on_any_family(model_type, tmp_path, tokenizer, m
         assert list(patch.modules) == report["kept"]
         assert all(path.startswith(report["layers_path"] + ".") for path in report["kept"])
     assert set(report["gguf_names"]) <= set(report["part_types"])
+
+
+@pytest.mark.parametrize("model_type", ["qwen2", "gpt2"])
+def test_version_two_runs_on_real_models(model_type, tmp_path, tokenizer, monkeypatch):
+    """Version 2 with the real backend: real probabilities from a real compressed model and real swaps."""
+    import psutil
+    from transformers import AutoTokenizer
+
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: type("M", (), {"available": 64e9})())
+    folder = _save(model_type, tmp_path, AutoTokenizer.from_pretrained(TOKENIZER, local_files_only=True))
+    config = FastRepairConfig(model_id=str(folder), questions=160, out=tmp_path / "job", pipeline="v2", study=6)
+    report = run(config, FairOriginal(device="cpu"), load_questions=lambda: (_questions("ambig"), _questions("disambig")))
+    assert report["outcome"] in ("repaired", "rejected", "no_gain"), report["outcome_reason"]
+    lines = [json.loads(line) for line in (config.out / "scan.jsonl").read_text().splitlines()]
+    trials = [r for r in lines if r["path"]]
+    assert len(trials) >= len(report["part_types"]) * 2
+    assert len({round(r["soft"], 4) for r in trials}) >= 4  # probabilities tell parts apart
+    assert all(0 <= v <= 1 for v in report["letter_balanced"]["compressed"].values())
+    from src.product.compare_objectives import compare, load
+
+    assert compare(load(config.out / "study.jsonl"), repeats=5)["parts"] == 6
 
 
 def test_a_model_too_big_for_the_machine_is_refused_before_downloading(tmp_path, monkeypatch, tokenizer):
