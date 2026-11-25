@@ -9,7 +9,7 @@ Needs:  pip install transformers hqq accelerate        (serve also needs: pip in
 A GPU is recommended; a CPU works, slowly. Everything runs on your machine: nothing is sent anywhere.
 
 The model is the one the repair was measured on: every linear layer (except the output head) HQQ-quantized
-to the patch's base precision with group size 64, and the patch's parts at 8-bit from the same weights.
+to the patch's base precision with group size 64, and the patch's parts at their own bits from the same weights.
 """
 
 import argparse
@@ -39,22 +39,23 @@ def read_patch(path=PATCH) -> dict:
 
 
 def load_repaired(patch: dict, device: str | None = None):
-    """(model, tokenizer, device): the compressed model with the patch's parts kept at 8-bit."""
+    """(model, tokenizer, device): the compressed model with the patch's parts restored."""
     from hqq.core.quantize import BaseQuantizeConfig, HQQLinear
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    keep, base_bits, repair_bits = set(patch["modules"]), patch["base"]["nbits"], patch["nbits"]
+    base_bits = patch["base"]["nbits"]
+    keep = {path: patch.get("module_bits", {}).get(path, patch["nbits"]) for path in patch["modules"]}
     tokenizer = AutoTokenizer.from_pretrained(patch["model_id"])
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(patch["model_id"], dtype=torch.float16)
-    missing = keep - {name for name, _ in model.named_modules()}
+    missing = set(keep) - {name for name, _ in model.named_modules()}
     if missing:
         raise SystemExit(f"These parts aren't in {patch['model_id']}: {sorted(missing)}. Is this the right model?")
     for name, module in list(model.named_modules()):
         if isinstance(module, torch.nn.Linear) and not name.endswith("lm_head"):
-            bits = repair_bits if name in keep else base_bits
+            bits = keep.get(name, base_bits)
             quantized = HQQLinear(module, BaseQuantizeConfig(nbits=bits, group_size=64),
                                   compute_dtype=torch.float16, device=device)
             parent, _, child = name.rpartition(".")
@@ -166,8 +167,9 @@ def main(argv=None) -> None:
     command = args.command or "chat"
 
     patch = read_patch(args.patch)
+    bits = sorted({patch.get("module_bits", {}).get(path, patch["nbits"]) for path in patch["modules"]})
     print(f"{patch['model_id']}: {patch['base']['nbits']}-bit, with {len(patch['modules'])} parts kept at "
-          f"{patch['nbits']}-bit")
+          f"{' or '.join(f'{b}-bit' for b in bits)}")
     model, tokenizer, device = load_repaired(patch)
     print(f"Repaired model ready ({device}).")
 

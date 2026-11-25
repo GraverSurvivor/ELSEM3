@@ -146,7 +146,7 @@ def test_end_to_end_from_diagnosis_to_a_published_model(tmp_path, data, monkeypa
     app, _ = studio.build_app(backend, data, studio.ByomSetup(JobRunner(tmp_path / "jobs", pipeline="real")), api)
     handlers = {f.fn.__name__: f.fn for f in app.fns.values() if getattr(f, "fn", None) is not None}
     verdict = handlers["ship_switch"](studio.SHIP_YOURS)[0]
-    assert "✅ PASS" in verdict and f"{len(report['kept'])} parts kept at 8-bit" in verdict
+    assert "✅ PASS" in verdict and f"{len(report['kept'])} parts restored" in verdict
     handlers["api_start"](studio.SHIP_YOURS)
     assert api.running and api.reply([{"role": "user", "content": "Hi"}], 4, 0.0)["choices"]
     message, code, token_box = handlers["ship_publish"](studio.SHIP_YOURS, "hf_x", "", True)

@@ -11,7 +11,7 @@ it rebuilds the model from the public checkpoint and this patch, nothing of your
 
 fairgate.py needs only `transformers` and `hqq` (and fastapi/uvicorn to serve). It rebuilds exactly the
 model the repair was measured on: every linear layer (except the output head) HQQ-quantized to the base
-precision with group size 64, and the patch's parts quantized to 8-bit from the same original weights.
+precision with group size 64, and the patch's parts quantized to their own bits from the same original weights.
 """
 
 from __future__ import annotations
@@ -49,11 +49,29 @@ def results_lines(summary: dict) -> list[str]:
     return lines
 
 
+def bits_of(patch: dict) -> dict:
+    """part -> the bits it is restored to (contract C7)"""
+    return {path: patch.get("module_bits", {}).get(path, patch.get("nbits", 8)) for path in patch.get("modules", [])}
+
+
+def bits_text(patch: dict) -> str:
+    """'8-bit', or '4-bit (12) and 8-bit (5)' for a mixed repair"""
+    bits = list(bits_of(patch).values())
+    kinds = sorted(set(bits)) or [patch.get("nbits", 8)]
+    return f"{kinds[0]}-bit" if len(kinds) == 1 else " and ".join(f"{b}-bit ({bits.count(b)})" for b in kinds)
+
+
+def part_lines(patch: dict) -> list[str]:
+    bits = bits_of(patch)
+    mixed = len(set(bits.values())) > 1
+    return [f"- `{path}`" + (f" ({b}-bit)" if mixed else "") for path, b in bits.items()]
+
+
 def headline(patch: dict, summary: dict) -> str:
     model_id = patch.get("model_id", "the model")
     base, parts = patch.get("base", {}).get("nbits", 3), patch.get("modules", [])
     return (f"Compressing {model_id} to {base}-bit made it answer more questions with a stereotype. "
-            f"This repair keeps **{len(parts)} of its parts** at 8-bit (about +{summary.get('memory_mb', 0):.0f} MB), "
+            f"This repair keeps **{len(parts)} of its parts** at {bits_text(patch)} (about +{summary.get('memory_mb', 0):.0f} MB), "
             "which brings fair answers back.")
 
 
@@ -86,12 +104,11 @@ def readme(patch: dict, summary: dict, llama_lines: list[str] | None = None) -> 
     ]
     if llama_lines:
         lines += ["## llama.cpp (optional)", "",
-                  "Add these to `llama-quantize` to keep the same parts at 8-bit in a GGUF model:", "",
+                  "Add these to `llama-quantize` to keep the same parts at the same precision in a GGUF model:", "",
                   "```bash", "llama-quantize \\",
                   *[f"  {line} \\" for line in llama_lines],
                   "  model-f16.gguf model-fairgate.gguf Q3_K_M", "```", ""]
-    lines += ["## Parts kept at 8-bit", "", "In the order the scan chose them:", "",
-              *[f"- `{path}`" for path in patch.get("modules", [])]]
+    lines += [f"## Parts kept at {bits_text(patch)}", "", "In the order the scan chose them:", "", *part_lines(patch)]
     return "\n".join(lines) + "\n"
 
 

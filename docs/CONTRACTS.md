@@ -117,8 +117,16 @@ Added for v2 (Nov 2026):
 `--pipeline v2` (off by default until it has won on the test models; decisions in `src/product/decisions.py`):
 * Three splits by hash: `search` 40%, `validation` 20%, `final` 40%. Version 1 has `search` and `final` halves.
   v2's `final` lies inside v1's when both ran with the same `--questions` and seed (the sample depends on both, and
-  the defaults differ): compare the versions only that way. `answers.json` names the split. `validation` is reserved
-  for choosing between finished repairs (PR A2); nothing reads it yet.
+  the defaults differ): compare the versions only that way. `answers.json` names the split. `validation` is read once,
+  to choose between the finished repairs.
+* The repair is `src/product/strategies.py` (`scan.engine`: `"remeasured"`): every part is measured again, with what
+  is already restored in place, before it is restored. `report.json` adds:
+  * `kept_bits`: `{part: 4 | 8}` (also in patch.json as `module_bits`);
+  * `strategies`: the finished repairs compared on the validation questions, one row each: `name` (`compressed`,
+    `remeasured`, `first_scores` = version 1's ordering, `four_bits` = 4-bit everywhere), `label`, `parts`, `extra_mb`,
+    `ships` (may it be chosen), `chosen`, `distance` (how far from the original; 0 is as fair), `usr`, `srs`,
+    `false_unknown`, `accuracy`;
+  * `advice` (only when 4-bit everywhere did better): a sentence for the screen.
 * `report.json` adds `pipeline` (both versions), and for v2 `objective`, `splits` (questions of each set in each
   split) and `letter_balanced` (the cards' numbers on up to 400 + 400 final questions, each answered from the
   average over every rotation of its choices; `questions`, `original`, `compressed`, `repaired`).
@@ -137,8 +145,8 @@ Three optional keys; a patch without them reads and re-writes byte-identically (
 * `Patch.bits(path)`: what a module is restored to (`module_bits` if listed, else `nbits`). `run_repair --patch`,
   `model_variants` and `check_reproduction` apply it. On a plain dict:
   `{p: patch.get("module_bits", {}).get(p, patch["nbits"]) for p in patch["modules"]}`.
-* The kit, publishing and llama.cpp lines still assume one bit-width: they learn `module_bits` before any
-  pipeline writes it.
+* The kit, the model card, the Studio's Ship screen and the llama.cpp lines use each part's own bits
+  (`repair_kit.bits_of`, `bits_text`, `part_lines`).
 
 ## C5. Studio (Person 3): `src/product/byom.py` (on branch sprint/p3-studio-byom)
 * Reads only `events.jsonl`, `report.json` and `patch.json`; starts the pipeline as a subprocess,

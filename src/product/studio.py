@@ -41,6 +41,7 @@ from pathlib import Path
 
 from src.attribution.patch import load_patch, save_patch
 from src.product.api_server import ApiService, latest_repaired_job, register_routes, snippets, try_it
+from src.product.repair_kit import bits_of
 from src.product.hub_publish import PublishError, default_repo_name, load_code, publish
 from src.product.byom import (
     BITS as BYOM_BITS,
@@ -609,7 +610,7 @@ def your_verdict_md(report: dict) -> str:
              f"{recovery['upper']:.0%})" if recovery.get("point") is not None else "")
     share = (f"{100 * report['restored_share']:.1f}% of the weights, " if report.get("restored_share") else "")
     lines = [f"**{report['model_id']}**, compressed to {report.get('base_nbits', 3)}-bit, with "
-             f"{len(report.get('kept') or [])} parts kept at 8-bit ({share}+{report.get('memory_mb') or 0:.0f} MB).",
+             f"{len(report.get('kept') or [])} parts restored ({share}+{report.get('memory_mb') or 0:.0f} MB).",
              f"FairGate verdict on questions the repair never saw: **{gate}**{found}.",
              *[f"- {failure}" for failure in report.get("gate_failures") or []]]
     if report.get("synthetic") or report.get("replayed_from"):
@@ -1070,7 +1071,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
 
             device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
             # Built layer by layer, so a big model's repair needs no 16-bit copy in memory.
-            keep = {path: patch["nbits"] for path in patch["modules"]}
+            keep = bits_of(patch)
             local = cached_copy(patch["model_id"])
             try:
                 model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep)
@@ -1300,7 +1301,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 with gr.Column(visible=False) as byom_results_box:
                     gr.Markdown("### Results")
                     byom_results = gr.HTML()
-                    gr.Markdown("#### Parts kept at 8-bit")
+                    gr.Markdown("#### Parts restored")
                     byom_grid = gr.HTML()
                     byom_ship_btn = gr.Button("Ship this repair →  (use it now with an API key, or get the "
                                               "fixed model)", variant="primary", visible=False)

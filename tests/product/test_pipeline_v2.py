@@ -23,11 +23,13 @@ from src.product.decisions import (
 )
 from src.product.fast_repair import FastRepairConfig, in_search_half, run
 from tests.product import test_fast_repair as t
+from tests.product.test_strategies import Stack
 
 AMBIG, DISAMBIG = t._items("ambig", 1200), t._items("disambig", 1200)
 
 
 def _v2(tmp_path, backend, **kwargs):
+    backend.registry = Stack()
     config = FastRepairConfig(model_id="Qwen/Qwen2.5-3B-Instruct", questions=kwargs.pop("questions", 800),
                               out=tmp_path / "job", pipeline="v2", **kwargs)
     return run(config, backend, load_questions=lambda: (AMBIG, DISAMBIG)), config.out
@@ -176,15 +178,18 @@ def test_version_two_finds_the_repair_with_every_score(tmp_path, objective):
 
 
 def test_no_decision_reads_the_final_or_validation_questions(tmp_path):
-    """Between the first full pass over the compressed model and the final check, every question asked
-    belongs to the search split."""
+    """Between the first full pass over the compressed model and the final check, every question asked to find
+    the parts belongs to the search split; the finished repairs are compared on validation; none is final."""
     backend = t.FakeBackend()
     _v2(tmp_path, backend)
     views = [view for view, _, _ in backend.calls]
     first_repaired = views.index("repaired")
     deciding = [ids for view, ids, restored in backend.calls[:first_repaired] if view == "compressed" and restored]
     assert len(deciding) > 28
-    assert {split_of(q, 0) for ids in deciding for q in ids} == {"search"}
+    assert {split_of(q, 0) for ids in deciding for q in ids} == {"search", "validation"}
+    last_search = max(k for k, ids in enumerate(deciding) if {split_of(q, 0) for q in ids} == {"search"})
+    first_validation = min(k for k, ids in enumerate(deciding) if "validation" in {split_of(q, 0) for q in ids})
+    assert last_search < first_validation  # chosen first, compared afterwards
     final = {q for view, ids, _ in backend.calls[first_repaired:] for q in ids}
     assert {split_of(q, 0) for q in final} == {"final"}  # and the check reads only the final split
 
@@ -206,7 +211,11 @@ def test_version_two_runs_every_stand_in_and_never_ships_a_worse_model(tmp_path,
     assert report["outcome"] in fast_repair.OUTCOMES
     if report["patch"]:
         assert report["repaired"]["usr"] > report["compressed"]["usr"]
-        assert report["restored_share"] <= 0.10 + 1e-9
+        from src.product.fast_repair import REAL_BITS
+
+        adapter, base = t.adapter_for(t.TINY), report["base_nbits"]
+        used = sum(adapter.params(p) * (REAL_BITS[b] - REAL_BITS[base]) for p, b in report["kept_bits"].items())
+        assert used <= 0.10 * adapter.total_params() * (REAL_BITS[8] - REAL_BITS[base]) + 1
 
 
 def test_version_one_has_none_of_this(tmp_path):
@@ -332,6 +341,6 @@ def test_a_run_with_a_study_writes_it_and_still_repairs(tmp_path):
     report, out = _v2(tmp_path, t.FakeBackend(), study=10)
     lines = (out / "study.jsonl").read_text().splitlines()
     assert len(lines) == 11 and report["outcome"] == "repaired"
-    assert json.loads(lines[0])["screen"] == [report["scan"]["screen_sample"], report["scan"]["screen_probe"]]
+    assert json.loads(lines[0])["screen"] == [60, 40]
     events = [json.loads(line) for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert any("Study for choosing" in e["message"] for e in events)
