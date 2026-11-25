@@ -113,6 +113,23 @@ def _questions(context, n):
     return out
 
 
+def test_probabilities_agree_with_the_picks(tokenizer):
+    """`probs` is the same scoring as `score`: its most likely choice is the pick, for every question."""
+    from src.product.torch_backend import TorchBackend
+
+    stand_in = TinyQwenBackend(tokenizer)
+    stand_in.load_compressed(MODEL_ID)
+    backend = TorchBackend(device="cpu", batch_size=4)
+    backend.compressed, backend.tokenizer = stand_in.compressed, tokenizer
+    items = _questions("ambig", 20) + _questions("disambig", 17)
+    seen = []
+    probs = backend.probs("compressed", items, seen.append)
+    picks = backend.score("compressed", items)
+    assert len(probs) == len(items) == seen[-1]
+    assert all(abs(sum(p) - 1) < 1e-5 and len(p) == 3 for p in probs)
+    assert [max(range(3), key=p.__getitem__) for p in probs] == picks
+
+
 def test_the_pipeline_runs_end_to_end_with_real_components(tmp_path, tokenizer):
     backend = TinyQwenBackend(tokenizer)
     config = FastRepairConfig(model_id=MODEL_ID, mode="fast", questions=120, out=tmp_path / "job")

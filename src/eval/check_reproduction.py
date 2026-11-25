@@ -119,7 +119,7 @@ def main() -> None:
     patch = load_patch(args.patch)
     registry = SwapRegistry(model, CheckpointWeightSource(MODEL_ID), device="cuda")
     for path in patch.modules:
-        registry.commit(path, patch.nbits)
+        registry.commit(path, patch.bits(path))
     results["hqq_repaired"] = agreement(saved["hqq_repaired"], score(model, tokenizer, "3-bit + patch"))
     del model, registry
     torch.cuda.empty_cache()

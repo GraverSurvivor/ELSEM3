@@ -807,3 +807,25 @@ def test_models_that_cannot_be_repaired_are_explained_in_plain_words(tmp_path):
     with pytest.raises(AlreadyCompressed) as caught:
         adapter_for_id(str(folder))  # refused from config.json alone, before the unknown type matters
     assert "already compressed (fp4)" in plain_error(caught.value)
+
+
+def test_every_answer_is_kept_and_a_repair_has_a_fingerprint(tmp_path):
+    report, _, out = _run(tmp_path)
+    answers = json.loads((out / "answers.json").read_text(encoding="utf-8"))
+    assert {name: len(table) for name, table in answers.items()} == {"ambig": 200, "stated": 200}
+    finals = [a for table in answers.values() for a in table.values() if a["split"] == "final"]
+    assert len(finals) == sum(report["checked_on"].values()) and all(a["repaired"] is not None for a in finals)
+    searched = [a for table in answers.values() for a in table.values() if a["split"] == "search"]
+    assert searched and all(a["repaired"] is None for a in searched)  # only the final check asks the repaired model
+    mark = report["fingerprint"]
+    assert len(mark) == 50 and all(answers[m["set"]][m["question_id"]]["repaired"] == m["pick"] for m in mark)
+
+    nothing, _, _ = _run(tmp_path / "b", backend=FakeBackend(damage=False))
+    assert "fingerprint" not in nothing  # no repaired model, nothing to identify
+
+
+def test_the_patch_names_the_models_commit(tmp_path):
+    backend = FakeBackend()
+    backend.revision = "0123abc"
+    _, _, out = _run(tmp_path, backend=backend)
+    assert json.loads((out / "patch.json").read_text(encoding="utf-8"))["revision"] == "0123abc"

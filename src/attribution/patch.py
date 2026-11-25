@@ -19,6 +19,12 @@ them.
 
 `params` is computed from Phi-3.5-mini's fixed module shapes rather than a loaded model, so
 patches -- including budget-matched baselines -- can be built and checked on a CPU.
+
+Version 2 (contract C7) adds three optional keys; a patch without them reads and writes as before:
+
+    "module_bits": {"model.layers.1.self_attn.qkv_proj": 4}    # modules not restored to `nbits`
+    "revision": "<commit of the model on Hugging Face>"        # so it can be rebuilt exactly
+    "prompt_style": "examples"                                 # how the questions were asked
 """
 
 from __future__ import annotations
@@ -41,6 +47,8 @@ N_LAYERS = 32
 
 DEFAULT_BASE = {"method": "hqq", "nbits": 3, "group_size": 64, "compute_dtype": "fp16"}
 KINDS = ("search", "baseline", "prefix", "manual")
+PROMPT_STYLES = ("plain", "examples")
+OPTIONAL_KEYS = ("part_shapes", "n_layers", "module_bits", "revision", "prompt_style")  # left out when unset
 
 
 def module_suffix(path: str) -> str:
@@ -102,6 +110,9 @@ class Patch:
     # None means Phi-3.5's fixed shapes, so every existing patch file reads and writes unchanged.
     part_shapes: dict | None = None
     n_layers: int | None = None
+    module_bits: dict | None = None   # module -> bits, for modules not restored to `nbits`
+    revision: str | None = None       # the model's commit on Hugging Face
+    prompt_style: str | None = None   # None = "plain"
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -117,9 +128,23 @@ class Patch:
                 f"patch {self.name!r} restores to {self.nbits}-bit, which isn't above the base "
                 f"model's {self.base.get('nbits')}-bit -- that would not restore anything"
             )
+        for path, bits in (self.module_bits or {}).items():
+            if path not in self.modules:
+                raise ValueError(f"patch {self.name!r} gives bits for {path!r}, which it doesn't restore")
+            if not isinstance(bits, int) or not self.base.get("nbits", 0) < bits <= 16:
+                raise ValueError(f"patch {self.name!r} restores {path!r} to {bits!r}-bit, which isn't above the "
+                                 f"base model's {self.base.get('nbits')}-bit and at most 16")
+        if self.prompt_style not in (None, *PROMPT_STYLES):
+            raise ValueError(f"unknown prompt style {self.prompt_style!r}; expected one of {PROMPT_STYLES}")
         kind = self.source.get("kind")
         if kind is not None and kind not in KINDS:
             raise ValueError(f"unknown patch source kind {kind!r}; expected one of {KINDS}")
+
+    def bits(self, path: str) -> int:
+        """What `path` is restored to."""
+        if path not in self.modules:
+            raise KeyError(f"patch {self.name!r} doesn't restore {path!r}")
+        return (self.module_bits or {}).get(path, self.nbits)
 
     @property
     def params(self) -> int:
@@ -142,12 +167,15 @@ class Patch:
             model_id=self.model_id,
             part_shapes=self.part_shapes,
             n_layers=self.n_layers,
+            module_bits={p: b for p, b in (self.module_bits or {}).items() if p in self.modules[:k]} or None,
+            revision=self.revision,
+            prompt_style=self.prompt_style,
         )
 
     def to_dict(self) -> dict:
         data = asdict(self)
         data["modules"] = list(self.modules)
-        for key in ("part_shapes", "n_layers"):  # Phi-3.5 patches keep their original format
+        for key in OPTIONAL_KEYS:  # patches without them keep their original format
             if data[key] is None:
                 del data[key]
         if self.part_shapes is not None:
@@ -166,6 +194,9 @@ def patch_from_dict(data: dict) -> Patch:
         model_id=data.get("model_id", MODEL_ID),
         part_shapes={k: tuple(v) for k, v in data["part_shapes"].items()} if data.get("part_shapes") else None,
         n_layers=int(data["n_layers"]) if data.get("n_layers") else None,
+        module_bits={path: int(bits) for path, bits in data["module_bits"].items()} if data.get("module_bits") else None,
+        revision=data.get("revision"),
+        prompt_style=data.get("prompt_style"),
     )
     if "params" in data and int(data["params"]) != patch.params:
         raise ValueError(
