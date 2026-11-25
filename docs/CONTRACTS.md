@@ -114,6 +114,18 @@ Added for v2 (Nov 2026):
 * The real models moved to `src/product/torch_backend.py` (re-exported from `fast_repair`); `TorchBackend.probs`
   returns every choice's probability and `.revision` is the model's commit on Hugging Face.
 
+`--pipeline v2` (off by default until it has won on the test models; decisions in `src/product/decisions.py`):
+* Three splits by hash: `search` 40%, `validation` 20%, `final` 40%. Version 1 has `search` and `final` halves.
+  v2's `final` lies inside v1's, so the two are compared on the same questions. `answers.json` names the split.
+* `report.json` adds `pipeline` (both versions), and for v2 `objective`, `splits` (questions of each set in each
+  split) and `letter_balanced` (the cards' numbers on up to 400 + 400 final questions, each answered from the
+  average over every rotation of its choices; `questions`, `original`, `compressed`, `repaired`).
+* `<dir>/scan.jsonl`: one line per score of the scan, `{"path": part being tried or null, "kept": [...], "sample",
+  "stated", "soft", "kl", "count"}`. `--objective` says which decides (default `soft`).
+* `--study N` also writes `<dir>/study.jsonl` (N random parts, question by question);
+  `python -m src.product.compare_objectives <dir>` turns it into `objectives.json`.
+* 2,000 questions of each set by default (v1: 1,000).
+
 ## C7. Patch, version 2: `src/attribution/patch.py`
 Three optional keys; a patch without them reads and re-writes byte-identically (tested on every committed patch):
 ```json
