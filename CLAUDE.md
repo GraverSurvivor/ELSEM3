@@ -272,7 +272,8 @@ with it. The real models are in `src/product/torch_backend.py`; each run also wr
 **Version 2 (`--pipeline v2`, off by default; `src/product/decisions.py`, Nov 2026):** trials are scored on the
 probability of the right answer (`soft`; `kl` and version 1's `count` are computed too and logged to scan.jsonl),
 charged for harm added to stated answers but never rewarded for general repair (the Qwen2.5-3B trap above);
-questions split 40/20/40 into search / validation / final; the final check also reports letter-balanced numbers.
+questions split 40/20/40 into search / validation (reserved for PR A2) / final; compare v1 and v2 only with the
+same `--questions` (the sample depends on it); a trial sees 36+24 questions on a 252-part model, not 60+40; the final check also reports letter-balanced numbers.
 Which score predicts best is measured with `--study N` + `python -m src.product.compare_objectives DIR`. On the
 saved Phi-3.5 runs a 60-question count is ~4 points off, and parts that fix stereotyped flips fix the others
 equally (correlation 0.999), so the damage definition is unchanged.

@@ -22,7 +22,8 @@ from pathlib import Path
 
 from src.product.decisions import OBJECTIVES, combine, mean
 
-SIZES = ((36, 24), (60, 40), (120, 80))  # (sample, stated-answer) questions a trial sees; the scan's is the middle
+SIZES = ((36, 24), (60, 40), (120, 80))  # (sample, stated-answer) questions a trial sees
+DEFAULT_SCREEN, DEFAULT_WEIGHT = (60, 40), 1.0  # for a study that didn't record the scan's own
 
 
 def load(path: Path) -> list[dict]:
@@ -33,9 +34,11 @@ def load(path: Path) -> list[dict]:
 
 
 def gains(records: list[dict], sample: list[int], stated: list[int]) -> dict[str, list[float]]:
-    """Each score's gain for every part, on these questions."""
+    """Each score's gain for every part, on these questions, with the run's own penalty weight."""
+    weight = records[0].get("weight", DEFAULT_WEIGHT)
+
     def scores(record):
-        return combine([record["sample"][i] for i in sample], [record["stated"][i] for i in stated])
+        return combine([record["sample"][i] for i in sample], [record["stated"][i] for i in stated], weight)
 
     start = scores(records[0])
     table = [scores(r) for r in records[1:]]
@@ -49,12 +52,21 @@ def rank_correlation(a: list[float], b: list[float]) -> float:
     return 0.0 if value != value else float(value)  # a constant ranking says nothing
 
 
-def compare(records: list[dict], sizes=SIZES, repeats: int = 200, seed: int = 0) -> dict:
+def compare(records: list[dict], sizes=SIZES, repeats: int = 200, seed: int = 0,
+            screen: tuple[int, int] | None = None) -> dict:
+    """`best` is judged at `screen`, the number of questions a trial of this model's scan really sees (it
+    depends on how many parts the model has: 60+40 for Phi-3.5, 36+24 for Qwen2.5-3B)."""
     rng = random.Random(seed)
     n_sample, n_stated = len(records[0]["sample"]), len(records[0]["stated"])
-    out = {"parts": len(records) - 1, "sample": n_sample, "stated": n_stated, "repeats": repeats, "sizes": {}}
-    for want_sample, want_stated in sizes:
-        k, m = min(want_sample, n_sample // 2), min(want_stated, n_stated // 2)
+    screen = tuple(screen or records[0].get("screen") or DEFAULT_SCREEN)
+
+    def fit(size) -> tuple[int, int]:  # never more than half: the truth needs questions of its own
+        return min(size[0], n_sample // 2), min(size[1], n_stated // 2)
+
+    own = fit(screen)
+    out = {"parts": len(records) - 1, "sample": n_sample, "stated": n_stated, "repeats": repeats,
+           "screen": list(own), "weight": records[0].get("weight", DEFAULT_WEIGHT), "sizes": {}}
+    for k, m in sorted({own, *map(fit, sizes)}):
         found = {name: {"rank_correlation": [], "regret": []} for name in OBJECTIVES}
         for _ in range(repeats):
             seen, seen_stated = set(rng.sample(range(n_sample), k)), set(rng.sample(range(n_stated), m))
@@ -66,8 +78,8 @@ def compare(records: list[dict], sizes=SIZES, repeats: int = 200, seed: int = 0)
                 found[name]["regret"].append(max(truth) - truth[favourite])
         out["sizes"][f"{k}+{m}"] = {name: {key: round(mean(values), 4) for key, values in result.items()}
                                     for name, result in found.items()}
-    middle = out["sizes"][list(out["sizes"])[len(out["sizes"]) // 2]]
-    out["best"] = max(OBJECTIVES, key=lambda name: middle[name]["rank_correlation"])
+    at_own = out["sizes"][f"{own[0]}+{own[1]}"]
+    out["best"] = max(OBJECTIVES, key=lambda name: at_own[name]["rank_correlation"])
     return out
 
 
@@ -75,15 +87,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("folder", type=Path, help="a run's folder with study.jsonl")
     parser.add_argument("--repeats", type=int, default=200)
+    parser.add_argument("--screen", type=int, nargs=2, metavar=("SAMPLE", "STATED"),
+                        help="questions a trial of the scan sees; default: what the run recorded")
     args = parser.parse_args(argv)
-    result = compare(load(args.folder / "study.jsonl"), repeats=args.repeats)
+    path = args.folder / "study.jsonl"
+    if not path.exists():
+        parser.error(f"{path} doesn't exist: run fast_repair with --pipeline v2 --study N first")
+    result = compare(load(path), repeats=args.repeats, screen=args.screen)
     (args.folder / "objectives.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"{result['parts']} random parts, {result['repeats']} random question sets of each size")
     print(f"{'questions':>10}  {'score':6}  {'rank correlation':>16}  {'regret (points)':>15}")
     for size, table in result["sizes"].items():
         for name in OBJECTIVES:
             print(f"{size:>10}  {name:6}  {table[name]['rank_correlation']:16.3f}  {100 * table[name]['regret']:15.2f}")
-    print(f"Best at the scan's own size: {result['best']}")
+    print(f"Best at the scan's own size ({result['screen'][0]}+{result['screen'][1]} questions): {result['best']}")
     return 0
 
 

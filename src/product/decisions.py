@@ -3,11 +3,12 @@
 Splits. Every question belongs to one, fixed by a hash of its id and the seed:
 
     search      40%   finding the parts
-    validation  20%   choosing between finished repairs
+    validation  20%   choosing between finished repairs (reserved: the re-measured repair, PR A2, uses it)
     final       40%   the numbers and the verdict; no decision ever reads them
 
 `search` lies inside version 1's search half and `final` inside its held-out half, so the two versions
-can be compared on the same `final` questions.
+can be compared on the same `final` questions when both are run with the same `--questions` and seed (the
+sample depends on both; their defaults differ).
 
 Trial scores. Version 1 counts right answers on about 60 questions, so a part's gain moves in steps of
 a point or two, and a part that moves "can't tell" from 10% to 45% without winning counts as nothing.
@@ -168,9 +169,10 @@ class ScanLog:
 
 
 def study(backend, candidates: list[str], n: int, sample: list, stated: list, scorer: TrialScorer, nbits: int,
-          seed: int, path: Path, on_progress=None) -> list[str]:
+          seed: int, path: Path, on_progress=None, screen: tuple[int, int] = (60, 40)) -> list[str]:
     """For choosing the trial score (src/product/compare_objectives.py): every question's result for `n`
-    parts restored one at a time, and for the model with none (path null), one line each.
+    parts restored one at a time, and for the model with none (path null), one line each. The first line
+    also records how the scan itself scores: how many questions a trial sees (`screen`) and the weight.
 
     The parts are chosen at random, not by any score, so the comparison favours none of them."""
     import random
@@ -179,7 +181,8 @@ def study(backend, candidates: list[str], n: int, sample: list, stated: list, sc
 
     def measure(name) -> str:
         rows = scorer.rows(sample, *ask(backend, "compressed", sample), stated, *ask(backend, "compressed", stated))
-        return json.dumps({"path": name, **{key: [[r[0], round(r[1], 4), round(r[2], 4)] for r in value]
+        head = {"screen": list(screen), "weight": scorer.weight} if name is None else {}
+        return json.dumps({"path": name, **head, **{key: [[r[0], round(r[1], 4), round(r[2], 4)] for r in value]
                                             for key, value in zip(("sample", "stated"), rows)}}) + "\n"
 
     with Path(path).open("w", encoding="utf-8") as handle:

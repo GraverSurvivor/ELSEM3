@@ -272,6 +272,7 @@ def test_the_study_measures_random_parts_and_compares_the_scores_fairly(tmp_path
 
     records = compare_objectives.load(tmp_path / "study.jsonl")
     assert records[0]["path"] is None and [r["path"] for r in records[1:]] == parts
+    assert records[0]["screen"] == [60, 40] and records[0]["weight"] == 1.0 and "screen" not in records[1]
     result = compare_objectives.compare(records, repeats=30)
     assert list(result["sizes"]) == ["36+24", "60+40", "120+75"]  # never more than half of the questions
     middle = result["sizes"]["60+40"]
@@ -286,9 +287,51 @@ def test_the_study_measures_random_parts_and_compares_the_scores_fairly(tmp_path
         compare_objectives.load(tmp_path / "bad.jsonl")
 
 
+def test_the_best_score_is_judged_at_the_scans_own_size_and_weight(tmp_path):
+    """Qwen2.5-3B has 252 parts, so a trial of its scan sees 36+24 questions, not Phi-3.5's 60+40."""
+    from src.product.compare_objectives import compare, gains
+
+    def part(path, small, large):  # question i: the first 40 sample questions say one thing, the rest another
+        return {"path": path, "sample": [[0, small if i < 40 else large, 1.0] for i in range(400)],
+                "stated": [[int(i % 2 == 0 and path is not None), 0.0, 0.0] for i in range(200)]}
+
+    records = [part(None, 0.1, 0.1)] + [part(f"p{k}", 0.1 + k / 50, 0.1 + k / 50) for k in range(8)]
+    records[0].update(screen=[36, 24], weight=2.0)
+    result = compare(records, repeats=5)
+    assert result["screen"] == [36, 24] and result["weight"] == 2.0 and "36+24" in result["sizes"]
+    assert gains(records, [0], [0])["count"][0] == -2.0  # hedging costs the run's weight, not 1
+    odd = compare(records, repeats=5, screen=(44, 29))  # 196 parts: a size of its own
+    assert odd["screen"] == [44, 29] and "44+29" in odd["sizes"]
+    old = [{k: v for k, v in r.items() if k not in ("screen", "weight")} for r in records]
+    assert compare(old, repeats=2)["screen"] == [60, 40]  # a study from before it was recorded
+
+
+def test_settings_that_would_do_nothing_or_fail_hours_later_are_refused_at_once(tmp_path, capsys):
+    for bad in ({"study": 60}, {"objective": "kl"}, {"max_rounds": 0}, {"batch_size": 0},
+                {"pipeline": "v2", "study": -1}, {"pipeline": "v2", "study": 3}):
+        with pytest.raises(ValueError):
+            FastRepairConfig(model_id="x/y", **bad)
+    with pytest.raises(SystemExit):
+        fast_repair.main(["--model", "x/y", "--out", str(tmp_path), "--study", "60"])
+    assert "add --pipeline v2" in capsys.readouterr().err
+    from src.product import compare_objectives
+
+    with pytest.raises(SystemExit):
+        compare_objectives.main([str(tmp_path)])
+    assert "--study N first" in capsys.readouterr().err
+
+
+def test_the_versions_share_their_final_questions_when_asked_for_the_same_number():
+    items = t._items("ambig", 3000)
+    sample = {it.question_id for it in fast_repair.stratified_sample(items, 1200, 0)}
+    final = {q for q in sample if split_of(q, 0) == "final"}
+    assert final and final <= {q for q in sample if not in_search_half(q, 0)}
+
+
 def test_a_run_with_a_study_writes_it_and_still_repairs(tmp_path):
     report, out = _v2(tmp_path, t.FakeBackend(), study=10)
     lines = (out / "study.jsonl").read_text().splitlines()
     assert len(lines) == 11 and report["outcome"] == "repaired"
+    assert json.loads(lines[0])["screen"] == [report["scan"]["screen_sample"], report["scan"]["screen_probe"]]
     events = [json.loads(line) for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert any("Study for choosing" in e["message"] for e in events)

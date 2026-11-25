@@ -54,6 +54,7 @@ from src.product.decisions import (
     SPLITS,
     ScanLog,
     TrialScorer,
+    WatchedRegistry,
     ask,
     ask_balanced,
     split_of,
@@ -124,6 +125,12 @@ class FastRepairConfig:
             raise ValueError(f"pipeline must be one of {PIPELINES}, got {self.pipeline!r}")
         if self.objective not in OBJECTIVES:
             raise ValueError(f"objective must be one of {OBJECTIVES}, got {self.objective!r}")
+        if self.pipeline == "v1" and (self.study or self.objective != "soft"):
+            raise ValueError("study and objective belong to version 2: add --pipeline v2")
+        if self.max_rounds < 1 or self.study < 0 or self.batch_size < 1:
+            raise ValueError("max_rounds and batch_size must be at least 1, and study 0 or more")
+        if 0 < self.study < 5:
+            raise ValueError("a study needs at least 5 parts to compare the trial scores")
         if self.base_nbits not in (0, 3, 4):
             raise ValueError(f"base_nbits must be 3, 4 or 0 (automatic), got {self.base_nbits}")
         if self.questions < 100:
@@ -374,8 +381,6 @@ def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list,
     hedged_before = hedged_before or {}
     registry = backend.registry
     if trial_scorer is not None:
-        from src.product.decisions import WatchedRegistry, ask
-
         registry = WatchedRegistry(backend.registry)
 
     def scorer(sample_ids, probe_ids) -> ScanScore:
@@ -540,7 +545,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
             if v2 and config.study:
                 study(backend, candidates, config.study, scan_sample, probe, scorer, config.nbits, config.seed,
                       out / "study.jsonl", lambda k, n: events.progress(0, total, f"Study for choosing the trial "
-                                                                        f"score: part {k} of {n}", force=True))
+                                                                        f"score: part {k} of {n}", force=True),
+                      screen=(cfg.screen_sample, cfg.screen_probe))
             scan, cfg, total = run_scan(backend, candidates, scan_sample, probe, config, events, speed, hedged_before,
                                         scorer, ScanLog(out / "scan.jsonl") if v2 else None)
             kept = list(scan.kept)
@@ -989,12 +995,10 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 < args.max_restore <= MAX_RESTORE:
         parser.error(f"--max-restore must be above 0 and at most {MAX_RESTORE}: a repair that keeps more at 8-bit "
                      "would be bigger than the same model compressed to 4-bit everywhere")
-    config = FastRepairConfig(model_id=args.model, mode=args.mode, out=args.out, pipeline=args.pipeline,
-                              objective=args.objective, max_rounds=args.max_rounds, study=args.study,
-                              questions=QUESTIONS[args.pipeline] if args.questions is None else args.questions,
-                              seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
-                              base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),
-                              until_fair=not args.no_until_fair, max_restore=args.max_restore)
+    try:
+        config = config_from(args)
+    except ValueError as error:
+        parser.error(str(error))
     print(f"Fast Repair: {config.model_id}, {config.mode} mode, {config.questions} questions -> {config.out}", flush=True)
     try:
         report = run(config)
@@ -1003,6 +1007,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"Done in {report['minutes']} min: kept {len(report['kept'])} parts, verdict {report['gate']}", flush=True)
     return 0
+
+
+def config_from(args) -> FastRepairConfig:
+    return FastRepairConfig(model_id=args.model, mode=args.mode, out=args.out, pipeline=args.pipeline,
+                              objective=args.objective, max_rounds=args.max_rounds, study=args.study,
+                              questions=QUESTIONS[args.pipeline] if args.questions is None else args.questions,
+                              seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
+                              base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),
+                              until_fair=not args.no_until_fair, max_restore=args.max_restore)
 
 
 if __name__ == "__main__":
