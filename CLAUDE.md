@@ -230,8 +230,9 @@ questions are as fair as the original's ("can't tell" within 1 point, stereotype
 restored is the 8-bit model. Decided on the search half only, so the FairGate verdict on the held-out half
 is genuine; `restored_share` reports the cost. The limits are the verdict's (2 / 1 points), and when the
 last (doubling) batch makes the model fair, `shortest_fair_prefix` binary-searches it down to the parts needed.
-**Repair budget** (`max_restore`, default 10% of the model's weights; tab 5 "Repair budget": 5% / 10% / no
-limit; CLI `--max-restore`): covers the whole repair (the scan's picks too, trimmed from the least valuable).
+**Repair budget** (`max_restore`, default 10% of the model's weights; tab 5 "Repair budget": 5% / 10% /
+15%; CLI `--max-restore`, at most `MAX_RESTORE` 0.15: 15% at 8-bit is +19% on a 3-bit model, just under 4-bit
+everywhere's +20%, so a repair never undoes the compression; results show the size next to the original's): covers the whole repair (the scan's picks too, trimmed from the least valuable).
 Repair-until-fair ranks parts by round-1 gain per weight (small effective attention parts before big MLP
 ones) and stops at the budget; `budget_note` then says the result is the most fairness that budget buys.
 Prompted by a Qwen2.5-3B run keeping ~65 of 252 parts (~19% of weights) before trimming and the budget. It also requires "can't tell" on stated-answer questions to
