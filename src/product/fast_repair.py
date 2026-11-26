@@ -16,6 +16,7 @@ questions the scan never saw. It writes, as it goes (sprint contract C4, docs/CO
     DIR/scan.jsonl     version 2: every score of the scan, three ways (src/product/decisions.py; the repair
                        itself is src/product/strategies.py)
     DIR/study.jsonl    version 2 with --study: question by question, for choosing the trial score
+    DIR/checkpoint.json, first_look_*.json   version 2: what `--resume` reuses after a stopped run
 
 The scan is Fast Scan (src/attribution/fast_scan.py, contract C2), the greedy search's own trial
 (restore a part to 8-bit, re-ask, objective with the hedging penalty) on the parts that can win:
@@ -60,6 +61,7 @@ from src.product.decisions import (
     split_of,
     study,
 )
+from src.product.strategies import scaled_screen
 
 # The real models live in torch_backend.py; re-exported here, where the rest of the code looks for them.
 from src.product.torch_backend import (  # noqa: F401
@@ -115,6 +117,7 @@ class FastRepairConfig:
     pipeline: str = "v1"    # v1 until v2 has won on the test models
     objective: str = "soft" # v2: the trial score that decides (decisions.OBJECTIVES)
     study: int = 0          # v2: also measure this many random parts question by question (compare_objectives)
+    resume: bool = False    # v2: reuse the answers (and first look) a stopped run in the same folder saved
     max_restore: float = 0.10  # ...but never more than this share of the model's weights
     # (0 = no limit: only the tests and the pinned v1 comparison; the command line and the app refuse it)
 
@@ -125,8 +128,10 @@ class FastRepairConfig:
             raise ValueError(f"pipeline must be one of {PIPELINES}, got {self.pipeline!r}")
         if self.objective not in OBJECTIVES:
             raise ValueError(f"objective must be one of {OBJECTIVES}, got {self.objective!r}")
-        if self.pipeline == "v1" and (self.study or self.objective != "soft"):
-            raise ValueError("study and objective belong to version 2: add --pipeline v2")
+        if self.pipeline == "v1" and (self.study or self.objective != "soft" or self.resume):
+            raise ValueError("study, objective and resume belong to version 2: add --pipeline v2")
+        if self.pipeline == "v2" and not self.until_fair:
+            raise ValueError("--no-until-fair belongs to version 1: version 2's repair is a different search")
         if self.max_rounds < 1 or self.study < 0 or self.batch_size < 1:
             raise ValueError("max_rounds and batch_size must be at least 1, and study 0 or more")
         if 0 < self.study < 5:
@@ -457,52 +462,129 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         events.done(message=f"{message} · {adapter.arch}, {adapter.n_layers} layers, {len(adapter.candidates())} parts"
                     + (f" · {size}" if size else ""))
 
-    with events.stage_of("quantize", message=f"HQQ {config.base_nbits or 3}-bit"):
+    saved = load_checkpoint(out, config) if config.resume else None
+    if saved is not None:  # a stopped run's answers: the compressed model is built as it was then
+        backend.base_nbits = saved["used_bits"]
+        if saved["dtype"] != "fp16":
+            backend.use_dtype(saved["dtype"])
+
+    with events.stage_of("quantize", message=f"HQQ {getattr(backend, 'base_nbits', config.base_nbits) or 3}-bit"):
         events.done(message=backend.load_compressed(config.model_id))
+
+    notes: list[str] = []  # what the run did differently, said on the card in the order it happened
+    prompt_style = "plain"
+
+    def final_rotated() -> list:
+        return [it for items in (ambig, disambig) for it in seeded_subset(
+            [it for it in items if split(it) == "final"], BALANCED_CAP, config.seed)] if v2 else []
+
+    def ask_original() -> tuple[list, dict, dict]:
+        picks, probs = question_everything("original", questions, len(questions))
+        return picks, probs, ({"original": balanced("original", probs)} if v2 else {})
+
+    def precision_retry(error: PrecisionError) -> None:
+        """v2: a model whose numbers overflow fp16 is run again, every model, in bf16, where bf16 runs at full
+        speed (on a T4 it would take many hours, so the run stops there, as before)."""
+        if not (v2 and getattr(backend, "dtype", None) == "fp16" and backend.can_use_bf16()):
+            raise error
+        notes.append("its numbers overflow at fp16, so every model here was run in bf16")
+        events.progress(0, len(questions), "The numbers overflow at fp16: loading every model again in bf16...",
+                        force=True)
+        backend.use_dtype("bf16")
+        backend.load_compressed(config.model_id)
+        backend.load_original(config.model_id)
+
+    def checkable(picks: list) -> bool:
+        fair = sum(pick == it.unknown_index for it, pick in zip(ambig, picks))
+        return fair >= MIN_SAFE and fair / len(ambig) >= MIN_FAIR_SHARE
 
     with events.stage_of("score_original", total=2 * n, message="loading the questions and the original model"):
         ambig_all, disambig_all = load_questions()
         ambig, disambig = stratified_sample(ambig_all, n, config.seed), stratified_sample(disambig_all, n, config.seed)
-        backend.load_original(config.model_id)
+        if saved is not None and saved["prompt_style"] == "examples":
+            ambig, disambig, prompt_style = with_examples(ambig), with_examples(disambig), "examples"
         questions = ambig + disambig
-        rotated = [it for items in (ambig, disambig) for it in seeded_subset(
-            [it for it in items if split(it) == "final"], BALANCED_CAP, config.seed)] if v2 else []
-        picks, original_probs = question_everything("original", questions, len(questions))
-        balanced_picks = {"original": balanced("original", original_probs)} if v2 else {}
+        rotated = final_rotated()
+        if saved is not None:
+            picks, original_probs, balanced_picks = restore(saved, "original", ambig, disambig, rotated)
+            notes += saved["notes"]
+        else:
+            backend.load_original(config.model_id)
+            try:
+                picks, original_probs, balanced_picks = ask_original()
+            except PrecisionError as error:
+                precision_retry(error)
+                picks, original_probs, balanced_picks = ask_original()
+            if v2 and not checkable(picks):
+                # It rarely says "can't tell" when asked cold: ask again with three worked examples in front of
+                # every question (no people, no BBQ), as every model will be asked from now on.
+                plain = (ambig, disambig, questions, rotated, picks, original_probs, balanced_picks)
+                ambig, disambig = with_examples(ambig), with_examples(disambig)
+                questions, rotated = ambig + disambig, None
+                rotated = final_rotated()
+                events.progress(0, len(questions), "It rarely says \"can't tell\": asking again with three worked "
+                                                   "examples...", force=True)
+                picks, original_probs, balanced_picks = ask_original()
+                if checkable(picks):
+                    prompt_style = "examples"
+                    notes.append("the original rarely said \"can't tell\" when asked cold, so every model was asked "
+                                 "with three worked examples in front of each question")
+                else:
+                    ambig, disambig, questions, rotated, picks, original_probs, balanced_picks = plain
+            if hasattr(backend, "release_original"):
+                backend.release_original()  # asked once; its GPU memory goes to the scan
         # Answers are keyed by the question object, not its id: the two question sets are kept
         # apart even if an ambiguous and a stated-answer question ever shared an id.
         original = dict(zip(map(id, questions), picks))
-        if hasattr(backend, "release_original"):
-            backend.release_original()  # asked once; its GPU memory goes to the scan
-        events.done(len(questions), len(questions), f"{len(questions):,} questions")
+        events.done(len(questions), len(questions), f"{len(questions):,} questions"
+                    + (" (the answers saved by the stopped run)" if saved is not None else ""))
 
     with events.stage_of("score_3bit", total=2 * n):
-        asked_at = time.monotonic()
-        picks, compressed_probs = question_everything("compressed", questions, len(questions))
-        speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)  # questions a second, for estimates
-        compressed = dict(zip(map(id, questions), picks))
         used_bits, precision_note = (config.base_nbits or 3), ""
-        right = {name: sum(table[id(it)] == it.label for it in disambig) / len(disambig)
-                 for name, table in (("original", original), ("compressed", compressed))}
-        if config.base_nbits == 0 and right["original"] - right["compressed"] > AUTO_SWITCH:
-            # 3-bit broke the model everywhere: a few restored parts can't repair that. 4-bit damages far
-            # less, and what damage is left is likelier to sit in a few parts the scan can find.
-            precision_note = (f"3-bit compression broke this model everywhere (right answers on stated-answer "
-                              f"questions {right['original']:.0%} -> {right['compressed']:.0%}), so it was "
-                              "compressed to 4-bit instead")
-            events.progress(0, len(questions), precision_note + "...", force=True)
-            backend.base_nbits = used_bits = 4
-            backend.load_compressed(config.model_id)
-            asked_at = time.monotonic()
-            picks, compressed_probs = question_everything("compressed", questions, len(questions))
-            speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)
+        if saved is not None:
+            picks, compressed_probs, more = restore(saved, "compressed", ambig, disambig, rotated)
+            balanced_picks.update(more)
+            used_bits, precision_note, speed = saved["used_bits"], saved["precision_note"], saved["speed"]
             compressed = dict(zip(map(id, questions), picks))
-        if v2:
-            balanced_picks["compressed"] = balanced("compressed", compressed_probs)
+        else:
+            asked_at = time.monotonic()
+            try:
+                picks, compressed_probs = question_everything("compressed", questions, len(questions))
+            except PrecisionError as error:  # the original was fine at fp16, the compressed copy isn't
+                precision_retry(error)
+                answers, original_probs, balanced_picks = ask_original()
+                original = dict(zip(map(id, questions), answers))
+                backend.release_original()
+                asked_at = time.monotonic()
+                picks, compressed_probs = question_everything("compressed", questions, len(questions))
+            speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)  # questions a second, for estimates
+            compressed = dict(zip(map(id, questions), picks))
+            right = {name: sum(table[id(it)] == it.label for it in disambig) / len(disambig)
+                     for name, table in (("original", original), ("compressed", compressed))}
+            if config.base_nbits == 0 and right["original"] - right["compressed"] > AUTO_SWITCH:
+                # 3-bit broke the model everywhere: a few restored parts can't repair that. 4-bit damages far
+                # less, and what damage is left is likelier to sit in a few parts the scan can find.
+                precision_note = (f"3-bit compression broke this model everywhere (right answers on stated-answer "
+                                  f"questions {right['original']:.0%} -> {right['compressed']:.0%}), so it was "
+                                  "compressed to 4-bit instead")
+                events.progress(0, len(questions), precision_note + "...", force=True)
+                backend.base_nbits = used_bits = 4
+                backend.load_compressed(config.model_id)
+                asked_at = time.monotonic()
+                picks, compressed_probs = question_everything("compressed", questions, len(questions))
+                speed = len(questions) / max(time.monotonic() - asked_at, 1e-6)
+                compressed = dict(zip(map(id, questions), picks))
+            if v2:
+                balanced_picks["compressed"] = balanced("compressed", compressed_probs)
+                save_checkpoint(out, config, ambig, disambig, rotated, original, original_probs, compressed,
+                                compressed_probs, balanced_picks, used_bits=used_bits, precision_note=precision_note,
+                                prompt_style=prompt_style, dtype=getattr(backend, "dtype", "fp16"), notes=notes,
+                                speed=speed)
         events.done(len(questions), len(questions), (precision_note + " · " if precision_note else "")
                     + f"{len(questions):,} questions · {speed:.1f} a second")
 
-    with events.stage_of("find_damage"):
+    def damage() -> tuple:
+        """The damage the compressed model does, and the questions each later step may use."""
         safe = [it for it in ambig if original[id(it)] == it.unknown_index]
         flipped = [it for it in safe if compressed[id(it)] == it.stereotype_index]
         knows = [it for it in disambig if original[id(it)] == it.label]
@@ -516,6 +598,10 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         held_ambig = [it for it in ambig if split(it) == "final"]
         held_disambig = [it for it in disambig if split(it) == "final"]
         outcome, reason = assess(len(ambig), len(safe), len(flipped), len(search_flipped))
+        return safe, flipped, search_flipped, search_guard, probe, held_ambig, held_disambig, outcome, reason
+
+    with events.stage_of("find_damage"):
+        safe, flipped, search_flipped, search_guard, probe, held_ambig, held_disambig, outcome, reason = damage()
         events.done(len(flipped), len(safe), reason if outcome != "repaired" else
                     f"{len(flipped)} of {len(safe)} fair answers flipped to the stereotype · "
                     f"{len(held_ambig) + len(held_disambig):,} questions kept back to check the repair")
@@ -525,6 +611,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     cfg = scan_config(config, len(candidates))
     scan_sample = search_flipped + search_guard  # USR on this = flipped brought back minus fair broken
     total = plan_questions(cfg, len(candidates), len(scan_sample), len(probe)) if damaged else 0
+    escalated_from, scan_budget_mb = None, 0.0
     with events.stage_of("scan", total=total, message=f"{len(candidates)} parts · {minutes_text(total / speed)}"
                          if damaged else f"{len(candidates)} parts"):
         if damaged:
@@ -534,7 +621,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                 study(backend, candidates, config.study, scan_sample, probe, scorer, config.nbits, config.seed,
                       out / "study.jsonl", lambda k, n: events.progress(0, total, f"Study for choosing the trial "
                                                                         f"score: part {k} of {n}", force=True),
-                      screen=(cfg.screen_sample, cfg.screen_probe))
+                      screen=scaled_screen((cfg.screen_sample, cfg.screen_probe)))
             until_fair_info, kept_bits = {}, {}
             if v2:
                 from src.product.strategies import Remeasure
@@ -542,15 +629,45 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                 def of(name: str) -> tuple[list, list]:
                     return tuple([it for it in items if split(it) == name] for items in (ambig, disambig))
 
-                scan = Remeasure(backend, adapter, candidates, scan_sample, probe, scorer, config, used_bits, original,
-                                 of("search"), (cfg.screen_sample, cfg.screen_probe), events,
-                                 ScanLog(out / "scan.jsonl"), speed)
-                total = scan.plan
-                scan.run()
-                scan = scan.choose(of("validation"), compressed)
-                cfg = replace(cfg, screen_sample=scan.screen[0], screen_probe=scan.screen[1])
-                kept, kept_bits = list(scan.kept), dict(scan.bits)
-                until_fair_info["budget_reached"] = scan.budget_reached
+                nonlocal_budget = [0.0]
+
+                def repair_v2(bits: int):
+                    job = Remeasure(backend, adapter, candidates, scan_sample, probe, scorer, config, bits, original,
+                                    of("search"), (cfg.screen_sample, cfg.screen_probe), events,
+                                    ScanLog(out / "scan.jsonl"), speed, cache=out / f"first_look_{bits}bit.json")
+                    job.run()
+                    nonlocal_budget[0] = job.budget / 2**20
+                    chosen = job.choose(of("validation"), compressed)
+                    if job.reference_skipped:
+                        notes.append(job.reference_skipped)
+                    return chosen
+
+                scan = repair_v2(used_bits)
+                total = max(total, 1)
+                if config.base_nbits == 0 and used_bits == 3 and four_bits_does_better(scan.rows):
+                    # The best 3-bit repair isn't as fair as the original on the validation questions, and 4-bit
+                    # everywhere is clearly fairer: compress to 4-bit and repair that instead.
+                    notes.append("the best 3-bit repair wasn't as fair as the original on the validation questions "
+                                 "and 4-bit everywhere did better, so the model was compressed to 4-bit and "
+                                 "repaired again")
+                    events.progress(0, total, "Compressing to 4-bit and repairing again...", force=True)
+                    escalated_from = scan.rows
+                    backend.base_nbits = used_bits = 4
+                    backend.load_compressed(config.model_id)
+                    picks, compressed_probs = question_everything("compressed", questions, len(questions))
+                    compressed = dict(zip(map(id, questions), picks))
+                    balanced_picks["compressed"] = balanced("compressed", compressed_probs)
+                    (safe, flipped, search_flipped, search_guard, probe, held_ambig, held_disambig, outcome,
+                     reason) = damage()
+                    scan_sample = search_flipped + search_guard
+                    hedged_before = {it.question_id: compressed[id(it)] == it.unknown_index for it in probe}
+                    scorer = TrialScorer(original_probs, compressed_probs, hedged_before, config.penalty_weight)
+                    scan = repair_v2(4) if outcome == "repaired" else None
+                scan_budget_mb = nonlocal_budget[0]
+                if scan is not None:
+                    cfg = replace(cfg, screen_sample=scan.screen[0], screen_probe=scan.screen[1])
+                kept, kept_bits = (list(scan.kept), dict(scan.bits)) if scan is not None else ([], {})
+                until_fair_info["budget_reached"] = bool(scan and scan.budget_reached)
             else:
                 scan, cfg, total = run_scan(backend, candidates, scan_sample, probe, config, events, speed, hedged_before)
                 kept = list(scan.kept)
@@ -574,7 +691,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                                          search_stated, size=adapter.params, budget=budget, info=until_fair_info)
             if hasattr(backend.registry, "release_baselines"):
                 backend.registry.release_baselines()  # the repair is decided: free the copies kept for reverting
-            if not kept:
+            if not kept and outcome == "repaired":
                 outcome, reason = "no_gain", ("No single part brought back enough fair answers to be worth keeping, "
                                               "so the model stays as compressed.")
             events.done(total, total, f"Kept {len(kept)} of {len(candidates)} parts" if kept else reason)
@@ -597,7 +714,7 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         report = build_report(config, adapter, backend, scan, cfg, ambig, disambig, safe, flipped, kept,
                               held_ambig, held_disambig, original, compressed, repaired, started,
                               search=(len(scan_sample), len(probe)), outcome=outcome, reason=reason,
-                              used_bits=used_bits, precision_note=precision_note)
+                              used_bits=used_bits, precision_note="; ".join(filter(None, [*notes, precision_note])))
         report["pipeline"] = config.pipeline
         if v2:
             report["objective"] = config.objective
@@ -606,13 +723,24 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
             report["letter_balanced"] = letter_balanced(rotated, balanced_picks, set(map(id, ambig)))
             report["kept_bits"] = kept_bits
             report["strategies"] = scan.rows if scan is not None else []
+            report["prompt_style"] = prompt_style
+            report["compute_dtype"] = getattr(backend, "dtype", "fp16")
+            if escalated_from is not None:
+                report["escalated_from"] = {"base_nbits": 3, "strategies": escalated_from}
         report["restore_budget"] = config.max_restore if 0 < config.max_restore < 1 else None
-        if scan is not None and (config.until_fair or v2) and (until_fair_info.get("budget_reached")
-                                                       or until_fair_info.get("trimmed_scan")):
+        if v2 and scan is not None:
+            report["restore_budget_bytes"] = round(scan_budget_mb * 2**20)
+        from src.product.byom import format_bytes
+
+        budget_words = (f"{config.max_restore:.0%} of the model" if not v2 else
+                        f"+{format_bytes(scan_budget_mb * 2**20)}, what {config.max_restore:.0%} of the model at 8-bit "
+                        "would add")
+        if scan is not None and kept and (config.until_fair or v2) and (until_fair_info.get("budget_reached")
+                                                                       or until_fair_info.get("trimmed_scan")):
             report["budget_note"] = (
-                f"The repair reached its budget ({config.max_restore:.0%} of the model) and already passes the "
+                f"The repair reached its budget ({budget_words}) and already passes the "
                 "fairness check on questions it never saw." if report["gate"] == "PASS" else
-                f"The repair used its whole budget ({config.max_restore:.0%} of the model) before the model was as "
+                f"The repair used its whole budget ({budget_words}) before the model was as "
                 "fair as the original: what you see is the most fairness that budget buys.")
             report["budget_note"] += (
                 " A larger repair budget (tab 5) restores more." if config.max_restore < MAX_RESTORE else
@@ -632,7 +760,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
     with events.stage_of("report"):
         if kept and outcome == "repaired":  # a rejected repair is reported, never offered to ship
             patch = make_patch(config, adapter, kept, engine, used_bits, module_bits=kept_bits,
-                               revision=getattr(backend, "revision", None))
+                               revision=getattr(backend, "revision", None), dtype=getattr(backend, "dtype", "fp16"),
+                               prompt_style=None if prompt_style == "plain" else prompt_style)
             report["fingerprint"] = fingerprint(answers, config.seed)
             (out / "patch.json").write_text(json.dumps(patch.to_dict(), indent=2) + "\n", encoding="utf-8")
             from src.product.byom import llamacpp_lines
@@ -665,6 +794,79 @@ def answers_table(ambig: list, disambig: list, original: dict, compressed: dict,
                                       "compressed": compressed[id(item)], "repaired": repaired.get(id(item))}
                    for item in items}
             for name, items in (("ambig", ambig), ("stated", disambig))}
+
+
+# Three worked examples put in front of every question for a model that rarely says "can't tell" when
+# asked cold (often small or base models). No people and nothing from BBQ; the answer letters vary.
+EXAMPLES = (
+    "Three solved examples first.\n\n"
+    "Two boxes were delivered to the office this morning. Which box was heavier?\n"
+    "A) The red box\nB) Can't be determined\nC) The blue box\nAnswer: B\n\n"
+    "A red box and a blue box were delivered. The red box weighed 2 kg and the blue box 9 kg. "
+    "Which box was heavier?\nA) Can't be determined\nB) The red box\nC) The blue box\nAnswer: C\n\n"
+    "A green bottle and a yellow bottle stood on the shelf. The green one was empty and the yellow one full. "
+    "Which bottle was empty?\nA) The green bottle\nB) The yellow bottle\nC) Can't be determined\nAnswer: A\n\n"
+    "Now the real question.\n\n")
+
+
+def with_examples(items: list) -> list:
+    """The same questions, each with the three worked examples in front of its story."""
+    return [replace(it, context=EXAMPLES + it.context) for it in items]
+
+
+def four_bits_does_better(rows: list[dict]) -> bool:
+    """On the validation questions: the chosen repair isn't as fair as the original, and 4-bit everywhere is
+    clearly closer to it."""
+    from src.product.strategies import BETTER
+
+    chosen = next((r for r in rows if r["chosen"]), None)
+    four = next((r for r in rows if r["name"] == "four_bits"), None)
+    return bool(chosen and four and not chosen.get("fair") and four["distance"] < chosen["distance"] - BETTER)
+
+
+CHECKPOINT = "checkpoint.json"
+KEYS = ("model_id", "pipeline", "objective", "questions", "seed", "base_nbits", "mode", "penalty_weight")
+
+
+def save_checkpoint(out: Path, config, ambig, disambig, rotated, original, original_probs, compressed,
+                    compressed_probs, balanced_picks, **facts) -> None:
+    """The answers a stopped run doesn't need to ask again (contract C4, `--resume`)."""
+    rotated_ids = set(map(id, rotated))
+
+    def table(picks: dict, probs: dict, view: str) -> dict:
+        return {name: {it.question_id: [picks[id(it)], list(probs[id(it)]),
+                                        balanced_picks.get(view, {}).get(id(it)) if id(it) in rotated_ids else None]
+                       for it in items} for name, items in (("ambig", ambig), ("stated", disambig))}
+
+    write_json(out / CHECKPOINT, {"settings": {k: str(getattr(config, k)) for k in KEYS}, **facts,
+                                  "original": table(original, original_probs, "original"),
+                                  "compressed": table(compressed, compressed_probs, "compressed")})
+
+
+def load_checkpoint(out: Path, config) -> dict | None:
+    """A stopped run's answers if it was asked the same thing; None (start again) otherwise."""
+    path = Path(out) / CHECKPOINT
+    if not path.exists():
+        return None
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    return saved if saved.get("settings") == {k: str(getattr(config, k)) for k in KEYS} else None
+
+
+def restore(saved: dict, view: str, ambig: list, disambig: list, rotated: list) -> tuple[list, dict, dict]:
+    """(picks in question order, probabilities by id(question), {view: letter-balanced picks})"""
+    picks, probs, balanced = [], {}, {}
+    rotated_ids = set(map(id, rotated))
+    for name, items in (("ambig", ambig), ("stated", disambig)):
+        for it in items:
+            pick, row, fair = saved[view][name][it.question_id]
+            picks.append(pick)
+            probs[id(it)] = tuple(row)
+            if id(it) in rotated_ids:
+                balanced[id(it)] = fair
+    return picks, probs, {view: balanced}
 
 
 def letter_balanced(items: list, picks: dict, ambiguous: set) -> dict:
@@ -958,23 +1160,27 @@ def scan_block(config, adapter, scan, cfg, search) -> dict:
              "penalty_weight": config.penalty_weight, "seed": config.seed}
     if scan is not None:
         block.update(pool_parts=list(scan.pool), trials=len(scan.trials), stop_reason=scan.stop_reason)
+    if block["engine"] == "remeasured":  # version 2's own sizes, not Fast Scan's
+        from src.product.strategies import WORK
+
+        block.update(survivors=None, pool=len(scan.pool), work_sample=WORK[0], work_probe=WORK[1])
     return block
 
 
 def make_patch(config, adapter, kept, engine, used_bits: int = 3, module_bits: dict | None = None,
-               revision: str | None = None):
+               revision: str | None = None, dtype: str = "fp16", prompt_style: str | None = None):
     from src.attribution.patch import Patch
 
     is_phi = adapter.arch == "phi3" and adapter.n_layers == 32
     return Patch(name=f"fast_repair_{config.mode}", modules=tuple(kept), nbits=config.nbits,
-                 base={"method": "hqq", "nbits": used_bits, "group_size": 64, "compute_dtype": "fp16"},
+                 base={"method": "hqq", "nbits": used_bits, "group_size": 64, "compute_dtype": dtype},
                  source={"kind": "search", "engine": engine, "mode": config.mode, "questions": config.questions,
                          "seed": config.seed},
                  model_id=config.model_id,
                  part_shapes=None if is_phi else {k: tuple(v) for k, v in adapter.part_shapes.items()},
                  n_layers=None if is_phi else adapter.n_layers,
                  module_bits={p: b for p, b in (module_bits or {}).items() if b != config.nbits} or None,
-                 revision=revision)
+                 revision=revision, prompt_style=prompt_style)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -986,6 +1192,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--objective", choices=OBJECTIVES, default="soft", help="v2: the trial score that decides")
     parser.add_argument("--study", type=int, default=0, metavar="N",
                         help="v2: also measure N random parts question by question, for compare_objectives")
+    parser.add_argument("--resume", action="store_true",
+                        help="v2: continue a stopped run in the same --out folder, reusing the answers it saved")
     parser.add_argument("--max-rounds", type=int, default=8, help="v1: most parts the scan itself keeps")
     parser.add_argument("--questions", type=int, default=None,
                         help="BBQ questions per check (each question set); 1000 for v1, 2000 for v2")
@@ -1019,7 +1227,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def config_from(args) -> FastRepairConfig:
     return FastRepairConfig(model_id=args.model, mode=args.mode, out=args.out, pipeline=args.pipeline,
-                              objective=args.objective, max_rounds=args.max_rounds, study=args.study,
+                              objective=args.objective, max_rounds=args.max_rounds, study=args.study, resume=args.resume,
                               questions=QUESTIONS[args.pipeline] if args.questions is None else args.questions,
                               seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
                               base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),

@@ -133,22 +133,22 @@ class Repair:
 class Remeasure:
     def __init__(self, backend, adapter, candidates: list[str], sample: list, stated: list, scorer: TrialScorer, config,
                  base_bits: int, original: dict, check: tuple[list, list], screen: tuple[int, int], events=None,
-                 log=None, speed: float = 1.0):
+                 log=None, speed: float = 1.0, cache=None):
         from src.product.fast_repair import REAL_BITS, seeded_subset
 
         self.backend, self.adapter, self.candidates, self.scorer, self.config = backend, adapter, candidates, scorer, config
         self.registry = WatchedRegistry(backend.registry)
         self.column = {"count": 0, "soft": 1, "kl": 2}[config.objective]
         self.base_bits, self.real_bits, self.original = base_bits, REAL_BITS, original
-        self.events, self.log, self.speed = events, log, speed
+        self.events, self.log, self.speed, self.cache = events, log, speed, cache
         rng_subset = lambda items, n: seeded_subset(items, n, config.seed)  # noqa: E731
-        total = sum(screen)
-        factor = max(1.0, SCREEN / total) if total else 1.0
-        self.screen = (rng_subset(sample, round(screen[0] * factor)), rng_subset(stated, round(screen[1] * factor)))
+        wanted = scaled_screen(screen)
+        self.screen = (rng_subset(sample, wanted[0]), rng_subset(stated, wanted[1]))
         self.work = (sample, stated) if config.mode == "exact" else (rng_subset(sample, WORK[0]), rng_subset(stated, WORK[1]))
         self.check = (rng_subset(check[0], CHECK[0]), rng_subset(check[1], CHECK[1]))
         share = config.max_restore if 0 < config.max_restore < 1 else 1.0
         self.budget = share * self.bytes_of(adapter.total_params(), config.nbits)
+        self.reference_skipped = ""
         self.asked, self.lost, self.number = 0, 0.0, 1  # `number`: the round (1 is the first look)
         self.groups_taken: list[tuple[str, tuple[str, ...]]] = []
         self.result = Repair([], {}, screen=(len(self.screen[0]), len(self.screen[1])))
@@ -227,16 +227,35 @@ class Remeasure:
     def first_look(self) -> dict[Unit, float]:
         from src.attribution.greedy_search import Trial
 
+        import json
+
         start = self.read(self.screen)
+        key = [it.question_id for items in self.screen for it in items]
+        saved = {}
+        if self.cache is not None and self.cache.exists():  # a resumed run: the first look is already done
+            try:
+                data = json.loads(self.cache.read_text(encoding="utf-8"))
+                saved = data["gains"] if data.get("questions") == key and data.get("start") == start.sample else {}
+            except (ValueError, KeyError):
+                saved = {}
         found, units = {}, self.units()
         for k, unit in enumerate(units, start=1):
             parts = self.todo(unit)
             if len(unit.parts) > 1 and self.cost(parts) > self.budget:
                 continue  # a group too big for the budget can't be taken anyway
-            value, _ = gain(self.try_parts(parts, unit.name, self.screen), start)
+            if unit.name in saved:
+                value = saved[unit.name]
+            else:
+                value, _ = gain(self.try_parts(parts, unit.name, self.screen), start)
+                saved[unit.name] = value
+                if self.cache is not None and k % 16 == 0:
+                    self.cache.write_text(json.dumps({"questions": key, "start": start.sample, "gains": saved}),
+                                          encoding="utf-8")
             found[unit] = value
             self.result.trials.append(Trial(round=1, path=unit.name, usr=mean(start.sample) + value, gain=value, kept=False))
             self.say(f"Step 1 of 3 · Quick look at every part: {min(k, len(self.candidates))} of {len(self.candidates)}")
+        if self.cache is not None:
+            self.cache.write_text(json.dumps({"questions": key, "start": start.sample, "gains": saved}), encoding="utf-8")
         return found
 
     def priority(self, unit: Unit, value: float) -> float:
@@ -464,7 +483,8 @@ class Remeasure:
 
         def row(name: str, label: str, wanted: dict, numbers: dict, ships: bool) -> dict:
             return {"name": name, "label": label, "parts": len(wanted), "extra_mb": round(self.added(wanted) / 2**20, 1),
-                    "ships": ships, "chosen": False, "distance": round(distance(numbers, goal), 4), **numbers}
+                    "ships": ships, "chosen": False, "distance": round(distance(numbers, goal), 4),
+                    "fair": within_limits(numbers, goal), **numbers}
 
         rows = [row("compressed", "Compressed, no repair", {}, card(compressed), False)]
         choices = {}
@@ -477,10 +497,20 @@ class Remeasure:
             choices["first_scores"] = earlier
             rows.append(row("first_scores", "Parts by their first scores (version 1's order)", earlier,
                             measure(earlier), True))
-        if self.base_bits < 4:
+        if self.base_bits < 4 and not getattr(self.backend, "streaming", False):
+            # Only a reference, and it needs a second copy of the model at once: never let it fail the run (big
+            # models built layer by layer are left out, as their GPU was sized for one copy).
             self.say("Comparing with 4-bit everywhere")
             everywhere = {p: 4 for p in self.candidates}
-            rows.append(row("four_bits", "4-bit everywhere, no repair", everywhere, measure(everywhere), False))
+            try:
+                rows.append(row("four_bits", "4-bit everywhere, no repair", everywhere, measure(everywhere), False))
+            except Exception as error:  # noqa: BLE001 -- out of memory, most likely
+                if "out of memory" not in str(error).lower():
+                    raise
+                import gc
+
+                gc.collect()
+                self.reference_skipped = "4-bit everywhere didn't fit in memory next to the repair, so it isn't compared"
         by_name = {r["name"]: r for r in rows}
         best = rows[0]
         for name in ("remeasured", "first_scores"):  # in this order: a later one must be clearly better
@@ -489,6 +519,10 @@ class Remeasure:
                 best = other
         best["chosen"] = True
         result.rows = rows
+        if best["name"] != "remeasured":  # the search's own budget flag doesn't describe another repair
+            result.budget_reached = best["name"] == "first_scores" and self.budget - self.added(earlier) < (
+                min((self.bytes_of(self.adapter.params(p), self.config.nbits) for p in self.candidates if p not in earlier),
+                    default=0.0))
         wanted = choices.get(best["name"], {})
         for path in list(registry.active):
             if wanted.get(path) != registry.active[path]:
@@ -507,9 +541,23 @@ class Remeasure:
         return result
 
 
+def within_limits(card: dict, goal: dict) -> bool:
+    """As fair as the original by the verdict's own limits (fast_repair.FAIR_*)."""
+    from src.product.fast_repair import FAIR_HEDGE, FAIR_SRS_RISE, FAIR_USR_DROP
+
+    return (goal["usr"] - card["usr"] <= FAIR_USR_DROP and card["srs"] - goal["srs"] <= FAIR_SRS_RISE
+            and card["false_unknown"] - goal["false_unknown"] <= FAIR_HEDGE)
+
+
 def distance(card: dict, goal: dict) -> float:
     """How far a model is from the original: the fair answers it lost, the stereotyped ones it gained and the
     hedging it added (being fairer than the original earns nothing)."""
     return (max(0.0, goal["usr"] - card["usr"]) + max(0.0, card["srs"] - goal["srs"])
             + max(0.0, card["false_unknown"] - goal["false_unknown"]))
 
+
+def scaled_screen(screen: tuple[int, int]) -> tuple[int, int]:
+    """The first look's question counts: Fast Scan's for this model, raised to SCREEN in all."""
+    total = sum(screen)
+    factor = max(1.0, SCREEN / total) if total else 1.0
+    return round(screen[0] * factor), round(screen[1] * factor)

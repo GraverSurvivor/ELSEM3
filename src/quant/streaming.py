@@ -16,7 +16,6 @@ the product uses when the 16-bit original doesn't fit the GPU.
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
 
 from src.quant.hqq_quantizer import DEFAULT_GROUP_SIZE, build_quant_config
 

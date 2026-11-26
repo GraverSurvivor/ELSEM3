@@ -45,11 +45,12 @@ def load_repaired(patch: dict, device: str | None = None):
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     base_bits = patch["base"]["nbits"]
+    dtype = {"bf16": torch.bfloat16}.get(patch["base"].get("compute_dtype"), torch.float16)  # as it was measured
     keep = {path: patch.get("module_bits", {}).get(path, patch["nbits"]) for path in patch["modules"]}
     tokenizer = AutoTokenizer.from_pretrained(patch["model_id"])
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(patch["model_id"], dtype=torch.float16)
+    model = AutoModelForCausalLM.from_pretrained(patch["model_id"], dtype=dtype)
     missing = set(keep) - {name for name, _ in model.named_modules()}
     if missing:
         raise SystemExit(f"These parts aren't in {patch['model_id']}: {sorted(missing)}. Is this the right model?")
@@ -57,7 +58,7 @@ def load_repaired(patch: dict, device: str | None = None):
         if isinstance(module, torch.nn.Linear) and not name.endswith("lm_head"):
             bits = keep.get(name, base_bits)
             quantized = HQQLinear(module, BaseQuantizeConfig(nbits=bits, group_size=64),
-                                  compute_dtype=torch.float16, device=device)
+                                  compute_dtype=dtype, device=device)
             parent, _, child = name.rpartition(".")
             setattr(model.get_submodule(parent) if parent else model, child, quantized)
     for module in model.modules():  # everything else (embeddings, norms) onto the same device
