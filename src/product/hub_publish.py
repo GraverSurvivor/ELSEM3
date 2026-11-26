@@ -22,7 +22,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from src.product.repair_kit import headline, results_lines
+from src.product.repair_kit import bits_text, headline, part_lines, results_lines
 
 REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
@@ -84,10 +84,10 @@ def model_card(patch: dict, summary: dict, repo_id: str) -> str:
         "A private repo needs you to be logged in (`huggingface-cli login`) with access to it.", "",
         "## What's inside", "",
         f"- Every linear layer (except the output head) HQQ-quantized to {patch['base']['nbits']}-bit, group "
-        f"size 64; the {len(patch['modules'])} parts below kept at {patch['nbits']}-bit.",
+        f"size 64; the {len(patch['modules'])} parts below kept at {bits_text(patch)}.",
         "- `patch.json`: the repair, for FairGate's own tools.", "",
-        "Parts kept at 8-bit:", "",
-        *[f"- `{path}`" for path in patch["modules"]], "",
+        f"Parts kept at {bits_text(patch)}:", "",
+        *part_lines(patch), "",
         "The fairness check is BBQ's ambiguous questions (a fair model says \"can't tell\" when the story "
         "doesn't say who did it), on questions the repair never saw.", "",
     ])
@@ -151,7 +151,7 @@ def publish(model, tokenizer, patch: dict, summary: dict, token: str, repo_name:
             api.create_repo(repo_id, private=private, exist_ok=True, repo_type="model")
             api.upload_folder(folder_path=str(folder), repo_id=repo_id, repo_type="model",
                               commit_message=f"FairGate repair of {patch['model_id']} "
-                                             f"({len(patch['modules'])} parts at {patch['nbits']}-bit)")
+                                             f"({len(patch['modules'])} parts at {bits_text(patch)})")
         except Exception as error:  # noqa: BLE001
             raise PublishError(_explain(error)) from None
     return {"repo_id": repo_id, "url": f"https://huggingface.co/{repo_id}", "private": private}

@@ -13,7 +13,8 @@ questions the scan never saw. It writes, as it goes (sprint contract C4, docs/CO
     DIR/report.json    before/after numbers, recovery with its interval, the kept parts, the verdict
     DIR/patch.json     the repair, in the project's patch format (with the model's part shapes)
     DIR/answers.json   every question's answer from each model, and what the question was used for
-    DIR/scan.jsonl     version 2: every score of the scan, three ways (src/product/decisions.py)
+    DIR/scan.jsonl     version 2: every score of the scan, three ways (src/product/decisions.py; the repair
+                       itself is src/product/strategies.py)
     DIR/study.jsonl    version 2 with --study: question by question, for choosing the trial score
 
 The scan is Fast Scan (src/attribution/fast_scan.py, contract C2), the greedy search's own trial
@@ -43,7 +44,7 @@ import sys
 import time
 import traceback
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Protocol
@@ -54,7 +55,6 @@ from src.product.decisions import (
     SPLITS,
     ScanLog,
     TrialScorer,
-    WatchedRegistry,
     ask,
     ask_balanced,
     split_of,
@@ -358,11 +358,10 @@ def excess_hedging(stated: list, picks: list[int], hedged_before: dict) -> float
 
 
 def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list, config: FastRepairConfig,
-             events: Events, speed: float, hedged_before: dict | None = None, trial_scorer=None, log=None):
+             events: Events, speed: float, hedged_before: dict | None = None):
     """Fast Scan over the model's parts. A trial scores the share of the flipped questions answered
     "can't tell" again, minus penalty_weight x the hedging it adds on stated-answer questions
     (`excess_hedging`; `hedged_before`: question id -> the compressed model said "can't tell").
-    Version 2 passes a `trial_scorer` (decisions.TrialScorer) instead, and a `log` for every score.
     Returns (result, its config, the planned number of questions). `speed` (questions a second,
     measured while asking the compressed model) estimates the time left until the scan has measured
     its own pace."""
@@ -379,22 +378,11 @@ def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list,
     started = time.monotonic()
 
     hedged_before = hedged_before or {}
-    registry = backend.registry
-    if trial_scorer is not None:
-        registry = WatchedRegistry(backend.registry)
 
     def scorer(sample_ids, probe_ids) -> ScanScore:
         """The trial's objective, plus each question's result (contract C2)."""
         items = [sample_by_id[q] for q in sample_ids]
         stated = [probe_by_id[q] for q in probe_ids]
-        if trial_scorer is not None:
-            picks, probs = ask(backend, "compressed", items)
-            stated_picks, stated_probs = ask(backend, "compressed", stated) if stated else ([], [])
-            asked["questions"] += len(items) + len(stated)
-            scores = trial_scorer.scores(items, picks, probs, stated, stated_picks, stated_probs)
-            if log is not None:
-                log.write(registry, len(items), len(stated), scores)
-            return ScanScore(scores[config.objective], sample_bits(picks, items), probe_bits(stated_picks, stated))
         picks = backend.score("compressed", items)
         stated_picks = backend.score("compressed", stated) if stated else []
         asked["questions"] += len(items) + len(stated)
@@ -425,7 +413,7 @@ def run_scan(backend: Backend, candidates: list[str], sample: list, probe: list,
             message += f" · {minutes_text((total - done) / rate)} left"
         events.progress(done, total, message)
 
-    result = fast_scan(candidates, registry, scorer, list(sample_by_id), list(probe_by_id), cfg,
+    result = fast_scan(candidates, backend.registry, scorer, list(sample_by_id), list(probe_by_id), cfg,
                        on_progress=on_progress)
     return result, cfg, total
 
@@ -547,14 +535,29 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                       out / "study.jsonl", lambda k, n: events.progress(0, total, f"Study for choosing the trial "
                                                                         f"score: part {k} of {n}", force=True),
                       screen=(cfg.screen_sample, cfg.screen_probe))
-            scan, cfg, total = run_scan(backend, candidates, scan_sample, probe, config, events, speed, hedged_before,
-                                        scorer, ScanLog(out / "scan.jsonl") if v2 else None)
-            kept = list(scan.kept)
-            for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
-                if path not in backend.registry.active:
-                    backend.registry.commit(path, config.nbits)
-            until_fair_info = {}
-            if config.until_fair:
+            until_fair_info, kept_bits = {}, {}
+            if v2:
+                from src.product.strategies import Remeasure
+
+                def of(name: str) -> tuple[list, list]:
+                    return tuple([it for it in items if split(it) == name] for items in (ambig, disambig))
+
+                scan = Remeasure(backend, adapter, candidates, scan_sample, probe, scorer, config, used_bits, original,
+                                 of("search"), (cfg.screen_sample, cfg.screen_probe), events,
+                                 ScanLog(out / "scan.jsonl"), speed)
+                total = scan.plan
+                scan.run()
+                scan = scan.choose(of("validation"), compressed)
+                cfg = replace(cfg, screen_sample=scan.screen[0], screen_probe=scan.screen[1])
+                kept, kept_bits = list(scan.kept), dict(scan.bits)
+                until_fair_info["budget_reached"] = scan.budget_reached
+            else:
+                scan, cfg, total = run_scan(backend, candidates, scan_sample, probe, config, events, speed, hedged_before)
+                kept = list(scan.kept)
+                for path in kept:  # Fast Scan commits what it keeps; this only guards a stand-in registry
+                    if path not in backend.registry.active:
+                        backend.registry.commit(path, config.nbits)
+            if config.until_fair and not v2:
                 search_ambig, search_stated = searched(ambig), searched(disambig)
                 budget = (config.max_restore * adapter.total_params()
                           if 0 < config.max_restore < 1 else None)
@@ -577,10 +580,10 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
             events.done(total, total, f"Kept {len(kept)} of {len(candidates)} parts" if kept else reason)
         else:
             scan = None
-            kept = []
+            kept, kept_bits = [], {}
             until_fair_info = {}
             events.done(message=f"Skipped: {OUTCOME_HEADLINES[outcome].lower()} (see above)")
-    engine = "fast_scan" if scan is not None else "none"
+    engine = getattr(scan, "engine", "fast_scan") if scan is not None else "none"
 
     with events.stage_of("verify", total=len(held_ambig) + len(held_disambig)):
         held = held_ambig + held_disambig
@@ -601,8 +604,10 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
             report["splits"] = {name: {"ambiguous": sum(split(it) == name for it in ambig),
                                        "stated_answer": sum(split(it) == name for it in disambig)} for name in SPLITS}
             report["letter_balanced"] = letter_balanced(rotated, balanced_picks, set(map(id, ambig)))
+            report["kept_bits"] = kept_bits
+            report["strategies"] = scan.rows if scan is not None else []
         report["restore_budget"] = config.max_restore if 0 < config.max_restore < 1 else None
-        if scan is not None and config.until_fair and (until_fair_info.get("budget_reached")
+        if scan is not None and (config.until_fair or v2) and (until_fair_info.get("budget_reached")
                                                        or until_fair_info.get("trimmed_scan")):
             report["budget_note"] = (
                 f"The repair reached its budget ({config.max_restore:.0%} of the model) and already passes the "
@@ -614,6 +619,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
                 " That is the largest budget: past it the repaired model would be bigger than the same model "
                 "compressed to 4-bit everywhere, so try \"Compress to: 4-bit\" instead."
                 if used_bits == 3 else " That is the largest budget.")
+        if scan is not None and getattr(scan, "advice", ""):
+            report["advice"] = scan.advice
         if kept and (verdict := reject_reason(report)):
             outcome, reason = "rejected", verdict
             report.update(outcome=outcome, outcome_reason=reason, patch=None)
@@ -624,7 +631,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
 
     with events.stage_of("report"):
         if kept and outcome == "repaired":  # a rejected repair is reported, never offered to ship
-            patch = make_patch(config, adapter, kept, engine, used_bits, revision=getattr(backend, "revision", None))
+            patch = make_patch(config, adapter, kept, engine, used_bits, module_bits=kept_bits,
+                               revision=getattr(backend, "revision", None))
             report["fingerprint"] = fingerprint(answers, config.seed)
             (out / "patch.json").write_text(json.dumps(patch.to_dict(), indent=2) + "\n", encoding="utf-8")
             from src.product.byom import llamacpp_lines
@@ -944,7 +952,7 @@ def sizes(n_weights: int, base_nbits: int, added_mb: float) -> dict:
 def scan_block(config, adapter, scan, cfg, search) -> dict:
     """What the scan did, for the report: its settings, the questions it used, and (when it ran) the
     pool it chose from, its trials and why it stopped."""
-    block = {"engine": "fast_scan" if scan is not None else "none", "candidates": len(adapter.candidates()),
+    block = {"engine": getattr(scan, "engine", "fast_scan") if scan is not None else "none", "candidates": len(adapter.candidates()),
              "screen_sample": cfg.screen_sample, "screen_probe": cfg.screen_probe, "survivors": cfg.survivors,
              "pool": cfg.pool, "search_sample": search[0], "search_probe": search[1],
              "penalty_weight": config.penalty_weight, "seed": config.seed}
@@ -978,7 +986,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--objective", choices=OBJECTIVES, default="soft", help="v2: the trial score that decides")
     parser.add_argument("--study", type=int, default=0, metavar="N",
                         help="v2: also measure N random parts question by question, for compare_objectives")
-    parser.add_argument("--max-rounds", type=int, default=8, help="most parts the scan itself keeps")
+    parser.add_argument("--max-rounds", type=int, default=8, help="v1: most parts the scan itself keeps")
     parser.add_argument("--questions", type=int, default=None,
                         help="BBQ questions per check (each question set); 1000 for v1, 2000 for v2")
     parser.add_argument("--out", type=Path, required=True)

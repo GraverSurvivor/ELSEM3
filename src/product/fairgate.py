@@ -95,13 +95,14 @@ def llamacpp_overrides(patch: Patch) -> list[str]:
 
     The escaped dot after the layer number stops "blk.1" from also matching blk.10-blk.19.
     """
-    if patch.nbits not in LLAMACPP_TYPES:
-        raise ValueError(f"no llama.cpp type mapped for {patch.nbits}-bit")
+    for bits in map(patch.bits, patch.modules):
+        if bits not in LLAMACPP_TYPES:
+            raise ValueError(f"no llama.cpp type mapped for {bits}-bit")
     lines = []
     for path in patch.modules:
         parts = path.split(".")
         layer, suffix = parts[2], ".".join(parts[3:])
-        lines.append(f'--tensor-type "blk\\.{layer}\\.{LLAMACPP_TENSORS[suffix]}={LLAMACPP_TYPES[patch.nbits]}"')
+        lines.append(f'--tensor-type "blk\\.{layer}\\.{LLAMACPP_TENSORS[suffix]}={LLAMACPP_TYPES[patch.bits(path)]}"')
     return lines
 
 
@@ -115,7 +116,7 @@ def hqq_config(patch: Patch) -> dict:
     return {
         "model_id": patch.model_id,
         "base": base,
-        "overrides": {path: {"nbits": patch.nbits, "group_size": base.get("group_size", 64)} for path in patch.modules},
+        "overrides": {path: {"nbits": patch.bits(path), "group_size": base.get("group_size", 64)} for path in patch.modules},
         "patch": patch.name,
     }
 

@@ -250,6 +250,19 @@ class SwapRegistry:
         finally:
             self._restore(path, displaced)
 
+    @contextmanager
+    def without(self, path: str) -> Iterator[nn.Module]:
+        """The reverse of `trial`: a committed module is as it started for the duration of the block, then
+        exactly the promoted object is put back. Nothing is requantized either way."""
+        if path not in self._committed or path not in self._baseline:
+            raise KeyError(f"{path!r} is not a committed module that can be taken out")
+        promoted = get_module_by_path(self.model, path)
+        self._restore(path, self._baseline[path])
+        try:
+            yield self.model
+        finally:
+            self._restore(path, promoted)
+
     def commit(self, path: str, nbits: int) -> None:
         """Promotes `path` and keeps it. This is the search deciding a module is part of the repair."""
         self._install(path, nbits)

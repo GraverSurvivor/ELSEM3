@@ -272,11 +272,18 @@ with it. The real models are in `src/product/torch_backend.py`; each run also wr
 **Version 2 (`--pipeline v2`, off by default; `src/product/decisions.py`, Nov 2026):** trials are scored on the
 probability of the right answer (`soft`; `kl` and version 1's `count` are computed too and logged to scan.jsonl),
 charged for harm added to stated answers but never rewarded for general repair (the Qwen2.5-3B trap above);
-questions split 40/20/40 into search / validation (reserved for PR A2) / final; compare v1 and v2 only with the
+questions split 40/20/40 into search / validation / final; compare v1 and v2 only with the
 same `--questions` (the sample depends on it); a trial sees 36+24 questions on a 252-part model, not 60+40; the final check also reports letter-balanced numbers.
 Which score predicts best is measured with `--study N` + `python -m src.product.compare_objectives DIR`. On the
 saved Phi-3.5 runs a 60-question count is ~4 points off, and parts that fix stereotyped flips fix the others
 equally (correlation 0.999), so the damage definition is unchanged.
+**Version 2's repair** (`src/product/strategies.py`) replaces "repair until fair": round 1's scores mislead once
+something is restored (Phi-3.5's 2nd and 3rd best parts go from +30/+29 to +1.3/-2.8 points; 30-58% of parts hurt
+in rounds 2-5), so each part is measured again on 120+60 questions with the others in place, taken by gain per
+memory if it beats 1.5 standard errors (up to 3 at once when they fix different questions), tried at 4-bit, and
+taken out again if not missed (`SwapRegistry.without`); whole part types are candidates too, thinned out by halves.
+The budget is memory (`max_restore` at 8-bit). Then validation compares it with version 1's ordering and, for
+reference only, 4-bit everywhere. About 19-29k questions (25-38 min on a T4, estimated). Not yet run on a GPU.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
 hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see

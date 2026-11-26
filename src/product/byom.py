@@ -399,7 +399,7 @@ def results_html(report: dict) -> str:
     if report.get("restore_budget"):
         facts.append(f"repair budget {100 * float(report['restore_budget']):.0f}%")
     if report.get("restored_share"):
-        facts.append(f"{100 * float(report['restored_share']):.1f}% of the model kept at 8-bit")
+        facts.append(f"{100 * float(report['restored_share']):.1f}% of the model restored")
     if report.get("memory_mb") is not None:
         facts.append(f"+{float(report['memory_mb']):.0f} MB")
     if report.get("minutes") is not None:
@@ -418,7 +418,7 @@ def results_html(report: dict) -> str:
         banner = (f'<div class="by-banner">A recorded real run ({html.escape(str(report["replayed_from"]))}), '
                   'replayed for the demo.</div>')
     size = size_html(report, repaired=outcome == "repaired")
-    budget_note = report.get("budget_note")
+    budget_note = " ".join(filter(None, (report.get("budget_note"), report.get("advice"))))
     note = report.get("precision_note")
     headline = (f'<div class="by-note-precision">{html.escape(note)}.</div>' if note else "") + (f'<div class="by-outcome by-outcome-{outcome}"><b>{html.escape(OUTCOME_TITLES[outcome])}</b>'
                 + (f'<p>{html.escape(reason)}</p>' if reason and outcome != "repaired" else "")
@@ -522,14 +522,16 @@ def llamacpp_lines(patch: dict, names: dict | None = None) -> list[str]:
     tensor name, from the report) covers models beyond the table here; a part with no known name gets
     a comment line instead, since the HQQ patch file still restores it."""
     nbits = int(patch.get("nbits", 8))
-    if nbits not in GGUF_TYPES:
-        raise ValueError(f"no llama.cpp type for {nbits}-bit")
+    own = patch.get("module_bits", {})
+    for bits in {nbits, *own.values()}:
+        if bits not in GGUF_TYPES:
+            raise ValueError(f"no llama.cpp type for {bits}-bit")
     known = {**GGUF_NAMES, **(names or {})}
     lines, missing = [], []
     for path in patch.get("modules", []):
         layer, part = parse_module(path)
         if part in known:
-            lines.append(f'--tensor-type "blk\\.{layer}\\.{known[part]}={GGUF_TYPES[nbits]}"')
+            lines.append(f'--tensor-type "blk\\.{layer}\\.{known[part]}={GGUF_TYPES[own.get(path, nbits)]}"')
         else:
             missing.append(f"layer {layer} {part}")
     if missing:
