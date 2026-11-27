@@ -161,4 +161,10 @@ dtype, streaming=False)` -> (model, tokenizer), `restore(linear, nbits, device, 
 `nbytes(module)`, `can_publish(model)` -> "" or why not. `get_method(name)` in `__init__.py` is the way in
 (HQQ is the default). `SwapRegistry(..., method="hqq")` restores parts through `method.restore`, and
 `infer_compute_dtype` reads any model's compute dtype. HQQ behind it is bit-identical to before (tested
-against the hand-built `HQQLinear` recipe). RTN, GPTQ and bitsandbytes follow in later PRs.
+against the hand-built `HQQLinear` recipe).
+
+Methods so far: `hqq` (bits 2/3/4, restored 4/8), `rtn` (3/4, restored 4/8: HQQ's container with the optimiser
+off and no rounded zero-point, equal to hand-written min-max rounding), `bnb_nf4` (4, restored 16) and
+`bnb_int8` (8, restored 16). bitsandbytes methods take `restored=[paths]` in `load` and list those parts in
+`llm_int8_skip_modules` as escaped full paths plus `lm_head` (`methods.bnb.skip_modules`); they refuse
+`streaming=True`. `module_nbytes` also counts bitsandbytes' quantization state. GPTQ follows.

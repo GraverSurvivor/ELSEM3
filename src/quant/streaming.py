@@ -24,9 +24,10 @@ LINEAR_TYPES = ("Linear", "Conv1D")
 
 
 def load_streaming(model_id: str, nbits: int, device: str = "cuda", dtype: torch.dtype = torch.float16,
-                   group_size: int = DEFAULT_GROUP_SIZE, keep: dict | None = None):
+                   group_size: int = DEFAULT_GROUP_SIZE, keep: dict | None = None, optimize: bool = True):
     """(model, tokenizer): every linear layer but the output head HQQ-quantized to `nbits` (or to
-    `keep[path]` for a repair's parts), built layer by layer from the checkpoint."""
+    `keep[path]` for a repair's parts), built layer by layer from the checkpoint. `optimize=False` is
+    plain rounding (RTN) instead of HQQ's optimiser."""
     from accelerate import init_empty_weights
     from accelerate.utils import set_module_tensor_to_device
     from hqq.core.quantize import HQQLinear
@@ -46,7 +47,7 @@ def load_streaming(model_id: str, nbits: int, device: str = "cuda", dtype: torch
                if type(module).__name__ in LINEAR_TYPES and name and not name.endswith("lm_head")]
     conv1d = {name for name in linears if type(model.get_submodule(name)).__name__ == "Conv1D"}
     source = CheckpointWeightSource(model_id, transposed=lambda path: path in conv1d)
-    configs = {bits: build_quant_config(nbits=bits, group_size=group_size) for bits in {nbits, *(keep or {}).values()}}
+    configs = {bits: build_quant_config(nbits=bits, group_size=group_size, optimize=optimize) for bits in {nbits, *(keep or {}).values()}}
     for name in linears:
         linear = source.get_linear(name, dtype=dtype)
         parent, _, child = name.rpartition(".")

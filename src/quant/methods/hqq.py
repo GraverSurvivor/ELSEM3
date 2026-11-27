@@ -32,30 +32,32 @@ class HQQMethod:
     bits = (2, 3, 4)
     restore_bits = (4, 8)  # HQQ stores 5- and 6-bit as 8-bit, so those are not offered
 
+    optimize = True  # HQQ's own optimiser; RTN (rtn.py) turns it off
+
     def __init__(self, group_size: int = DEFAULT_GROUP_SIZE) -> None:
         self.group_size = group_size
 
     def load(self, model_id: str, nbits: int, device: str, dtype, streaming: bool = False):
         if nbits not in self.bits:
-            raise ValueError(f"HQQ compresses to {list(self.bits)} bits, not {nbits}.")
+            raise ValueError(f"{self.label} compresses to {list(self.bits)} bits, not {nbits}.")
         if streaming:
             from src.quant.streaming import load_streaming
 
             return load_streaming(model_id, nbits, device=device, dtype=torch_dtype(dtype),
-                                  group_size=self.group_size)
+                                  group_size=self.group_size, optimize=self.optimize)
         from src.quant.hqq_quantizer import load_hqq_3bit_model
 
         return load_hqq_3bit_model(device=device, nbits=nbits, group_size=self.group_size,
-                                   dtype=dtype_name(dtype), model_id=model_id)
+                                   dtype=dtype_name(dtype), model_id=model_id, optimize=self.optimize)
 
     def restore(self, linear: nn.Linear, nbits: int, device: str, dtype: torch.dtype) -> nn.Module:
         if nbits not in self.restore_bits:
-            raise ValueError(f"HQQ restores parts at {list(self.restore_bits)} bits, not {nbits}.")
+            raise ValueError(f"{self.label} restores parts at {list(self.restore_bits)} bits, not {nbits}.")
         from hqq.core.quantize import HQQLinear
 
         from src.quant.hqq_quantizer import build_quant_config
 
-        quant_config = build_quant_config(nbits=nbits, group_size=self.group_size)
+        quant_config = build_quant_config(nbits=nbits, group_size=self.group_size, optimize=self.optimize)
         return HQQLinear(linear, quant_config=quant_config, compute_dtype=dtype, device=device)
 
     def nbytes(self, module: nn.Module) -> int:

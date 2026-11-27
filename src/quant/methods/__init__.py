@@ -13,9 +13,30 @@ def _hqq(**kwargs) -> Method:
     return HQQMethod(**kwargs)
 
 
+def _rtn(**kwargs) -> Method:
+    from src.quant.methods.rtn import RTNMethod
+
+    return RTNMethod(**kwargs)
+
+
+def _bnb_nf4(**kwargs) -> Method:
+    from src.quant.methods.bnb import BnbNF4Method
+
+    return BnbNF4Method(**kwargs)
+
+
+def _bnb_int8(**kwargs) -> Method:
+    from src.quant.methods.bnb import BnbInt8Method
+
+    return BnbInt8Method(**kwargs)
+
+
+# Methods built on HQQ's container take a group size (the others have no such setting).
+GROUPED = ("hqq", "rtn")
+
 # name -> factory. Each method registers here; imports stay lazy so a method's library (bitsandbytes)
 # is only needed when that method is used.
-FACTORIES = {"hqq": _hqq}
+FACTORIES = {"hqq": _hqq, "rtn": _rtn, "bnb_nf4": _bnb_nf4, "bnb_int8": _bnb_int8}
 
 
 def method_names() -> list[str]:

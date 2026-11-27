@@ -209,3 +209,16 @@ Backup if Colab dies: the notebook's last cell (saved results, no GPU), or on a 
 | 3 | ~6 |
 | 4 | ~14.5 |
 | **Total** | **~26** (Kaggle gives 30 h per account per week; there are three accounts) |
+
+
+## Compression methods: the GPU checks (Person 4)
+`tests/quant/test_bnb.py` runs bitsandbytes on CPU when it can and skips where it can't (some laptops), so on
+the T4 run it for real, together with the other method tests (a few minutes, after the usual clone + install):
+```python
+%cd /content/ELSEM3
+!pip install -q bitsandbytes
+!python -m pytest tests/quant/test_methods.py tests/quant/test_rtn.py tests/quant/test_bnb.py tests/quant/test_streaming.py -q -rs
+```
+Nothing in `test_bnb.py` should be skipped there (`-rs` lists skips). The skip-list test also runs
+transformers' own `should_convert_module`, so it checks that layer 1 doesn't match layer 11 on Colab's
+`transformers==5.0.0`. Then `python -m src.eval.check_reproduction` must still say PASS: HQQ 3-bit hasn't moved.
