@@ -27,7 +27,7 @@ import torch.nn as nn
 from hqq.core.quantize import HQQLinear
 
 from src.quant.hqq_quantizer import DEFAULT_GROUP_SIZE, build_quant_config
-from src.quant.methods import Method, get_method
+from src.quant.methods import GROUPED, Method, get_method
 
 if TYPE_CHECKING:
     from src.quant.weight_source import CheckpointWeightSource
@@ -126,6 +126,26 @@ def promote_module(
     set_module_by_path(model, path, promoted)
 
 
+def _bnb_tensors(value, _seen: set[int] | None = None) -> Iterator[torch.Tensor]:
+    """Every tensor inside a bitsandbytes state object (QuantState and its nested second-level state,
+    int8's matmul state), found by walking its attributes. Other objects are not entered."""
+    seen = set() if _seen is None else _seen
+    if value is None or id(value) in seen:
+        return
+    seen.add(id(value))
+    if torch.is_tensor(value):
+        yield value
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _bnb_tensors(nested, seen)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            yield from _bnb_tensors(nested, seen)
+    elif type(value).__module__.startswith("bitsandbytes"):
+        for nested in vars(value).values():
+            yield from _bnb_tensors(nested, seen)
+
+
 def module_nbytes(module: nn.Module) -> int:
     """Actual bytes of tensor storage a module holds.
 
@@ -166,6 +186,12 @@ def module_nbytes(module: nn.Module) -> int:
     for submodule in module.modules():
         for tensor in list(submodule.parameters(recurse=False)) + list(submodule.buffers(recurse=False)):
             add(tensor)
+        for parameter in submodule.parameters(recurse=False):
+            # bitsandbytes keeps its scales ("absmax", the NF4 code, int8's CB/SCB) beside the packed
+            # weight as attributes of the parameter, which neither parameters() nor buffers() show.
+            for attribute in ("quant_state", "SCB", "CB"):
+                for nested in _bnb_tensors(getattr(parameter, attribute, None)):
+                    add(nested)
         for value in vars(submodule).values():
             if torch.is_tensor(value):
                 add(value)
@@ -173,6 +199,9 @@ def module_nbytes(module: nn.Module) -> int:
                 for nested in value.values():
                     if torch.is_tensor(nested):
                         add(nested)
+            elif type(value).__module__.startswith("bitsandbytes"):
+                for nested in _bnb_tensors(value):  # Linear8bitLt.state
+                    add(nested)
 
     return total
 
@@ -209,7 +238,7 @@ class SwapRegistry:
         self.device = device
         self.group_size = group_size
         # A name builds the method (HQQ at this registry's group size); an instance is used as given.
-        self.method = get_method(method, group_size=group_size) if method == "hqq" else get_method(method)
+        self.method = get_method(method, group_size=group_size) if method in GROUPED else get_method(method)
         self.compute_dtype = infer_compute_dtype(model)
 
         # The original quantized module for every path ever touched, so revert is exact.

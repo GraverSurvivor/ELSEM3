@@ -73,7 +73,7 @@ def test_hqq_is_the_default_method_and_implements_the_interface():
     method = get_method()
     assert DEFAULT_METHOD == "hqq" and method.name == "hqq" and isinstance(method, HQQMethod)
     assert isinstance(method, Method)
-    assert method_names() == ["hqq"]
+    assert method_names() == ["hqq", "rtn", "bnb_nf4", "bnb_int8"]
     assert method.bits == (2, 3, 4) and method.restore_bits == (4, 8)
 
 
