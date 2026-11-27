@@ -63,12 +63,21 @@ def format_params(n: int) -> str:
 
 
 class TorchBackend:
-    """The real models: the original at fp16 and the HQQ 3-bit copy whose parts the scan swaps."""
+    """The real models: the original at fp16 and the compressed copy (HQQ 3-bit unless `method` says otherwise)
+    whose parts the scan swaps."""
 
-    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda", base_nbits: int = 3,
-                 streaming: bool | None = None):
-        base_nbits = base_nbits or 3  # automatic starts at 3-bit
+    def __init__(self, nbits: int = 8, batch_size: int = 16, device: str = "cuda", base_nbits: int | None = None,
+                 streaming: bool | None = None, method: str = "hqq"):
         import torch
+
+        from src.quant.methods import get_method
+
+        self.method = get_method(method)
+        if base_nbits and base_nbits not in self.method.bits:
+            raise ValueError(f"{self.method.label} compresses to {list(self.method.bits)} bits, not {base_nbits}.")
+        # automatic starts at 3-bit where the method has it, else at its first width (bitsandbytes: 4 or 8)
+        base_nbits = base_nbits or (3 if 3 in self.method.bits else self.method.bits[0])
+        self.restore_bits = self.method.restore_bits  # what a restored part can be: HQQ 4 / 8, bitsandbytes 16
 
         if device == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("No GPU found. Fast Repair needs a CUDA GPU (e.g. a Colab T4).")
@@ -103,6 +112,10 @@ class TorchBackend:
         size = format_params(n_params)
         if self.streaming is None:
             self.streaming = plan["ram"] > free_ram or plan["original"] > free_gpu
+        if self.streaming and self.method.restores_on_load:
+            raise TooBigError(
+                f"{model_id} has {size}, too big to hold as a 16-bit copy here, and {self.method.label} can't be built "
+                "layer by layer (it needs the whole 16-bit model loaded first). Choose HQQ or RTN for a model this size.")
         if self.streaming:
             # Layer by layer: system memory holds one layer; the GPU holds one copy at a time, the
             # largest being the 8-bit reference (and the repair, at most every part at 8-bit).
@@ -162,37 +175,38 @@ class TorchBackend:
         self._model_id = model_id
         if self.streaming and self.original is None and self.tokenizer is None:
             # Big model: the reference must answer first, alone on the GPU; this copy is built after it.
-            return f"HQQ {self.base_nbits}-bit, built layer by layer once the reference has answered"
+            return f"{self.method.label} {self.base_nbits}-bit, built layer by layer once the reference has answered"
         if self.streaming:
             self._build_streamed()
-            return f"HQQ {self.base_nbits}-bit, built layer by layer"
+            return f"{self.method.label} {self.base_nbits}-bit, built layer by layer"
 
-        from src.quant.hqq_quantizer import load_hqq_3bit_model
         from src.quant.module_swap import SwapRegistry
         from src.quant.weight_source import CheckpointWeightSource
 
-        self.compressed, self.tokenizer = load_hqq_3bit_model(device=self.device, dtype="fp16", model_id=model_id,
-                                                              nbits=self.base_nbits)
+        self.compressed, self.tokenizer = self.method.load(model_id, self.base_nbits, self.device, "fp16")
         adapter = self._adapter or self.adapter(model_id)
         # GPT-2-style parts are stored (in, out) in the checkpoint; the 3-bit model holds them as nn.Linear.
         transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
         weights = CheckpointWeightSource(model_id, transposed=lambda path: path in transposed_paths)
-        self.registry = SwapRegistry(self.compressed, weights, device=self.device)
+        self.registry = SwapRegistry(self.compressed, weights, device=self.device, method=self.method)
         gc.collect()
         torch.cuda.empty_cache()
-        return f"HQQ {self.base_nbits}-bit, group 64, fp16 compute"
+        if self.method.name == "hqq":
+            return f"HQQ {self.base_nbits}-bit, group 64, fp16 compute"
+        return f"{self.method.label} {self.base_nbits}-bit, fp16 compute"
 
     def _build_streamed(self) -> None:
         from src.quant.module_swap import SwapRegistry
-        from src.quant.streaming import load_streaming
         from src.quant.weight_source import CheckpointWeightSource
 
-        self.compressed, tokenizer = load_streaming(self._model_id, self.base_nbits, device=self.device)
+        self.compressed, tokenizer = self.method.load(self._model_id, self.base_nbits, self.device, "fp16",
+                                                      streaming=True)
         self.tokenizer = self.tokenizer or tokenizer
         adapter = self._adapter or self.adapter(self._model_id)
         transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
         self.registry = SwapRegistry(self.compressed, CheckpointWeightSource(
-            self._model_id, transposed=lambda path: path in transposed_paths), device=self.device)
+            self._model_id, transposed=lambda path: path in transposed_paths), device=self.device,
+            method=self.method)
 
     def load_original(self, model_id: str) -> str:
         from src.eval.model_loader import load_model
@@ -200,6 +214,7 @@ class TorchBackend:
         if self.streaming:
             from src.quant.streaming import load_streaming
 
+            # The reference is HQQ 8-bit whatever method is being compared: it stands in for the 16-bit original.
             self.original, self.tokenizer = load_streaming(model_id, 8, device=self.device)
             return "8-bit reference, built layer by layer (the 16-bit original doesn't fit this GPU)"
 

@@ -9,6 +9,8 @@ Anyone with access then loads it in two lines, no FairGate code and no patching:
 
 Saved and loaded back, the model gives bit-identical outputs, its 8-bit parts staying 8-bit (tested).
 `transformers`' own `from_pretrained` no longer loads saved HQQ models (5.x), so HQQ's loader it is.
+HQQ, RTN (and GPTQ) are HQQ's format. A bitsandbytes model is saved with `save_pretrained` and loads with the
+plain `AutoModelForCausalLM.from_pretrained`: its model card says so, and the tests run the code it prints.
 Models whose layers are GPT-2 style `Conv1D` can't be loaded back by HQQ: they are refused, and the
 API and the repair kit still serve them.
 
@@ -22,7 +24,8 @@ import re
 import tempfile
 from pathlib import Path
 
-from src.product.repair_kit import bits_text, headline, part_lines, results_lines
+from src.product.repair_kit import bits_text, headline, method_of, part_lines, results_lines
+from src.quant.repaired import method_of as method_object
 
 REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
@@ -46,13 +49,21 @@ def full_repo_id(user: str, name: str, model_id: str) -> str:
     return f"{owner}/{repo}"
 
 
-def load_code(repo_id: str, device: str = "cuda") -> str:
-    """Ready-to-run Python (run as it is by the tests, on a local copy)."""
-    return (f"# pip install transformers hqq accelerate\n"
-            f"from hqq.models.hf.base import AutoHQQHFModel\n"
-            f"from transformers import AutoTokenizer\n\n"
-            f"model = AutoHQQHFModel.from_quantized(\"{repo_id}\", cache_dir=None, device=\"{device}\")\n"
-            f"tokenizer = AutoTokenizer.from_pretrained(\"{repo_id}\")\n\n"
+def load_code(repo_id: str, device: str = "cuda", method: str = "hqq") -> str:
+    """Ready-to-run Python (run as it is by the tests, on a local copy). HQQ-format models load with HQQ's
+    loader; a bitsandbytes model with the ordinary `from_pretrained`."""
+    if method.startswith("bnb"):
+        head = (f"# pip install transformers accelerate bitsandbytes\n"
+                f"from transformers import AutoModelForCausalLM, AutoTokenizer\n\n"
+                f"model = AutoModelForCausalLM.from_pretrained(\"{repo_id}\", device_map={{\"\": \"{device}\"}})\n"
+                f"tokenizer = AutoTokenizer.from_pretrained(\"{repo_id}\")\n\n")
+    else:
+        head = (f"# pip install transformers hqq accelerate\n"
+                f"from hqq.models.hf.base import AutoHQQHFModel\n"
+                f"from transformers import AutoTokenizer\n\n"
+                f"model = AutoHQQHFModel.from_quantized(\"{repo_id}\", cache_dir=None, device=\"{device}\")\n"
+                f"tokenizer = AutoTokenizer.from_pretrained(\"{repo_id}\")\n\n")
+    return (head +
             f"question = \"Who was late, the nurse or the mechanic?\"\n"
             f"if tokenizer.chat_template:\n"
             f"    inputs = tokenizer.apply_chat_template([{{\"role\": \"user\", \"content\": question}}],\n"
@@ -68,23 +79,28 @@ def load_code(repo_id: str, device: str = "cuda") -> str:
 def model_card(patch: dict, summary: dict, repo_id: str) -> str:
     model_id = patch["model_id"]
     measured = results_lines(summary)
+    method = method_object(patch)
+    name = method_of(patch)
+    in_hqq_format = not method.restores_on_load
     return "\n".join([
         "---",
         f"base_model: {model_id}",
-        "library_name: hqq",
-        "tags: [fairgate, hqq, quantized, fairness, bias-repair]",
+        f"library_name: {'hqq' if in_hqq_format else 'transformers'}",
+        f"tags: [fairgate, {'hqq' if in_hqq_format else 'bitsandbytes'}, quantized, fairness, bias-repair]",
         "---", "",
         f"# {repo_id.split('/')[-1]}", "",
-        f"**{model_id}, compressed with HQQ and repaired for fairness by FairGate.**", "",
+        f"**{model_id}, compressed with {method.label} and repaired for fairness by FairGate.**", "",
         headline(patch, summary), "",
         *(measured or ["Its fairness numbers weren't measured on the full benchmark (a repair put together by "
                        "hand in FairGate Studio).", ""]),
         "## Use it", "",
-        "```python", load_code(repo_id).rstrip(), "```", "",
+        "```python", load_code(repo_id, method=name).rstrip(), "```", "",
         "A private repo needs you to be logged in (`huggingface-cli login`) with access to it.", "",
         "## What's inside", "",
-        f"- Every linear layer (except the output head) HQQ-quantized to {patch['base']['nbits']}-bit, group "
-        f"size 64; the {len(patch['modules'])} parts below kept at {bits_text(patch)}.",
+        (f"- Every linear layer (except the output head) HQQ-quantized to {patch['base']['nbits']}-bit, group "
+         f"size 64; the {len(patch['modules'])} parts below kept at {bits_text(patch)}." if name == "hqq" else
+         f"- Every linear layer (except the output head) compressed with {method.label} to "
+         f"{patch['base']['nbits']}-bit; the {len(patch['modules'])} parts below kept at {bits_text(patch)}."),
         "- `patch.json`: the repair, for FairGate's own tools.", "",
         f"Parts kept at {bits_text(patch)}:", "",
         *part_lines(patch), "",
@@ -93,13 +109,15 @@ def model_card(patch: dict, summary: dict, repo_id: str) -> str:
     ])
 
 
-def check_publishable(model) -> None:
-    """HQQ's loader rebuilds the model from its config, so a model with GPT-2 style Conv1D layers
-    (turned into Linear before quantizing) can't be loaded back: refuse before uploading anything."""
-    if getattr(model.config, "model_type", "") in ("gpt2", "gpt_bigcode", "imagegpt") or any(
-            type(module).__name__ == "Conv1D" for module in model.modules()):
-        raise PublishError("This model's layers are GPT-2 style, which HQQ's loader can't rebuild, so it can't be "
-                           "published as a ready model. Use it now (the API) or download the repair kit instead.")
+def check_publishable(model, method=None) -> None:
+    """Refuse before uploading anything when the method can't publish this model (`Method.can_publish`).
+    HQQ's loader rebuilds the model from its config, so a model with GPT-2 style Conv1D layers (turned into
+    Linear before quantizing) can't be loaded back."""
+    from src.quant.methods import get_method
+
+    reason = get_method(method or "hqq").can_publish(model)
+    if reason:
+        raise PublishError(reason)
 
 
 def save_repaired(model, tokenizer, patch: dict, summary: dict, folder: Path, repo_id: str) -> Path:
@@ -110,7 +128,10 @@ def save_repaired(model, tokenizer, patch: dict, summary: dict, folder: Path, re
 
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    AutoHQQHFModel.save_quantized(model, str(folder))
+    if method_object(patch).restores_on_load:
+        model.save_pretrained(str(folder))  # bitsandbytes: its own format, loaded with plain from_pretrained
+    else:
+        AutoHQQHFModel.save_quantized(model, str(folder))
     tokenizer.save_pretrained(str(folder))
     (folder / "patch.json").write_text(json.dumps(patch, indent=2) + "\n", encoding="utf-8")
     (folder / "README.md").write_text(model_card(patch, summary, repo_id), encoding="utf-8")
@@ -135,7 +156,7 @@ def publish(model, tokenizer, patch: dict, summary: dict, token: str, repo_name:
     token = (token or "").strip()
     if not token:
         raise PublishError("Paste a Hugging Face token with Write access first (huggingface.co/settings/tokens).")
-    check_publishable(model)
+    check_publishable(model, method_object(patch))
     if api is None:
         from huggingface_hub import HfApi
 

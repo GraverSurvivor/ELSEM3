@@ -24,10 +24,11 @@ LINEAR_TYPES = ("Linear", "Conv1D")
 
 
 def load_streaming(model_id: str, nbits: int, device: str = "cuda", dtype: torch.dtype = torch.float16,
-                   group_size: int = DEFAULT_GROUP_SIZE, keep: dict | None = None, optimize: bool = True):
+                   group_size: int = DEFAULT_GROUP_SIZE, keep: dict | None = None, optimize: bool = True,
+                   revision: str | None = None):
     """(model, tokenizer): every linear layer but the output head HQQ-quantized to `nbits` (or to
     `keep[path]` for a repair's parts), built layer by layer from the checkpoint. `optimize=False` is
-    plain rounding (RTN) instead of HQQ's optimiser."""
+    plain rounding (RTN) instead of HQQ's optimiser. `revision` pins the model's commit."""
     from accelerate import init_empty_weights
     from accelerate.utils import set_module_tensor_to_device
     from hqq.core.quantize import HQQLinear
@@ -37,7 +38,7 @@ def load_streaming(model_id: str, nbits: int, device: str = "cuda", dtype: torch
     from src.models.adapter import check_generative
     from src.quant.weight_source import CheckpointWeightSource
 
-    config = AutoConfig.from_pretrained(model_id)
+    config = AutoConfig.from_pretrained(model_id, revision=revision)
     check_generative(config)
     with init_empty_weights():
         model = AutoModelForCausalLM.from_config(config, dtype=dtype)
@@ -46,7 +47,7 @@ def load_streaming(model_id: str, nbits: int, device: str = "cuda", dtype: torch
     linears = [name for name, module in model.named_modules()
                if type(module).__name__ in LINEAR_TYPES and name and not name.endswith("lm_head")]
     conv1d = {name for name in linears if type(model.get_submodule(name)).__name__ == "Conv1D"}
-    source = CheckpointWeightSource(model_id, transposed=lambda path: path in conv1d)
+    source = CheckpointWeightSource(model_id, revision=revision, transposed=lambda path: path in conv1d)
     configs = {bits: build_quant_config(nbits=bits, group_size=group_size, optimize=optimize) for bits in {nbits, *(keep or {}).values()}}
     for name in linears:
         linear = source.get_linear(name, dtype=dtype)
@@ -75,4 +76,4 @@ def load_streaming(model_id: str, nbits: int, device: str = "cuda", dtype: torch
     leftover = [name for name, param in model.named_parameters() if param.device.type == "meta"]
     if leftover:
         raise RuntimeError(f"weights missing from the checkpoint: {leftover[:5]}")
-    return model, prepare_tokenizer(AutoTokenizer.from_pretrained(model_id))
+    return model, prepare_tokenizer(AutoTokenizer.from_pretrained(model_id, revision=revision))

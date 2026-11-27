@@ -89,6 +89,7 @@ def load_hqq_3bit_model(
     dtype: str = DEFAULT_DTYPE,
     model_id: str = MODEL_ID,
     optimize: bool = True,
+    revision: str | None = None,
 ) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
     """Loads Phi-3.5-mini-Instruct quantized to `nbits` (default 3-bit) via HQQ.
 
@@ -109,8 +110,8 @@ def load_hqq_3bit_model(
 
     from src.eval.option_scorer import prepare_tokenizer
 
-    tokenizer = prepare_tokenizer(AutoTokenizer.from_pretrained(model_id))
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype)
+    tokenizer = prepare_tokenizer(AutoTokenizer.from_pretrained(model_id, revision=revision))
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, revision=revision)
     quantize_in_place(model, nbits=nbits, group_size=group_size, compute_dtype=torch_dtype, device=device,
                       optimize=optimize)
 

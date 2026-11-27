@@ -11,32 +11,11 @@ import torch.nn as nn
 from src.quant.methods import get_method
 from src.quant.methods.bnb import BnbInt8Method, BnbNF4Method, skip_modules
 from src.quant.module_swap import SwapRegistry, get_module_by_path, module_nbytes
+from tests.quant.tiny_models import needs_bnb
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 TINY = dict(vocab_size=100, hidden_size=64, intermediate_size=128, num_hidden_layers=12,
             num_attention_heads=4, num_key_value_heads=2, max_position_embeddings=64)
-
-
-def bnb_runs() -> bool:
-    try:
-        import bitsandbytes  # noqa: F401
-        from transformers import AutoModelForCausalLM, BitsAndBytesConfig, Qwen2Config
-
-        config = Qwen2Config(**{**TINY, "num_hidden_layers": 1})
-        folder = __import__("tempfile").mkdtemp()
-        AutoModelForCausalLM.from_config(config).save_pretrained(folder)
-        model = AutoModelForCausalLM.from_pretrained(
-            folder, quantization_config=BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                                                           bnb_4bit_compute_dtype=torch.float16),
-            dtype=torch.float16, device_map={"": DEVICE})
-        with torch.no_grad():
-            model(input_ids=torch.zeros(1, 4, dtype=torch.long, device=DEVICE))
-        return True
-    except Exception:  # noqa: BLE001 -- any failure means "not usable here"
-        return False
-
-
-needs_bnb = pytest.mark.skipif(not bnb_runs(), reason="bitsandbytes doesn't run on this machine (needs a GPU)")
 
 
 # --- the skip list (no bitsandbytes needed) ----------------------------------------------------
@@ -72,7 +51,15 @@ def test_the_table_and_the_refusals():
         int8.load("any/model", 8, "cpu", "fp16", streaming=True)
     with pytest.raises(ValueError, match="plain 16-bit"):
         nf4.restore(nn.Linear(8, 8), 8, "cpu", torch.float16)
-    assert nf4.can_publish(object()) == ""
+    class Config:  # (a model's config, for can_publish)
+        model_type = "qwen2"
+
+    class Model:
+        config = Config()
+
+    assert nf4.can_publish(Model()) == ""
+    Config.model_type = "gpt2"
+    assert "GPT-2 style" in nf4.can_publish(Model())
 
 
 # --- real bitsandbytes -------------------------------------------------------------------------
@@ -89,7 +76,7 @@ def folder(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def no_tokenizer(monkeypatch):
-    monkeypatch.setattr("src.quant.methods.bnb.load_tokenizer", lambda model_id: None)
+    monkeypatch.setattr("src.quant.methods.bnb.load_tokenizer", lambda model_id, revision=None: None)
 
 
 def _logits(model):

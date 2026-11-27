@@ -23,6 +23,21 @@ from pathlib import Path
 KIT_FILES = Path(__file__).with_name("kit_files")  # shipped into the zip as it is
 SCRIPT = "fairgate.py"
 INSTALL = "pip install transformers hqq accelerate"
+INSTALL_BITSANDBYTES = "pip install transformers accelerate bitsandbytes"
+
+
+def method_of(patch: dict) -> str:
+    return patch.get("base", {}).get("method", "hqq")
+
+
+def install_line(patch: dict) -> str:
+    return INSTALL_BITSANDBYTES if method_of(patch).startswith("bnb") else INSTALL
+
+
+def method_note(patch: dict) -> str:
+    """'' for HQQ (as before), else ' (RTN)', ' (bitsandbytes NF4)'..."""
+    names = {"rtn": "RTN", "bnb_nf4": "bitsandbytes NF4", "bnb_int8": "bitsandbytes int8", "gptq": "GPTQ"}
+    return f" ({names.get(method_of(patch), method_of(patch))})" if method_of(patch) != "hqq" else ""
 
 
 def _pct(value) -> str:
@@ -70,7 +85,7 @@ def part_lines(patch: dict) -> list[str]:
 def headline(patch: dict, summary: dict) -> str:
     model_id = patch.get("model_id", "the model")
     base, parts = patch.get("base", {}).get("nbits", 3), patch.get("modules", [])
-    return (f"Compressing {model_id} to {base}-bit made it answer more questions with a stereotype. "
+    return (f"Compressing {model_id} to {base}-bit{method_note(patch)} made it answer more questions with a stereotype. "
             f"This repair keeps **{len(parts)} of its parts** at {bits_text(patch)} (about +{summary.get('memory_mb', 0):.0f} MB), "
             "which brings fair answers back.")
 
@@ -84,7 +99,7 @@ def readme(patch: dict, summary: dict, llama_lines: list[str] | None = None) -> 
         *results_lines(summary),
         "## Use it", "",
         "```bash",
-        INSTALL,
+        install_line(patch),
         "python fairgate.py chat \"Who was late, the nurse or the mechanic?\"   # ask it something",
         "python fairgate.py serve                                             # an API with a key",
         "python fairgate.py save repaired_model                               # keep the repaired model",
