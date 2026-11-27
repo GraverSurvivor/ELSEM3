@@ -153,3 +153,12 @@ Three optional keys; a patch without them reads and re-writes byte-identically (
   one job at a time; Cancel; reload-safe.
 * `python -m src.product.studio --byom` starts Studio without the Phi-3.5 models (the GPU is for the
   customer's model); `--byom-pipeline fake` and `--byom-replay <run dir>` need no GPU.
+
+## C8. Compression methods (Person 4): `src/quant/methods/`
+
+One `Method` protocol (`base.py`): `name`, `label`, `bits`, `restore_bits`, `load(model_id, nbits, device,
+dtype, streaming=False)` -> (model, tokenizer), `restore(linear, nbits, device, dtype)` -> a restored part,
+`nbytes(module)`, `can_publish(model)` -> "" or why not. `get_method(name)` in `__init__.py` is the way in
+(HQQ is the default). `SwapRegistry(..., method="hqq")` restores parts through `method.restore`, and
+`infer_compute_dtype` reads any model's compute dtype. HQQ behind it is bit-identical to before (tested
+against the hand-built `HQQLinear` recipe). RTN, GPTQ and bitsandbytes follow in later PRs.
