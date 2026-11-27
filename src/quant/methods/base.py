@@ -23,11 +23,15 @@ class Method(Protocol):
     label: str                     # what a person reads on screen ("HQQ")
     bits: tuple[int, ...]          # bit-widths the whole model can be compressed to
     restore_bits: tuple[int, ...]  # bit-widths a restored part can have (16 = plain fp16)
+    # True when the kept parts must be named at load time (bitsandbytes' skip list) instead of being
+    # swapped into the loaded model afterwards (HQQ, RTN, GPTQ).
+    restores_on_load: bool
 
-    def load(self, model_id: str, nbits: int, device: str, dtype, streaming: bool = False):
+    def load(self, model_id: str, nbits: int, device: str, dtype, streaming: bool = False,
+             revision: str | None = None):
         """(model, tokenizer): `model_id` compressed to `nbits`. `dtype` is the compute dtype (a name
         such as "fp16" or a torch dtype). `streaming` builds it layer by layer from the checkpoint,
-        for models too big to load whole first."""
+        for models too big to load whole first. `revision` is the model's commit on the Hub (None = latest)."""
         ...
 
     def restore(self, linear: nn.Linear, nbits: int, device: str, dtype: torch.dtype) -> nn.Module:

@@ -30,12 +30,12 @@ def skip_modules(paths: Iterable[str] = ()) -> list[str]:
     return [re.escape(path) for path in paths] + ["lm_head"]
 
 
-def load_tokenizer(model_id: str):
+def load_tokenizer(model_id: str, revision: str | None = None):
     from transformers import AutoTokenizer
 
     from src.eval.option_scorer import prepare_tokenizer
 
-    return prepare_tokenizer(AutoTokenizer.from_pretrained(model_id))
+    return prepare_tokenizer(AutoTokenizer.from_pretrained(model_id, revision=revision))
 
 
 class _BnbMethod:
@@ -43,12 +43,13 @@ class _BnbMethod:
     label: str
     bits: tuple[int, ...]
     restore_bits = (16,)
+    restores_on_load = True  # the kept parts are listed at load time (llm_int8_skip_modules), not swapped in
 
     def quantization_config(self, dtype, restored: Iterable[str] = ()):
         raise NotImplementedError
 
     def load(self, model_id: str, nbits: int, device: str, dtype, streaming: bool = False,
-             restored: Iterable[str] = ()):
+             restored: Iterable[str] = (), revision: str | None = None):
         """(model, tokenizer). `restored` lists the parts kept at 16-bit (a repair's patch paths)."""
         if nbits not in self.bits:
             raise ValueError(f"{self.label} compresses to {list(self.bits)} bits, not {nbits}.")
@@ -59,9 +60,9 @@ class _BnbMethod:
 
         model = AutoModelForCausalLM.from_pretrained(
             model_id, quantization_config=self.quantization_config(dtype, restored),
-            dtype=torch_dtype(dtype), device_map={"": device})
+            dtype=torch_dtype(dtype), device_map={"": device}, revision=revision)
         model.eval()
-        return model, load_tokenizer(model_id)
+        return model, load_tokenizer(model_id, revision)
 
     def restore(self, linear: nn.Linear, nbits: int, device: str, dtype: torch.dtype) -> nn.Module:
         if nbits not in self.restore_bits:
@@ -80,7 +81,13 @@ class _BnbMethod:
         return module_nbytes(module)
 
     def can_publish(self, model) -> str:
-        return ""  # saved with save_pretrained and loaded with the normal from_pretrained
+        # Saved with save_pretrained and loaded with the normal from_pretrained. A GPT-2 style model keeps its
+        # layers as Conv1D (weights stored transposed), so a restored part (a plain Linear) would not load
+        # back into its slot: refused rather than published broken.
+        if getattr(model.config, "model_type", "") in ("gpt2", "gpt_bigcode", "imagegpt"):
+            return ("This model's layers are GPT-2 style, which bitsandbytes can't save with restored parts, so it "
+                    "can't be published as a ready model. Use it now (the API) or download the repair kit instead.")
+        return ""
 
 
 class BnbNF4Method(_BnbMethod):

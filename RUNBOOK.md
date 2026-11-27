@@ -222,3 +222,11 @@ the T4 run it for real, together with the other method tests (a few minutes, aft
 Nothing in `test_bnb.py` should be skipped there (`-rs` lists skips). The skip-list test also runs
 transformers' own `should_convert_module`, so it checks that layer 1 doesn't match layer 11 on Colab's
 `transformers==5.0.0`. Then `python -m src.eval.check_reproduction` must still say PASS: HQQ 3-bit hasn't moved.
+
+For the whole chain (patch -> kit -> publish -> backend, any method) run, on the T4 after the usual clone and install:
+```python
+%cd /content/ELSEM3
+!pip install -q bitsandbytes
+!python -m pytest tests/quant tests/product/test_methods_chain.py tests/product/test_hub_publish.py -q -rs
+```
+Nothing in `test_bnb.py`, `test_repaired.py` or `test_methods_chain.py` should be skipped there.

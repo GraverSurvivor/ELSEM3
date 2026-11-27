@@ -50,7 +50,7 @@ LLAMACPP_TENSORS = {
     "mlp.gate_up_proj": "ffn_up",
     "mlp.down_proj": "ffn_down",
 }
-LLAMACPP_TYPES = {8: "q8_0", 6: "q6_K", 5: "q5_K", 4: "q4_K"}
+LLAMACPP_TYPES = {16: "f16", 8: "q8_0", 6: "q6_K", 5: "q5_K", 4: "q4_K"}  # 16: a part kept plain (bitsandbytes patches)
 
 
 def _load(run_dir: Path) -> list:
