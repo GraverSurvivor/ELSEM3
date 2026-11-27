@@ -230,3 +230,16 @@ For the whole chain (patch -> kit -> publish -> backend, any method) run, on the
 !python -m pytest tests/quant tests/product/test_methods_chain.py tests/product/test_hub_publish.py -q -rs
 ```
 Nothing in `test_bnb.py`, `test_repaired.py` or `test_methods_chain.py` should be skipped there.
+
+## Compare methods: the GPU runs (Person 4)
+After the usual clone and install on a T4 (and `check_reproduction` PASS), `pip install -q bitsandbytes`, then:
+```python
+# Which compression is fairest for Qwen2.5-3B? (about 1 hour: six methods, 500 + 500 questions each)
+!python -m src.product.compare_methods --model Qwen/Qwen2.5-3B-Instruct --out results/compare_qwen3b
+# One repair per method on Qwen2.5-1.5B (HQQ and RTN; the others are refused with a reason)
+!python -m src.product.fast_repair --model Qwen/Qwen2.5-1.5B-Instruct --method hqq --out results/repair_1p5b_hqq
+!python -m src.product.fast_repair --model Qwen/Qwen2.5-1.5B-Instruct --method rtn --out results/repair_1p5b_rtn
+```
+`results/compare_qwen3b/comparison.json` is the ranked result; `python -m src.product.compare_methods --model x/y --fake
+--out DIR` makes the same files with no GPU. Keep the three folders (not committed: `results/` is ignored) and tell the
+others the numbers.

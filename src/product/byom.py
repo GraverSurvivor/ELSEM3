@@ -129,6 +129,32 @@ def check_bits(bits) -> int:
     raise ValueError("Pick 3-bit or 4-bit compression.")
 
 
+# How the model is compressed (screen 5's "Compression method"). The repair can use HQQ and RTN; the others can be
+# compared (the "Compare compression methods" panel) and are refused for a repair with the reason.
+METHODS = {"hqq": "HQQ: the project's method",
+           "rtn": "RTN: plain rounding, the simplest",
+           "bnb_nf4": "bitsandbytes NF4 (4-bit)",
+           "bnb_int8": "bitsandbytes int8 (8-bit)"}
+
+
+def check_method(method, bits=0) -> str:
+    """The method key for a repair, or a ValueError whose message can be shown as it is: a method the repair
+    can't use, or a bit-width the method doesn't have."""
+    key = next((k for k, label in METHODS.items() if method in (k, label)), None)
+    if key is None:
+        raise ValueError("Pick a compression method.")
+    if key == "hqq":
+        return key
+    from src.product.compare_methods import repair_refusal
+    from src.quant.methods import get_method
+
+    options = get_method(key).bits
+    reason = repair_refusal(key, bits or (3 if 3 in options else options[0]))
+    if reason:
+        raise ValueError(reason)
+    return key
+
+
 def check_mode(mode: str | None) -> str:
     for key, label in MODES.items():
         if mode in (key, label):
@@ -546,13 +572,14 @@ class JobBusy(RuntimeError):
 
 
 def pipeline_command(kind: str, model_id: str, mode: str, questions: int, out: Path,
-                     replay: Path | None = None, speed: float = 30.0, base_nbits: int = 0, budget: float = 0.10) -> list[str]:
+                     replay: Path | None = None, speed: float = 30.0, base_nbits: int = 0, budget: float = 0.10,
+                     method: str = "hqq") -> list[str]:
     """The process to start. "real" is the sprint's fast_repair pipeline (Person 1); "fake" and
     "replay" are the stand-in in src/product/byom_fake.py."""
     args = ["--model", model_id, "--mode", mode, "--questions", str(questions), "--out", str(out),
             "--base-nbits", str(base_nbits or "auto"), "--max-restore", str(budget)]
     if kind == "real":
-        return [sys.executable, "-m", "src.product.fast_repair", *args]
+        return [sys.executable, "-m", "src.product.fast_repair", *args, *(["--method", method] if method != "hqq" else [])]
     extra = ["--speed", str(speed)]
     if kind == "replay":
         if replay is None:
@@ -638,12 +665,8 @@ class JobRunner:
         return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
 
     # actions
-    def start(self, model_id: str, mode: str, base_nbits: int = 0, budget: float = 0.10,
-              hf_token: str | None = None) -> Path:
-        """Starts a diagnosis. `hf_token` (for gated models) goes to this run's environment only: it is
-        never written to job.json, the log or anywhere else."""
-        model_id, mode = check_model_id(model_id), check_mode(mode)
-        base_nbits, budget = check_bits(base_nbits), check_budget(budget)
+    def _new_job(self, model_id: str) -> Path:
+        """The folder for a new job, after checking that the GPU is free."""
         current = self.current()
         if current is not None and self.is_running(current):
             info = self.job_info(current)
@@ -655,8 +678,39 @@ class JobRunner:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         job_dir = self.jobs_dir / f"{stamp}_{_slug(model_id)}"
         job_dir.mkdir(parents=True)
+        return job_dir
+
+    def start_compare(self, model_id: str, methods: str = "all", questions: int | None = None,
+                      hf_token: str | None = None) -> Path:
+        """Starts "Compare methods" (src/product/compare_methods.py) on `methods` ("all", or "hqq:3,rtn:4"). It is a
+        job like a diagnosis (same folder, events, Cancel and one-at-a-time rule); job.json says kind "compare"."""
+        from src.product.compare_methods import DEFAULT_QUESTIONS, parse_methods
+
+        model_id = check_model_id(model_id)
+        parse_methods(methods)  # refuses an unknown or impossible method before anything starts
+        job_dir = self._new_job(model_id)
+        command = [sys.executable, "-m", "src.product.compare_methods", "--model", model_id, "--methods", methods,
+                   "--questions", str(questions or DEFAULT_QUESTIONS), "--out", str(job_dir),
+                   *(["--fake"] if self.pipeline != "real" else [])]
+        self._launch(job_dir, command, {"model_id": model_id, "kind": "compare", "methods": methods,
+                                        "questions": questions or DEFAULT_QUESTIONS}, hf_token)
+        return job_dir
+
+    def start(self, model_id: str, mode: str, base_nbits: int = 0, budget: float = 0.10,
+              hf_token: str | None = None, method: str = "hqq") -> Path:
+        """Starts a diagnosis. `hf_token` (for gated models) goes to this run's environment only: it is
+        never written to job.json, the log or anywhere else."""
+        model_id, mode = check_model_id(model_id), check_mode(mode)
+        base_nbits, budget = check_bits(base_nbits), check_budget(budget)
+        method = check_method(method, base_nbits)
+        job_dir = self._new_job(model_id)
         command = pipeline_command(self.pipeline, model_id, mode, self.questions, job_dir, self.replay, self.speed,
-                                   base_nbits=base_nbits, budget=budget)
+                                   base_nbits=base_nbits, budget=budget, method=method)
+        self._launch(job_dir, command, {"model_id": model_id, "mode": mode, "base_nbits": base_nbits,
+                                        "questions": self.questions, "method": method}, hf_token)
+        return job_dir
+
+    def _launch(self, job_dir: Path, command: list[str], info: dict, hf_token: str | None) -> None:
         log = (job_dir / "pipeline.log").open("w", encoding="utf-8")
         kwargs = {"start_new_session": True} if os.name != "nt" else {
             "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
@@ -666,11 +720,8 @@ class JobRunner:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=Path.cwd(), env=env, **kwargs)
         log.close()  # the child has its own handle
         self._processes[job_dir.name] = process
-        self._write_info(job_dir, {"model_id": model_id, "mode": mode, "base_nbits": base_nbits,
-                                   "questions": self.questions,
-                                   "pipeline": self.pipeline, "started": _now_iso(), "pid": process.pid,
+        self._write_info(job_dir, {**info, "pipeline": self.pipeline, "started": _now_iso(), "pid": process.pid,
                                    "command": command, "cancelled": False, "ended": None})
-        return job_dir
 
     def cancel(self, job_dir: Path | None = None) -> bool:
         """Stop the current job's process (and anything it started). Returns False if nothing ran."""
