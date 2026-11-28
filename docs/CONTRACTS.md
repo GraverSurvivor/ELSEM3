@@ -98,6 +98,9 @@ python -m src.product.fast_repair --model <HF id> --mode fast|exact --questions 
   (5 points or more), for the compressed model and, if repaired, the repaired one. The fairness verdict
   doesn't cover these, so the Studio shows them next to it.
 * `n_layers` and `part_types` (display order) were added for the Studio grid (Person 3's request).
+* Optional `<dir>/arc.json` (Nov 2026), written afterwards by `python -m src.product.arc_check <dir>`: `accuracy`
+  {original, compressed, repaired (null without a patch)}, `by_set`, `diff` (paired, with 95% intervals), `state`,
+  `message`, `sample`, and every answer. Report only; nothing in the pipeline reads it.
 * The scan stage's `done`/`total` count questions asked against the plan, so the bar moves with time;
   its `started` message carries the estimate ("252 parts · about 25 min") and every progress message
   the step and time left ("Step 1 of 2 · Quick look at every part: 37 of 252 · about 21 min left").

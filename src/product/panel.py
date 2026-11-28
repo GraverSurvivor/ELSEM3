@@ -29,7 +29,7 @@ import numpy as np
 
 OUT_DIR = Path("results/final/panel")
 PIPELINES = ("v1", "v2")
-COPIED = ("report.json", "patch.json", "answers.json", "objectives.json")
+COPIED = ("report.json", "patch.json", "answers.json", "objectives.json", "arc.json")
 MIN_LOST = 0.02          # less "can't tell" lost than this (2 points, the gate's limit) leaves nothing to recover
 N_RESAMPLES = 2000
 SEED = 0
@@ -63,8 +63,8 @@ def bbq_labels() -> dict:
             for name, context in (("ambig", "ambig"), ("stated", "disambig"))}
 
 
-def run_row(name: str, pipeline: str, report: dict) -> dict:
-    """One run's numbers for the panel, all from its report.json."""
+def run_row(name: str, pipeline: str, report: dict, arc: dict | None = None) -> dict:
+    """One run's numbers for the panel, from its report.json (and arc.json, the general-knowledge check, if run)."""
     size = report.get("size") or {}
     balanced = report.get("letter_balanced") or {}
     return {
@@ -80,6 +80,8 @@ def run_row(name: str, pipeline: str, report: dict) -> dict:
         "escalated": bool(report.get("escalated_from")), "prompt_style": report.get("prompt_style", "plain"),
         "compute_dtype": report.get("compute_dtype", "fp16"), "minutes": report.get("minutes"),
         "gpu": report.get("gpu"),
+        "arc": None if not arc else {"accuracy": arc["accuracy"], "state": arc["state"], "n": arc["sample"]["n"],
+                                     "repaired_minus_compressed": arc["diff"].get("repaired_minus_compressed")},
     }
 
 
@@ -171,7 +173,7 @@ def build(folder: Path, labels: dict | None = None) -> dict:
     labels = labels if labels is not None else (bbq_labels() if need_labels else {})
     for name, paths in runs.items():
         reports = {p: _json(paths[p] / "report.json") for p in PIPELINES if p in paths}
-        rows += [run_row(name, p, reports[p]) for p in PIPELINES if p in reports]
+        rows += [run_row(name, p, reports[p], _json(paths[p] / "arc.json")) for p in PIPELINES if p in reports]
         model = {"model": name, "model_id": next(iter(reports.values())).get("model_id"),
                  "complete": set(PIPELINES) <= set(reports), "paired": None, "objectives": None}
         if model["complete"]:
@@ -275,6 +277,12 @@ def _table(header: list[str], rows: list[list]) -> list[str]:
            ["| " + " | ".join(str(c) for c in row) + " |" for row in rows]
 
 
+def _arc_cell(arc) -> str:
+    if not arc:
+        return "not run"
+    return " / ".join(_pct(arc["accuracy"].get(v)) for v in ("original", "compressed", "repaired"))
+
+
 def section_lines(panel: dict) -> list[str]:
     """The panel as Markdown lines (also the final tables' and FairGate report's section)."""
     v = panel["verdict"]
@@ -283,13 +291,13 @@ def section_lines(panel: dict) -> list[str]:
                   [[t["target"], t["needed"], t["result"], "yes" if t["met"] else "**no**"] for t in panel["targets"]])
     out += [""] + _table(
         ["Model", "Version", "Outcome", "FairGate", "Recovered [95%]", "Letters balanced",
-         "Right answers: original / 3-bit / repaired", "False \"can't tell\": original / repaired", "Size vs compressed",
-         "Minutes"],
+         "Right answers: original / 3-bit / repaired", "False \"can't tell\": original / repaired",
+         "General knowledge (ARC): original / 3-bit / repaired", "Size vs compressed", "Minutes"],
         [[r["model"], r["pipeline"] + (" (4-bit)" if r["escalated"] else ""), r["outcome"] or "-", r["verdict"] or "-",
           _rec(r["recovery"]), _pct(r["letter_balanced_recovery"]),
           " / ".join(_pct(r[v]["accuracy"]) for v in ("original", "compressed", "repaired")),
           f"{_pct(r['original']['false_unknown'])} / {_pct(r['repaired']['false_unknown'])}",
-          "-" if r["extra_size"] is None else f"+{100 * r['extra_size']:.0f}%", r["minutes"] or "-"]
+          _arc_cell(r.get("arc")), "-" if r["extra_size"] is None else f"+{100 * r['extra_size']:.0f}%", r["minutes"] or "-"]
          for r in panel["rows"]])
     paired_rows = [[m["model"], f"{m['paired']['questions']['ambiguous']} + {m['paired']['questions']['stated_answer']}",
                     _pts(m["paired"]["recovery"]["diff"]), _pts(m["paired"]["accuracy"]["diff"]),
@@ -313,6 +321,9 @@ def section_lines(panel: dict) -> list[str]:
         if r["prompt_style"] == "examples":
             notes.append(f"{r['model']} {r['pipeline']}: asked with three worked examples (the original rarely said "
                          "\"can't tell\" cold).")
+        if (r.get("arc") or {}).get("state") == "harm":
+            notes.append(f"{r['model']} {r['pipeline']}: the repair lowered general knowledge (ARC) below the "
+                         "compressed model's.")
         if r["escalated"]:
             notes.append(f"{r['model']} {r['pipeline']}: moved to 4-bit, as 3-bit couldn't be repaired fairly.")
     if notes:
@@ -332,7 +343,7 @@ CSV_FIELDS = ("model", "model_id", "pipeline", "outcome", "verdict", "recovery",
               "letter_balanced_recovery", "usr_original", "usr_compressed", "usr_repaired", "accuracy_original",
               "accuracy_compressed", "accuracy_repaired", "false_unknown_original", "false_unknown_repaired",
               "extra_size", "extra_mb", "restored_share", "parts", "base_nbits", "escalated", "prompt_style",
-              "compute_dtype", "minutes", "gpu")
+              "compute_dtype", "minutes", "gpu", "arc_original", "arc_compressed", "arc_repaired", "arc_state")
 
 
 def write_csv(panel: dict, path: Path) -> None:
@@ -346,7 +357,9 @@ def write_csv(panel: dict, path: Path) -> None:
                 "recovery_upper": r["recovery"].get("upper"),
                 **{f"{m}_{v}": r[v][m] for m in ("usr", "accuracy") for v in ("original", "compressed", "repaired")},
                 "false_unknown_original": r["original"]["false_unknown"],
-                "false_unknown_repaired": r["repaired"]["false_unknown"]})
+                "false_unknown_repaired": r["repaired"]["false_unknown"],
+                **{f"arc_{v}": (r.get("arc") or {}).get("accuracy", {}).get(v) for v in ("original", "compressed", "repaired")},
+                "arc_state": (r.get("arc") or {}).get("state")})
 
 
 # --- figures -----------------------------------------------------------------------------------------
