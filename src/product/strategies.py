@@ -147,7 +147,11 @@ class Remeasure:
         self.work = (sample, stated) if config.mode == "exact" else (rng_subset(sample, WORK[0]), rng_subset(stated, WORK[1]))
         self.check = (rng_subset(check[0], CHECK[0]), rng_subset(check[1], CHECK[1]))
         share = config.max_restore if 0 < config.max_restore < 1 else 1.0
-        self.budget = share * self.bytes_of(adapter.total_params(), config.nbits)
+        # What a part can be restored to: the method's own bits (HQQ and RTN 4 or 8, bitsandbytes 16).
+        offered = tuple(getattr(backend, "restore_bits", None) or (4, config.nbits))
+        self.top = config.nbits if config.nbits in offered else max(offered)
+        self.cheap = 4 if 4 in offered and base_bits < 4 and self.top > 4 else None  # tried before `top`
+        self.budget = share * self.bytes_of(adapter.total_params(), 8)  # the budget is stated at 8-bit
         self.reference_skipped = ""
         self.asked, self.lost, self.number = 0, 0.0, 1  # `number`: the round (1 is the first look)
         self.groups_taken: list[tuple[str, tuple[str, ...]]] = []
@@ -215,8 +219,8 @@ class Remeasure:
     def units(self) -> list[Unit]:
         """Every part on its own, and each part type in every layer (at 4-bit when that is above the base:
         the cheapest way to lift a whole type)."""
-        singles = [Unit(p, (p,), self.config.nbits) for p in self.candidates]
-        bits = 4 if self.base_bits < 4 else self.config.nbits
+        singles = [Unit(p, (p,), self.top) for p in self.candidates]
+        bits = self.cheap or self.top
         groups = []
         for part_type in self.adapter.part_types:
             parts = tuple(p for p in self.candidates if p.endswith("." + part_type))
@@ -393,12 +397,12 @@ class Remeasure:
 
     def right_size(self, parts: dict, chosen: list[Unit], fresh: dict, reading: Reading) -> tuple[dict, Reading]:
         """Each chosen part that went to 8-bit is tried at 4-bit, the others staying as chosen."""
-        if self.base_bits >= 4:
+        if self.cheap is None:
             return parts, reading
         for unit in chosen:
-            if len(unit.parts) > 1 or parts.get(unit.parts[0], 0) <= 4:
+            if len(unit.parts) > 1 or parts.get(unit.parts[0], 0) <= self.cheap:
                 continue
-            smaller = {**parts, unit.parts[0]: 4}
+            smaller = {**parts, unit.parts[0]: self.cheap}
             at_four = self.try_parts(smaller, f"{unit.name} at 4-bit", self.work)
             if gain(reading, at_four)[0] <= (1 - KEEP_SHARE) * fresh[unit][0]:
                 parts, reading = smaller, at_four
@@ -497,7 +501,7 @@ class Remeasure:
             choices["first_scores"] = earlier
             rows.append(row("first_scores", "Parts by their first scores (version 1's order)", earlier,
                             measure(earlier), True))
-        if self.base_bits < 4 and not getattr(self.backend, "streaming", False):
+        if self.cheap is not None and not getattr(self.backend, "streaming", False):
             # Only a reference, and it needs a second copy of the model at once: never let it fail the run (big
             # models built layer by layer are left out, as their GPU was sized for one copy).
             self.say("Comparing with 4-bit everywhere")
@@ -521,7 +525,7 @@ class Remeasure:
         result.rows = rows
         if best["name"] != "remeasured":  # the search's own budget flag doesn't describe another repair
             result.budget_reached = best["name"] == "first_scores" and self.budget - self.added(earlier) < (
-                min((self.bytes_of(self.adapter.params(p), self.config.nbits) for p in self.candidates if p not in earlier),
+                min((self.bytes_of(self.adapter.params(p), self.top) for p in self.candidates if p not in earlier),
                     default=0.0))
         wanted = choices.get(best["name"], {})
         for path in list(registry.active):

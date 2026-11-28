@@ -91,7 +91,7 @@ MIN_GAP = 0.02            # a smaller drop in "can't tell" (original -> compress
 # The most a repair may keep at 8-bit. Compressing is the point: 15% of the weights at 8-bit makes a 3-bit
 # model 19% bigger, still smaller than 4-bit everywhere (+20%); past that, 4-bit everywhere is the better deal.
 MAX_RESTORE = 0.15
-REAL_BITS = {3: 3.75, 4: 4.5, 8: 8.5}  # HQQ's real cost per weight (packing, scales, zeros), measured
+REAL_BITS = {3: 3.75, 4: 4.5, 8: 8.5, 16: 16.0}  # real cost per weight (HQQ: packing, scales, zeros), measured
 OTHER_DAMAGE = 0.05       # accuracy loss / extra hedging on stated-answer questions worth reporting
 
 # What a run concluded, in the report's "outcome" (contract C4).

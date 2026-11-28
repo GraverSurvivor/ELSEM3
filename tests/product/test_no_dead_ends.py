@@ -327,3 +327,24 @@ def test_a_search_that_hit_its_budget_says_nothing_once_its_repair_is_not_kept()
     compressed = {id(it): it.stereotype_index if it.example_id % 2 == 0 else it.unknown_index for it in AMBIG}
     result = job.choose((AMBIG[:400], DISAMBIG[:200]), compressed | {id(it): it.label for it in DISAMBIG})
     assert result.rows[0]["chosen"] and result.kept == [] and result.budget_reached is False
+
+
+def test_parts_are_restored_at_the_bits_the_compression_method_offers(tmp_path):
+    """bitsandbytes (4-bit base) keeps a restored part at plain 16-bit: no 8-bit, no 4-bit step."""
+    from tests.product.test_strategies import remeasure
+
+    backend = Backend(fixes((Q[0],), (Q[1],)))
+    backend.restore_bits = (16,)
+    job = remeasure(backend)
+    job.base_bits = 4
+    job.__init__(backend, job.adapter, job.candidates, job.work[0], job.work[1], job.scorer, job.config, 4, job.original,
+                 job.check, (60, 40))
+    assert job.top == 16 and job.cheap is None
+    assert {u.bits for u in job.units()} == {16}
+    one = job.bytes_of(ADAPTER.params(Q[0]), 16)
+    assert job.budget < 2 * one  # 16-bit costs about twice 8-bit's memory: this budget holds one part
+    job.budget = 3 * one
+    result = job.run()
+    assert set(result.bits.values()) == {16} and set(result.kept) == {Q[0], Q[1]}
+    hqq = remeasure(Backend(fixes((Q[0],))))
+    assert (hqq.top, hqq.cheap) == (8, 4)

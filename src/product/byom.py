@@ -74,7 +74,7 @@ GGUF_NAMES = {
     "mlp.up_proj": "ffn_up",
     "mlp.down_proj": "ffn_down",
 }
-GGUF_TYPES = {8: "q8_0", 6: "q6_K", 5: "q5_K", 4: "q4_K"}
+GGUF_TYPES = {16: "f16", 8: "q8_0", 6: "q6_K", 5: "q5_K", 4: "q4_K"}  # 16: a part kept plain (bitsandbytes patches)
 
 PART_LABELS = {
     "self_attn.qkv_proj": "Attention input",

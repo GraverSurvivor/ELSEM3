@@ -159,3 +159,33 @@ Three optional keys; a patch without them reads and re-writes byte-identically (
   one job at a time; Cancel; reload-safe.
 * `python -m src.product.studio --byom` starts Studio without the Phi-3.5 models (the GPU is for the
   customer's model); `--byom-pipeline fake` and `--byom-replay <run dir>` need no GPU.
+
+## C8. Compression methods (Person 4): `src/quant/methods/`
+
+One `Method` protocol (`base.py`): `name`, `label`, `bits`, `restore_bits`, `load(model_id, nbits, device,
+dtype, streaming=False)` -> (model, tokenizer), `restore(linear, nbits, device, dtype)` -> a restored part,
+`nbytes(module)`, `can_publish(model)` -> "" or why not. `get_method(name)` in `__init__.py` is the way in
+(HQQ is the default). `SwapRegistry(..., method="hqq")` restores parts through `method.restore`, and
+`infer_compute_dtype` reads any model's compute dtype. HQQ behind it is bit-identical to before (tested
+against the hand-built `HQQLinear` recipe).
+
+Methods so far: `hqq` (bits 2/3/4, restored 4/8), `rtn` (3/4, restored 4/8: HQQ's container with the optimiser
+off and no rounded zero-point, equal to hand-written min-max rounding), `bnb_nf4` (4, restored 16) and
+`bnb_int8` (8, restored 16). `Method.load` also takes `revision` (the model's commit) and a method has
+`restores_on_load` (True for bitsandbytes: the kept parts are named when loading, not swapped in afterwards).
+bitsandbytes methods take `restored=[paths]` in `load` and list those parts in
+`llm_int8_skip_modules` as escaped full paths plus `lm_head` (`methods.bnb.skip_modules`); they refuse
+`streaming=True`. `module_nbytes` also counts bitsandbytes' quantization state. GPTQ follows.
+
+**The chain for any method (D3).** `src/quant/repaired.py`: `load_repaired(patch, device, streaming=False,
+model_id=None)` -> (model, tokenizer) for a `Patch` or a patch.json dict: the base method / bits / group size /
+compute dtype (default fp16) / `revision`, with each part at `module_bits` (else `nbits`); an old patch (no method,
+`module_bits`, `revision` or dtype) is HQQ at fp16 with every part at `nbits`, the same logits as the existing
+layer-by-layer rebuild (tested). `part_bits(patch)` and `method_of(patch)` are there for callers. A method that
+can't store a width, or a part the model lacks, raises `PatchError` in plain words. `TorchBackend(method="rtn")`
+compresses with the method and restores through it; it has `method` and `restore_bits` (HQQ/RTN 4, 8; bitsandbytes
+16 -- the pipeline's 4-bit-then-8-bit steps must use `backend.restore_bits`), refuses a width the method lacks, and
+refuses (`TooBigError`) a model that would need layer-by-layer building with a method that can't. The kit's
+`fairgate.py` reads `base.method`, `module_bits`, the dtype and the commit; the publisher saves HQQ-format models as
+before and bitsandbytes ones with `save_pretrained` (card: plain `from_pretrained`), and `Method.can_publish` decides
+what is refused. llama.cpp lines map a 16-bit part to `f16`.

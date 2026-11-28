@@ -1440,7 +1440,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     release_held()  # built only for the upload
             where = "private: only you (and people you add) can see it" if result["private"] else "public"
             return (f"✅ **Published:** [{result['repo_id']}]({result['url']}) ({where}). Load it anywhere with "
-                    "the code below.", gr.update(value=load_code(result["repo_id"], dtype=patch["base"].get("compute_dtype", "fp16")),
+                    "the code below.", gr.update(value=load_code(result["repo_id"], method=patch["base"].get("method", "hqq"), dtype=patch["base"].get("compute_dtype", "fp16")),
                                                   visible=True), "")
 
         def ship_switch(source):

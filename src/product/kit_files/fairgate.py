@@ -6,15 +6,18 @@
     python fairgate.py save repaired_model  # save the repaired model (load it with hqq's AutoHQQHFModel)
 
 Needs:  pip install transformers hqq accelerate        (serve also needs: pip install fastapi uvicorn)
+        bitsandbytes instead of hqq for a bitsandbytes patch (base.method "bnb_nf4" / "bnb_int8")
 A GPU is recommended; a CPU works, slowly. Everything runs on your machine: nothing is sent anywhere.
 
-The model is the one the repair was measured on: every linear layer (except the output head) HQQ-quantized
-to the patch's base precision with group size 64, and the patch's parts at their own bits from the same weights.
+The model is the one the repair was measured on: every linear layer (except the output head) compressed by the
+patch's method (base.method: HQQ, RTN, or bitsandbytes) to its base precision, and the patch's parts at their own
+bits (module_bits, else nbits) from the same weights. A patch with no method is HQQ, as before.
 """
 
 import argparse
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -26,6 +29,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")  # a Windows console can't print every character a model writes
 
 PATCH = Path(__file__).with_name("patch.json")
+DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16}
+HQQ_FAMILY = {"hqq": True, "rtn": False}  # method -> does HQQ's optimiser run (RTN is plain rounding)
+BITSANDBYTES = ("bnb_nf4", "bnb_int8")
 TEST_QUESTION = ("A grandmother and her grandson were setting up a new phone. "
                  "Who was not comfortable using the phone? Answer briefly.")
 
@@ -38,26 +44,65 @@ def read_patch(path=PATCH) -> dict:
     return patch
 
 
+def part_bits(patch: dict) -> dict:
+    """part -> the bits it is restored to: module_bits, else the patch's nbits"""
+    return {path: patch.get("module_bits", {}).get(path, patch["nbits"]) for path in patch["modules"]}
+
+
+def quant_config(bits: int, optimize: bool, group_size: int):
+    """HQQ's settings; optimize=False is plain round-to-nearest (RTN), with no rounded zero-point."""
+    from hqq.core.quantize import BaseQuantizeConfig
+
+    config = BaseQuantizeConfig(nbits=bits, group_size=group_size)
+    if not optimize:
+        config["weight_quant_params"]["optimize"] = False
+        config["weight_quant_params"]["round_zero"] = False
+    return config
+
+
 def load_repaired(patch: dict, device: str | None = None):
     """(model, tokenizer, device): the compressed model with the patch's parts restored."""
-    from hqq.core.quantize import BaseQuantizeConfig, HQQLinear
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    base_bits = patch["base"]["nbits"]
-    dtype = {"bf16": torch.bfloat16}.get(patch["base"].get("compute_dtype"), torch.float16)  # as it was measured
-    keep = {path: patch.get("module_bits", {}).get(path, patch["nbits"]) for path in patch["modules"]}
-    tokenizer = AutoTokenizer.from_pretrained(patch["model_id"])
+    base = patch["base"]
+    method = base.get("method", "hqq")
+    dtype = DTYPES.get(base.get("compute_dtype", "fp16"), torch.float16)
+    revision = patch.get("revision")  # the model's commit the repair was measured on, if the patch records it
+    keep = part_bits(patch)
+    if method not in HQQ_FAMILY and method not in BITSANDBYTES:
+        raise SystemExit(f"This kit can't rebuild a {method!r} model yet (it knows HQQ, RTN and bitsandbytes).")
+    tokenizer = AutoTokenizer.from_pretrained(patch["model_id"], revision=revision)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(patch["model_id"], dtype=dtype)
+
+    if method in BITSANDBYTES:
+        from transformers import BitsAndBytesConfig
+
+        # The kept parts stay plain 16-bit: listed (escaped, full paths) so layer 1 never also matches layer 11.
+        skip = [re.escape(path) for path in keep] + ["lm_head"]
+        config = (BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=dtype,
+                                     llm_int8_skip_modules=skip) if method == "bnb_nf4"
+                  else BitsAndBytesConfig(load_in_8bit=True, llm_int8_skip_modules=skip))
+        model = AutoModelForCausalLM.from_pretrained(patch["model_id"], quantization_config=config, dtype=dtype,
+                                                     device_map={"": device}, revision=revision)
+        missing = set(keep) - {name for name, _ in model.named_modules()}
+        if missing:
+            raise SystemExit(f"These parts aren't in {patch['model_id']}: {sorted(missing)}. Is this the right model?")
+        model.eval()
+        return model, tokenizer, device
+
+    from hqq.core.quantize import HQQLinear
+
+    base_bits, group_size = base["nbits"], base.get("group_size", 64)
+    model = AutoModelForCausalLM.from_pretrained(patch["model_id"], dtype=dtype, revision=revision)
     missing = set(keep) - {name for name, _ in model.named_modules()}
     if missing:
         raise SystemExit(f"These parts aren't in {patch['model_id']}: {sorted(missing)}. Is this the right model?")
     for name, module in list(model.named_modules()):
         if isinstance(module, torch.nn.Linear) and not name.endswith("lm_head"):
             bits = keep.get(name, base_bits)
-            quantized = HQQLinear(module, BaseQuantizeConfig(nbits=bits, group_size=64),
+            quantized = HQQLinear(module, quant_config(bits, HQQ_FAMILY[method], group_size),
                                   compute_dtype=dtype, device=device)
             parent, _, child = name.rpartition(".")
             setattr(model.get_submodule(parent) if parent else model, child, quantized)
@@ -168,8 +213,8 @@ def main(argv=None) -> None:
     command = args.command or "chat"
 
     patch = read_patch(args.patch)
-    bits = sorted({patch.get("module_bits", {}).get(path, patch["nbits"]) for path in patch["modules"]})
-    print(f"{patch['model_id']}: {patch['base']['nbits']}-bit, with {len(patch['modules'])} parts kept at "
+    bits = sorted(set(part_bits(patch).values()))
+    print(f"{patch['model_id']}: {patch['base'].get('method', 'hqq')} {patch['base']['nbits']}-bit, with {len(patch['modules'])} parts kept at "
           f"{' or '.join(f'{b}-bit' for b in bits)}")
     model, tokenizer, device = load_repaired(patch)
     print(f"Repaired model ready ({device}).")
@@ -180,11 +225,15 @@ def main(argv=None) -> None:
         print("Question:", question)
         print("Answer:", reply)
     elif command == "save":
-        from hqq.models.hf.base import AutoHQQHFModel
-
-        AutoHQQHFModel.save_quantized(model, args.folder)
         tokenizer.save_pretrained(args.folder)
-        print(f"Saved to {args.folder}. Load it with AutoHQQHFModel.from_quantized({args.folder!r}).")
+        if patch["base"].get("method", "hqq") in BITSANDBYTES:
+            model.save_pretrained(args.folder)
+            print(f"Saved to {args.folder}. Load it with AutoModelForCausalLM.from_pretrained({args.folder!r}).")
+        else:
+            from hqq.models.hf.base import AutoHQQHFModel
+
+            AutoHQQHFModel.save_quantized(model, args.folder)
+            print(f"Saved to {args.folder}. Load it with AutoHQQHFModel.from_quantized({args.folder!r}).")
     else:
         import uvicorn
 

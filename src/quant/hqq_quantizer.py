@@ -25,14 +25,22 @@ DEFAULT_NBITS = 3
 DEFAULT_GROUP_SIZE = 64
 
 
-def build_quant_config(nbits: int, group_size: int = DEFAULT_GROUP_SIZE) -> BaseQuantizeConfig:
+def build_quant_config(nbits: int, group_size: int = DEFAULT_GROUP_SIZE, optimize: bool = True) -> BaseQuantizeConfig:
     """Builds an HQQ quant config for one bit-width, applied uniformly to whatever it's given.
+
+    `optimize=False` is plain round-to-nearest (RTN): each group of `group_size` weights is rounded
+    onto the grid between its own min and max, with no HQQ optimisation and no rounded zero-point
+    (HQQ rounds the zero at 4-bit; plain min-max rounding does not). The default is HQQ as before.
 
     Not 3-bit-specific despite this module's name/original purpose: `src/quant/module_swap.py`
     reuses this at a different `nbits` (e.g. 8) to build the promoted-precision replacement for
     a single module, not the whole model.
     """
-    return BaseQuantizeConfig(nbits=nbits, group_size=group_size)
+    config = BaseQuantizeConfig(nbits=nbits, group_size=group_size)
+    if not optimize:
+        config["weight_quant_params"]["optimize"] = False
+        config["weight_quant_params"]["round_zero"] = False
+    return config
 
 
 def linearize_conv1d(model) -> int:
@@ -58,7 +66,7 @@ def linearize_conv1d(model) -> int:
 
 
 def quantize_in_place(model, nbits: int = DEFAULT_NBITS, group_size: int = DEFAULT_GROUP_SIZE,
-                      compute_dtype=None, device: str = "cuda") -> None:
+                      compute_dtype=None, device: str = "cuda", optimize: bool = True) -> None:
     """HQQ-quantizes every linear layer of `model` except the output head, on `device`.
 
     HQQ's own placement assumes Llama-style `model.layers`; any other layout (`transformer.h`,
@@ -68,7 +76,7 @@ def quantize_in_place(model, nbits: int = DEFAULT_NBITS, group_size: int = DEFAU
     from hqq.models.base import get_all_children_from_model
 
     linearize_conv1d(model)
-    quant_config = build_quant_config(nbits=nbits, group_size=group_size)
+    quant_config = build_quant_config(nbits=nbits, group_size=group_size, optimize=optimize)
     standard = hasattr(getattr(model, "model", None), "layers") or hasattr(model, "layers")
     placement = device if standard else {node: device for node in get_all_children_from_model(model, [])}
     AutoHQQHFModel.quantize_model(model, quant_config=quant_config, compute_dtype=compute_dtype, device=placement)
@@ -80,6 +88,8 @@ def load_hqq_3bit_model(
     group_size: int = DEFAULT_GROUP_SIZE,
     dtype: str = DEFAULT_DTYPE,
     model_id: str = MODEL_ID,
+    optimize: bool = True,
+    revision: str | None = None,
 ) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
     """Loads Phi-3.5-mini-Instruct quantized to `nbits` (default 3-bit) via HQQ.
 
@@ -100,9 +110,10 @@ def load_hqq_3bit_model(
 
     from src.eval.option_scorer import prepare_tokenizer
 
-    tokenizer = prepare_tokenizer(AutoTokenizer.from_pretrained(model_id))
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype)
-    quantize_in_place(model, nbits=nbits, group_size=group_size, compute_dtype=torch_dtype, device=device)
+    tokenizer = prepare_tokenizer(AutoTokenizer.from_pretrained(model_id, revision=revision))
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, revision=revision)
+    quantize_in_place(model, nbits=nbits, group_size=group_size, compute_dtype=torch_dtype, device=device,
+                      optimize=optimize)
 
     model.eval()
     return model, tokenizer
