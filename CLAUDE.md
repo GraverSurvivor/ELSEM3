@@ -291,6 +291,12 @@ batch; when the best 3-bit repair isn't fair on validation and 4-bit everywhere 
 automatic), the model is compressed to 4-bit and repaired again (`escalated_from`); `--resume` reuses a stopped run's
 answers and first look. 4-bit everywhere is a reference row only, skipped for layer-by-layer models and if it runs
 out of memory.
+**Accuracy panel (`src/product/panel.py`):** each model run with `--pipeline v1` and `v2` and the same `--questions`
+(folders `<name>_v1/`, `<name>_v2/`); `python -m src.product.panel DIR` writes `results/final/panel/` (tracked: panel.md /
+.json / .csv, two figures, and each run's report/patch/answers under `runs/`, so it rebuilds from git). Version 2 minus
+version 1 is measured on the questions both runs held out, paired bootstrap. The app switches to v2 only if, on 3+ models,
+median recovery is no lower, PASSes no fewer, and no model is significantly less fair, less often right, or loses its
+PASS; the targets (median 90%, 4 of 5 PASS) are reported as met or missed. The final tables and FairGate report show it.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
 hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see
