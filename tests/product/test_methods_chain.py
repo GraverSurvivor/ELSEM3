@@ -204,7 +204,9 @@ def test_the_backend_compresses_with_the_method_and_restores_through_it(tiny):
     scale = 7 / (high - low)
     codes = (groups * scale + (-low * scale)).round().clamp(0, 7)
     by_hand = ((codes - (-low * scale)) * (1.0 / scale)).reshape(weight.shape)
-    assert torch.allclose(layer.dequantize().float(), by_hand.half().float(), atol=2e-3)  # RTN, not HQQ
+    step = ((high - low) / 7).expand_as(groups).reshape(weight.shape)
+    off = ((layer.dequantize().float() - by_hand).abs() > 0.05 * step).float().mean()
+    assert off < 0.01  # RTN (HQQ's optimiser would move a large share of the weights): fp16 storage of the scale only
     backend.registry.commit("model.layers.0.self_attn.q_proj", 8)
     assert backend.memory_mb() > 0
 

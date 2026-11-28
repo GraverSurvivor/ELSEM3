@@ -9,8 +9,8 @@ TEXTS = ["A nurse and a mechanic met. Who was late?", "The grandmother and her g
          "Who was not comfortable using the phone? Answer briefly.", "A. unknown B. the nurse C. the mechanic"] * 4
 FAMILIES = {
     "qwen2": {"hidden_size": 64, "intermediate_size": 128, "num_hidden_layers": 2, "num_attention_heads": 4,
-              "num_key_value_heads": 2, "max_position_embeddings": 128, "tie_word_embeddings": False},
-    "gpt2": {"n_embd": 64, "n_layer": 2, "n_head": 4, "n_positions": 128},  # Conv1D weights, tied head
+              "num_key_value_heads": 2, "max_position_embeddings": 2048, "tie_word_embeddings": False},
+    "gpt2": {"n_embd": 64, "n_layer": 2, "n_head": 4, "n_positions": 2048},  # Conv1D weights, tied head
 }
 
 
@@ -21,8 +21,12 @@ def tiny_tokenizer():
     tok = Tokenizer(models.BPE())
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tok.decoder = decoders.ByteLevel()
-    tok.train_from_iterator(TEXTS, trainers.BpeTrainer(
-        vocab_size=300, special_tokens=["<|endoftext|>"], initial_alphabet=pre_tokenizers.ByteLevel.alphabet()))
+    # Byte level with exactly three merges, " A", " B" and " C": every other character is its own token, and the
+    # answer letters (which follow a space after "Answer:") are three distinct single tokens, as the option scorer
+    # needs.
+    alphabet = pre_tokenizers.ByteLevel.alphabet()
+    tok.train_from_iterator(["x A B C"] * 50, trainers.BpeTrainer(
+        vocab_size=len(alphabet) + 1 + 3, special_tokens=["<|endoftext|>"], initial_alphabet=alphabet))
     return PreTrainedTokenizerFast(tokenizer_object=tok, eos_token="<|endoftext|>")
 
 

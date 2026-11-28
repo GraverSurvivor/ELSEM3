@@ -348,3 +348,19 @@ def test_parts_are_restored_at_the_bits_the_compression_method_offers(tmp_path):
     assert set(result.bits.values()) == {16} and set(result.kept) == {Q[0], Q[1]}
     hqq = remeasure(Backend(fixes((Q[0],))))
     assert (hqq.top, hqq.cheap) == (8, 4)
+
+
+def test_resume_knows_the_compression_method_and_reads_checkpoints_saved_before_it(tmp_path):
+    """Another method's answers are never reused; a checkpoint saved before `method` existed was HQQ's."""
+    _, out = repair(tmp_path, Backend(fixes((Q[0],), (Q[1],))))
+    rtn = Backend(fixes((Q[0],), (Q[1],)))
+    repair(tmp_path, rtn, out=out, resume=True, method="rtn", base_nbits=3)
+    assert [view for view, _, _ in rtn.calls if view == "original"]  # RTN: asked again
+
+    _, out = repair(tmp_path, Backend(fixes((Q[0],), (Q[1],))), out=tmp_path / "old")
+    saved = json.loads((out / "checkpoint.json").read_text())
+    del saved["settings"]["method"]  # as written before the setting existed
+    (out / "checkpoint.json").write_text(json.dumps(saved))
+    old = Backend(fixes((Q[0],), (Q[1],)))
+    repair(tmp_path, old, out=out, resume=True)
+    assert not [view for view, _, _ in old.calls if view == "original"]  # HQQ, as it was: reused

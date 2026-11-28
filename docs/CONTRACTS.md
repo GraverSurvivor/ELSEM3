@@ -189,3 +189,42 @@ refuses (`TooBigError`) a model that would need layer-by-layer building with a m
 `fairgate.py` reads `base.method`, `module_bits`, the dtype and the commit; the publisher saves HQQ-format models as
 before and bitsandbytes ones with `save_pretrained` (card: plain `from_pretrained`), and `Method.can_publish` decides
 what is refused. llama.cpp lines map a 16-bit part to `f16`.
+
+## C9. Compare methods (Person 4): `src/product/compare_methods.py`
+```
+python -m src.product.compare_methods --model <HF id> --out <dir>
+    [--methods all|hqq:3,rtn:4,bnb_nf4:4,...] [--questions 500] [--seed 0] [--batch-size 16] [--fake]
+```
+Which of HQQ (3, 4), RTN (3, 4), bitsandbytes NF4 (4) and int8 (8) is fairest for this model? Each method compresses the
+model, every one is asked the same seeded BBQ sample (`--questions` of each set, the original once), no repair. One model
+is on the GPU at a time. It is a job like the repair: `JobRunner.start_compare(model, methods, questions)` starts it (one
+job at a time, Cancel, reload-safe) and job.json says `"kind": "compare"`; a repair's job.json has no `kind`.
+
+`<dir>/events.jsonl` has the C4 line format and C4's eight stage names (so `read_events` / `job_state` / the progress
+view work unchanged): `download` fetch the model; `quantize` which methods fit this machine (message names what was
+skipped and why); `score_original` ask the original; `score_3bit` build, ask and free each method (the message says
+`"<method>: compressing" / "asking" · method k of n`, `total` counts questions over all methods); `find_damage` rank;
+`scan`, `verify` "not needed"; `report` write comparison.json. The job is finished when `report` is done.
+
+`<dir>/comparison.json`, written once at the end (no report.json / patch.json):
+```json
+{"schema": 1, "model_id", "arch", "n_layers", "questions": {"ambiguous", "stated_answer"}, "seed", "gpu", "minutes",
+ "original": {"usr", "srs", "false_unknown", "accuracy", "size_mb"},      # size_mb null for a layer-by-layer reference
+ "methods": [{"id": "hqq-4", "method": "hqq", "label": "HQQ 4-bit", "bits": 4,
+              "status": "ok" | "skipped" | "failed", "reason": "",       # why, for skipped / failed
+              "usr", "srs", "false_unknown", "accuracy",                 # the four numbers of the Studio's cards
+              "size_mb", "minutes", "compress_seconds", "ask_seconds",   # measured, not computed from the bits
+              "gap",          # points from the original / 100: fair answers lost + stereotyped gained + "can't tell" added
+              "rank",         # 1 = fairest (ties: smaller first); only for "ok"
+              "on_frontier",  # nothing smaller is fairer
+              "notes": ["..."], "can_repair": true, "repair_reason": ""}],
+ "ranking": ["hqq-4", ...], "best": "hqq-4" | null, "synthetic": false}
+```
+`methods` lists the ranked methods first, then the skipped / failed ones. `can_repair` is true for HQQ and RTN only (the
+repair scan restores parts to 4 / 8 bits; bitsandbytes restores to 16), `repair_reason` says why not. The screen
+(`comparison_html`, `chart_html`, `repair_choices`, `method_of_id` in the same file) shows the ranked table, the fairness
+against memory chart and "Repair with this method", which starts `fast_repair --method <hqq|rtn>` with that method's
+bit-width (`JobRunner.start(..., method=...)`; job.json gets `"method"`). `--fake` writes the same files from a stand-in
+with no model (`"synthetic": true`), which is what a fake `JobRunner` runs. Tab 5's "Compression method" choice refuses a
+method the repair can't use, with the reason (`byom.check_method`). `fast_repair --method` writes it into the patch's
+`base.method`.

@@ -119,6 +119,7 @@ class FastRepairConfig:
     study: int = 0          # v2: also measure this many random parts question by question (compare_objectives)
     resume: bool = False    # v2: reuse the answers (and first look) a stopped run in the same folder saved
     max_restore: float = 0.10  # ...but never more than this share of the model's weights
+    method: str = "hqq"     # how the model is compressed: "hqq" or "rtn" (compare_methods says why others can't repair yet)
     # (0 = no limit: only the tests and the pinned v1 comparison; the command line and the app refuse it)
 
     def __post_init__(self):
@@ -140,6 +141,14 @@ class FastRepairConfig:
             raise ValueError(f"base_nbits must be 3, 4 or 0 (automatic), got {self.base_nbits}")
         if self.questions < 100:
             raise ValueError("use at least 100 questions per check")
+        if self.method != "hqq":  # (HQQ is the project's method and always allowed)
+            from src.product.compare_methods import repair_refusal
+            from src.quant.methods import get_method
+
+            bits = self.base_nbits or (3 if 3 in get_method(self.method).bits else get_method(self.method).bits[0])
+            reason = repair_refusal(self.method, bits)
+            if reason:
+                raise ValueError(reason)
         self.out = Path(self.out)
 
 
@@ -455,7 +464,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
 
     with events.stage_of("download", message="fetching the model"):
         if backend is None:  # inside the stage, so "no GPU" is reported like any other failure
-            backend = TorchBackend(nbits=config.nbits, batch_size=config.batch_size, base_nbits=config.base_nbits)
+            backend = TorchBackend(nbits=config.nbits, batch_size=config.batch_size, base_nbits=config.base_nbits,
+                                   method=config.method)
         adapter = backend.adapter(config.model_id)  # fails fast on a model that isn't a text generator
         size = backend.preflight(config.model_id) if hasattr(backend, "preflight") else ""  # before any download
         message = backend.download(config.model_id)
@@ -468,7 +478,8 @@ def run(config: FastRepairConfig, backend: Backend | None = None,
         if saved["dtype"] != "fp16":
             backend.use_dtype(saved["dtype"])
 
-    with events.stage_of("quantize", message=f"HQQ {getattr(backend, 'base_nbits', config.base_nbits) or 3}-bit"):
+    with events.stage_of("quantize", message=f"{method_label(config.method)} "
+                                             f"{getattr(backend, 'base_nbits', config.base_nbits) or 3}-bit"):
         events.done(message=backend.load_compressed(config.model_id))
 
     notes: list[str] = []  # what the run did differently, said on the card in the order it happened
@@ -825,7 +836,8 @@ def four_bits_does_better(rows: list[dict]) -> bool:
 
 
 CHECKPOINT = "checkpoint.json"
-KEYS = ("model_id", "pipeline", "objective", "questions", "seed", "base_nbits", "mode", "penalty_weight")
+KEYS = ("model_id", "pipeline", "objective", "questions", "seed", "base_nbits", "mode", "penalty_weight", "method")
+OLD_DEFAULTS = {"method": "hqq"}  # settings a checkpoint saved before the setting existed had at its default
 
 
 def save_checkpoint(out: Path, config, ambig, disambig, rotated, original, original_probs, compressed,
@@ -852,7 +864,8 @@ def load_checkpoint(out: Path, config) -> dict | None:
         saved = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return None
-    return saved if saved.get("settings") == {k: str(getattr(config, k)) for k in KEYS} else None
+    settings = {**OLD_DEFAULTS, **(saved.get("settings") or {})}
+    return saved if settings == {k: str(getattr(config, k)) for k in KEYS} else None
 
 
 def restore(saved: dict, view: str, ambig: list, disambig: list, rotated: list) -> tuple[list, dict, dict]:
@@ -1167,13 +1180,19 @@ def scan_block(config, adapter, scan, cfg, search) -> dict:
     return block
 
 
+def method_label(name: str) -> str:
+    from src.quant.methods import get_method
+
+    return get_method(name).label
+
+
 def make_patch(config, adapter, kept, engine, used_bits: int = 3, module_bits: dict | None = None,
                revision: str | None = None, dtype: str = "fp16", prompt_style: str | None = None):
     from src.attribution.patch import Patch
 
     is_phi = adapter.arch == "phi3" and adapter.n_layers == 32
     return Patch(name=f"fast_repair_{config.mode}", modules=tuple(kept), nbits=config.nbits,
-                 base={"method": "hqq", "nbits": used_bits, "group_size": 64, "compute_dtype": dtype},
+                 base={"method": config.method, "nbits": used_bits, "group_size": 64, "compute_dtype": dtype},
                  source={"kind": "search", "engine": engine, "mode": config.mode, "questions": config.questions,
                          "seed": config.seed},
                  model_id=config.model_id,
@@ -1205,6 +1224,9 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"most of the model's weights the repair may keep at 8-bit (0.10 = 10%%; at most {MAX_RESTORE})")
     parser.add_argument("--no-until-fair", action="store_true",
                         help="keep only the scan's parts; don't restore more until the model is as fair as the original")
+    parser.add_argument("--method", default="hqq",
+                        help="how to compress: hqq (the project's method) or rtn (plain rounding); "
+                             "python -m src.product.compare_methods ranks them")
     parser.add_argument("--base-nbits", choices=("auto", "3", "4"), default="auto",
                         help="compress to 3 or 4 bits; auto = 3, or 4 if 3-bit wrecks the model")
     args = parser.parse_args(argv)
@@ -1231,7 +1253,7 @@ def config_from(args) -> FastRepairConfig:
                               questions=QUESTIONS[args.pipeline] if args.questions is None else args.questions,
                               seed=args.seed, batch_size=args.batch_size, penalty_weight=args.penalty_weight,
                               base_nbits=0 if args.base_nbits == "auto" else int(args.base_nbits),
-                              until_fair=not args.no_until_fair, max_restore=args.max_restore)
+                              until_fair=not args.no_until_fair, max_restore=args.max_restore, method=args.method)
 
 
 if __name__ == "__main__":

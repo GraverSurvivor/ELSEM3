@@ -41,11 +41,11 @@ from pathlib import Path
 
 from src.attribution.patch import load_patch, save_patch
 from src.product.api_server import ApiService, latest_repaired_job, register_routes, snippets, try_it
-from src.product.repair_kit import bits_of
 from src.product.hub_publish import PublishError, default_repo_name, load_code, publish
 from src.product.byom import (
     BITS as BYOM_BITS,
     BUDGETS as BYOM_BUDGETS,
+    METHODS as BYOM_METHODS,
     MODES as BYOM_MODES,
     JobBusy,
     JobRunner,
@@ -57,6 +57,15 @@ from src.product.byom import (
     results_html,
 )
 from src.data.safe_set import read_results_file
+from src.product.compare_methods import (
+    OFFERED as COMPARE_OFFERED,
+    chart_html,
+    comparison_html,
+    describe as describe_method,
+    method_of_id,
+    read_comparison,
+    repair_choices,
+)
 
 from .studio_core import (
     PART_LABELS,
@@ -602,6 +611,49 @@ def byom_view(runner: JobRunner) -> tuple:
             gr_update(visible=shippable), "" if shippable else nothing_to_ship(report))
 
 
+def methods_text(picked) -> str:
+    """The compare job's `--methods` text for the boxes ticked ("hqq:3,rtn:4"); ValueError if none is."""
+    chosen = [f"{name}:{bits}" for name, bits in COMPARE_OFFERED if describe_method(name, bits) in (picked or [])]
+    if not chosen:
+        raise ValueError("Tick at least one method to compare.")
+    return ",".join(chosen)
+
+
+def compare_view(runner: JobRunner, shown: dict, force: bool = False) -> tuple:
+    """(table, chart, "Repair with" choice, its button) for the current job, rebuilt from its files. A comparison
+    already on screen keeps the person's choice (`shown` remembers which job it was); `force` (a page load)
+    fills it in again."""
+    keep, none = gr_update(), gr_update(choices=[], value=None, visible=False)
+    job = runner.current()
+    if job is None or runner.job_info(job).get("kind") != "compare":
+        shown["job"] = None
+        return "", "", none, gr_update(visible=False)
+    try:
+        report = read_comparison(job) if runner.state(job)["status"] == "done" else None
+    except ValueError as error:
+        return f"<p><b>The comparison couldn't be read:</b> {html_escape(str(error))}</p>", "", keep, keep
+    if report is None:
+        return "", "", none, gr_update(visible=False)
+    table, chart = comparison_html(report), chart_html(report)
+    if shown.get("job") == str(job) and not force:
+        return table, chart, keep, keep
+    shown["job"] = str(job)
+    choices = repair_choices(report)
+    return (table, chart, gr_update(choices=choices, value=choices[0][1] if choices else None, visible=bool(choices)),
+            gr_update(visible=bool(choices)))
+
+
+def repair_from_comparison(runner: JobRunner, choice: str, mode, budget, token: str = "") -> Path:
+    """Starts a repair of the compared model with the chosen method. ValueError (in words) if there is no
+    finished comparison, or the method can't be repaired."""
+    job = runner.current()
+    report = read_comparison(job) if job is not None and runner.job_info(job).get("kind") == "compare" else None
+    if report is None:
+        raise ValueError("Run a comparison first.")
+    method, bits = method_of_id(report, choice)
+    return runner.start(report["model_id"], mode, bits, budget, hf_token=token, method=method)
+
+
 def your_verdict_md(report: dict) -> str:
     """The Ship screen's verdict for a tab-5 repair, from its report."""
     recovery = report.get("recovery") or {}
@@ -617,6 +669,21 @@ def your_verdict_md(report: dict) -> str:
         lines.append("*A stand-in or replayed run: its repair kit downloads, but there is no real model to serve "
                      "or publish.*")
     return "\n\n".join(lines)
+
+
+def rebuild_repair(patch: dict, device: str):
+    """(model, tokenizer): step 5's repaired model, rebuilt from its patch with the patch's own compression method
+    (an RTN repair is rebuilt with RTN, never HQQ) and compute dtype, layer by layer so a big model's repair needs no
+    16-bit copy in memory. From the local cached copy when there is one, else from the Hub."""
+    from src.quant.repaired import load_repaired
+
+    local = cached_copy(patch["model_id"])
+    try:
+        return load_repaired(patch, device, streaming=True, model_id=local)
+    except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
+        if local == patch["model_id"]:
+            raise
+        return load_repaired(patch, device, streaming=True)
 
 
 def cached_copy(model_id: str) -> str:
@@ -1067,20 +1134,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
             import torch
 
-            from src.quant.streaming import load_streaming
-
             device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
-            # Built layer by layer, so a big model's repair needs no 16-bit copy in memory.
-            keep = bits_of(patch)
-            dtype = {"bf16": torch.bfloat16}.get(patch["base"].get("compute_dtype"), torch.float16)
-            local = cached_copy(patch["model_id"])
-            try:
-                model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep, dtype=dtype)
-            except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
-                if local == patch["model_id"]:
-                    raise
-                model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device, keep=keep,
-                                                  dtype=dtype)
+            model, tokenizer = rebuild_repair(patch, device)
             held.update(model=model, tokenizer=tokenizer, device=device, job=str(job))
         return (held["model"], held["tokenizer"], held["device"], patch, report, default_repo_name(patch["model_id"]),
                 f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} parts restored "
@@ -1288,6 +1343,9 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     byom_model = gr.Textbox(label="Model name", placeholder="Qwen/Qwen2.5-3B-Instruct", scale=3)
                     byom_mode = gr.Radio(list(BYOM_MODES.values()), value=BYOM_MODES["fast"], label="Mode", scale=3)
                     byom_bits = gr.Radio(list(BYOM_BITS.values()), value=BYOM_BITS[0], label="Compress to", scale=2)
+                byom_method = gr.Radio(list(BYOM_METHODS.values()), value=BYOM_METHODS["hqq"],
+                                       label="Compression method (the repair works with HQQ and RTN; the others "
+                                             "can be compared below)")
                 byom_token = gr.Textbox(label="Hugging Face token: only for gated models such as Meta's Llama (accept "
                                               "the model's licence on its Hugging Face page first). Used for this "
                                               "download only, never saved.", type="password",
@@ -1300,6 +1358,20 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     byom_cancel = gr.Button("■ Cancel", interactive=bool(byom and byom.runner))
                 byom_progress = gr.HTML()
                 byom_problem = gr.Markdown()
+                with gr.Accordion("Compare compression methods: which is fairest for this model?", open=False):
+                    gr.Markdown("Compresses the model with each method you tick, asks every one the same questions "
+                                "(no repair), and ranks them by how far each is from the original's fairness. About "
+                                "one hour for a 3B model on a T4.")
+                    compare_pick = gr.CheckboxGroup([describe_method(n, b) for n, b in COMPARE_OFFERED],
+                                                    value=[describe_method(n, b) for n, b in COMPARE_OFFERED],
+                                                    label="Methods to compare")
+                    compare_go = gr.Button("▶ Compare methods", interactive=bool(byom and byom.runner))
+                    compare_table = gr.HTML()
+                    compare_chart = gr.HTML()
+                    with gr.Row():
+                        compare_choice = gr.Dropdown([], label="Repair with", visible=False, scale=3)
+                        compare_repair = gr.Button("Repair with this method", visible=False, variant="primary",
+                                                   scale=2)
                 with gr.Column(visible=False) as byom_results_box:
                     gr.Markdown("### Results")
                     byom_results = gr.HTML()
@@ -1339,7 +1411,39 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 after_job(backend, runner)
                 return byom_view(runner)
 
-            def byom_start(model, mode, bits, budget, token=""):
+            compared = {"job": None}  # the comparison last shown, so a tick doesn't reset the "Repair with" choice
+
+            def compare_refresh(force=False):
+                return compare_view(runner, compared, force)
+
+            def compare_start(model, picked, token=""):
+                if getattr(backend, "reloading", False):
+                    gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
+                               "(about a minute). Press Compare again in a moment.")
+                    return byom_view(runner)
+                try:
+                    methods = methods_text(picked)
+                    if release_held():
+                        gr.Info("The API serving your last repaired model was stopped to make room for this comparison.")
+                    runner.start_compare(model, methods, hf_token=token)
+                except (ValueError, JobBusy, RuntimeError) as error:
+                    gr.Warning(str(error))
+                else:
+                    make_room_for_job(backend)
+                return byom_view(runner)
+
+            def compare_repair_start(choice, mode, budget, token=""):
+                try:
+                    if release_held():
+                        gr.Info("The API serving your last repaired model was stopped to make room for this repair.")
+                    repair_from_comparison(runner, choice, mode, budget, token)
+                except (ValueError, JobBusy, RuntimeError) as error:
+                    gr.Warning(str(error))
+                else:
+                    make_room_for_job(backend)
+                return byom_view(runner)
+
+            def byom_start(model, mode, bits, budget, token="", method=None):
                 if getattr(backend, "reloading", False):
                     gr.Warning("The demo's 16-bit model is loading back after the last diagnosis "
                                "(about a minute). Press Diagnose again in a moment.")
@@ -1347,7 +1451,7 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                 if release_held():  # the GPU takes one step-5 model at a time
                     gr.Info("The API serving your last repaired model was stopped to make room for this diagnosis.")
                 try:
-                    runner.start(model, mode, bits, budget, hf_token=token)
+                    runner.start(model, mode, bits, budget, hf_token=token, method=method or "hqq")
                 except (ValueError, JobBusy, RuntimeError) as error:
                     gr.Warning(str(error))
                 else:
@@ -1359,11 +1463,17 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     gr.Info("Nothing is running.")
                 return byom_view(runner)
 
-            byom_go.click(byom_start, [byom_model, byom_mode, byom_bits, byom_budget, byom_token], byom_outputs,
-                          concurrency_id="byom")
+            compare_outputs = [compare_table, compare_chart, compare_choice, compare_repair]
+            byom_go.click(byom_start, [byom_model, byom_mode, byom_bits, byom_budget, byom_token, byom_method],
+                          byom_outputs, concurrency_id="byom")
+            compare_go.click(compare_start, [byom_model, compare_pick, byom_token], byom_outputs, concurrency_id="byom")
+            compare_repair.click(compare_repair_start, [compare_choice, byom_mode, byom_budget, byom_token],
+                                 byom_outputs, concurrency_id="byom")
             byom_cancel.click(byom_stop, None, byom_outputs, concurrency_id="byom")
             gr.Timer(1.5).tick(byom_refresh, None, byom_outputs, concurrency_id="byom", show_progress="hidden")
+            gr.Timer(1.5).tick(compare_refresh, None, compare_outputs, concurrency_id="byom", show_progress="hidden")
             app.load(byom_refresh, None, byom_outputs)
+            app.load(lambda: compare_refresh(force=True), None, compare_outputs)
 
         app.load(rerender, [item_state, swapped_state, base_state], ask_outputs)
 
