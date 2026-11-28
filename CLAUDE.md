@@ -297,6 +297,12 @@ out of memory.
 version 1 is measured on the questions both runs held out, paired bootstrap. The app switches to v2 only if, on 3+ models,
 median recovery is no lower, PASSes no fewer, and no model is significantly less fair, less often right, or loses its
 PASS; the targets (median 90%, 4 of 5 PASS) are reported as met or missed. The final tables and FairGate report show it.
+**"It did no harm" (`src/product/arc_check.py`):** `python -m src.product.arc_check RUN_DIR` asks a finished run's three
+models (rebuilt from its report and patch: original or its 8-bit reference, compressed at its method and bits, repaired via
+`load_repaired`) 500 ARC science questions (allenai/ai2_arc test, 250 Easy + 250 Challenge, seeded, four-choice only;
+CC BY-SA 4.0, downloaded, never committed) and writes `RUN_DIR/arc.json`: right answers per model and set, paired
+differences, and `state` (`as_good_as_original` / `no_harm_from_repair` / `harm` = repaired significantly below
+compressed / `no_repair`). Report only: no decision or verdict reads it. The panel copies it and shows an ARC column.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
 hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see
