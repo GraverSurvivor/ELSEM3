@@ -90,6 +90,13 @@ def check(reference: list, candidate: list, max_srs_rise: float = DEFAULT_MAX_SR
 
 # --- export ---------------------------------------------------------------------------------------
 
+def patch_bits(patch: Patch) -> str:
+    """'8-bit', or '4-bit (12) and 8-bit (5)' for a repair that mixes them."""
+    from src.product.repair_kit import bits_text
+
+    return bits_text(patch.to_dict())
+
+
 def llamacpp_overrides(patch: Patch) -> list[str]:
     """One `--tensor-type` argument per restored module, e.g. blk\\.1\\.attn_qkv=q8_0.
 
@@ -207,7 +214,7 @@ def provenance_html(patch: Patch | None, reference_dir: Path = REFERENCE_DIR) ->
     if patch is not None:
         base = ", ".join(f"{k} {v}" for k, v in patch.base.items())
         rows += [("Model", patch.model_id), ("Compression", base),
-                 ("Patch", f"{patch.name}: {len(patch.modules)} modules at {patch.nbits}-bit, "
+                 ("Patch", f"{patch.name}: {len(patch.modules)} modules at {patch_bits(patch)}, "
                            f"{patch.params:,} weights ({patch.pct_params:.2f}%)"),
                  ("Patch source", ", ".join(f"{k}: {v}" for k, v in patch.source.items()))]
     from src.experiments.main_repair import main_repair
@@ -284,7 +291,7 @@ th {{ background: #f0f4f8; }} .pass {{ color: #1b7f3b; font-weight: 600; }} .fai
     if recovery is not None and patch is not None:
         parts.append("<h2>The repair</h2>")
         parts.append(f"<p>Restoring <b>{len(patch.modules)} of 128</b> modules ({patch.pct_params:.1f}% of the candidate "
-                     f"weights) to {patch.nbits}-bit recovers <b>{recovery.point:.0%}</b> "
+                     f"weights) to {patch_bits(patch)} recovers <b>{recovery.point:.0%}</b> "
                      f"[95% CI {recovery.lower:.0%}–{recovery.upper:.0%}] of the lost “unknown” answers.</p>")
         parts.append("<div class='wrap'><table><tr><th>Restored module</th><th>llama.cpp override</th></tr>")
         for path, line in zip(patch.modules, llamacpp_overrides(patch)):

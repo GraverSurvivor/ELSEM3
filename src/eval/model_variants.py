@@ -44,5 +44,7 @@ def load_variant(variant: str, device: str, patch_path: Path | None = None):
     for path in patch.modules:
         registry.commit(path, patch.bits(path))
     registry.release_baselines()
-    print(f"Applied patch {patch.name}: {len(patch.modules)} modules at {patch.nbits}-bit")
+    from src.product.repair_kit import bits_text
+
+    print(f"Applied patch {patch.name}: {len(patch.modules)} modules at {bits_text(patch.to_dict())}")
     return model, tokenizer, "hqq_repaired"

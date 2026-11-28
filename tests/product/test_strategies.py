@@ -203,7 +203,7 @@ def test_harming_stated_answers_keeps_a_part_out(tmp_path):
 @pytest.mark.parametrize("share", [0.05, 0.10, 0.15])
 def test_the_memory_budget_is_never_passed(tmp_path, share):
     model = Model(lambda state, j: 0.96 if PARTS[j % len(PARTS)] in state else 0.1)  # damage everywhere
-    report, _ = repair(tmp_path, model, max_restore=share)
+    report, _ = repair(tmp_path, model, max_restore=share, base_nbits=3)
     budget = share * ADAPTER.total_params() * (8.5 - 3.75) / 8
     used = sum(ADAPTER.params(p) * (REAL_BITS[b] - 3.75) / 8 for p, b in report["kept_bits"].items())
     assert 0 < used <= budget + 1
@@ -272,7 +272,7 @@ def test_the_earlier_ordering_ships_when_it_is_clearly_better():
 def test_four_bits_everywhere_is_reported_but_never_shipped(tmp_path):
     """Damage the budget can't cover, all gone at 4-bit: the report says so, the repair stays a repair."""
     model = Model(lambda state, j: 0.96 if len(state) >= 28 else (0.6 if Q[0] in state and j % 3 == 0 else 0.1))
-    report, _ = repair(tmp_path, model)
+    report, _ = repair(tmp_path, model, base_nbits=3)  # Automatic would move it to 4-bit (A3)
     four = next(r for r in report["strategies"] if r["name"] == "four_bits")
     assert four["distance"] < 0.02 and not four["chosen"] and not four["ships"]
     assert "4-bit" in report["advice"] and len(report["kept"]) < 28

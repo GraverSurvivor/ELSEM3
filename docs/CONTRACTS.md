@@ -127,6 +127,12 @@ Added for v2 (Nov 2026):
     `ships` (may it be chosen), `chosen`, `distance` (how far from the original; 0 is as fair), `usr`, `srs`,
     `false_unknown`, `accuracy`;
   * `advice` (only when 4-bit everywhere did better): a sentence for the screen.
+* No dead ends (A3, version 2): `report.json` adds `prompt_style` (`plain` / `examples`), `compute_dtype`
+  (`fp16` / `bf16`), `restore_budget_bytes`, and `escalated_from` (`{"base_nbits": 3, "strategies": [...]}`) when the
+  model was moved to 4-bit; `precision_note` says each thing the run did differently. `scan` for the re-measured
+  repair has `survivors: null`, `pool` (its own size), `work_sample`, `work_probe`. `--resume` (version 2) reuses
+  `checkpoint.json` and `first_look_<bits>bit.json` from a stopped run in the same folder, if its settings match.
+  Version 2 refuses `--no-until-fair` (a version 1 flag).
 * `report.json` adds `pipeline` (both versions), and for v2 `objective`, `splits` (questions of each set in each
   split) and `letter_balanced` (the cards' numbers on up to 400 + 400 final questions, each answered from the
   average over every rotation of its choices; `questions`, `original`, `compressed`, `repaired`).

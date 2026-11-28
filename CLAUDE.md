@@ -284,6 +284,13 @@ memory if it beats 1.5 standard errors (up to 3 at once when they fix different 
 taken out again if not missed (`SwapRegistry.without`); whole part types are candidates too, thinned out by halves.
 The budget is memory (`max_restore` at 8-bit). Then validation compares it with version 1's ordering and, for
 reference only, 4-bit everywhere. About 19-29k questions (25-38 min on a T4, estimated). Not yet run on a GPU.
+**No dead ends (version 2):** an original that rarely says "can't tell" is asked again with three worked examples
+(no people, no BBQ) in front of every question, every model alike (`prompt_style`); fp16 overflow reruns every model
+in bf16 where bf16 is fast (Ampere+; a T4 still stops, as bf16 runs ~6.5x slower there); out of memory halves the
+batch; when the best 3-bit repair isn't fair on validation and 4-bit everywhere is clearly fairer (bits =
+automatic), the model is compressed to 4-bit and repaired again (`escalated_from`); `--resume` reuses a stopped run's
+answers and first look. 4-bit everywhere is a reference row only, skipped for layer-by-layer models and if it runs
+out of memory.
 `python -m src.product.fast_repair --model <HF id> --mode fast|exact` runs compress → score
 original/3-bit on a seeded BBQ sample → find damage → Fast Scan (Person 2's `fast_scan`, with the
 hedging penalty; fast mode sized to ~18,800 questions whatever the number of parts, see

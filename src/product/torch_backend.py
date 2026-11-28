@@ -90,6 +90,45 @@ class TorchBackend:
         self.reference_bits = 16
         self._model_id = None
         self.revision = None  # the model's commit on Hugging Face, once downloaded
+        self.dtype = "fp16"   # every model of a run computes in this; "bf16" for models that overflow fp16
+
+    def can_use_bf16(self) -> bool:
+        """bf16 only where it runs at full speed: a T4 (compute capability 7.5) runs it about 6.5x slower,
+        which would turn a one-hour diagnosis into many hours (CLAUDE.md, "Precision")."""
+        import torch
+
+        return self.device != "cuda" or torch.cuda.get_device_capability()[0] >= 8
+
+    def use_dtype(self, dtype: str) -> None:
+        """Every model built from now on computes in `dtype`; load them again for it to apply."""
+        from src.eval.model_loader import DTYPES
+
+        if dtype not in DTYPES:
+            raise ValueError(f"unknown dtype {dtype!r}")
+        self.dtype = dtype
+
+    def _torch_dtype(self):
+        from src.eval.model_loader import DTYPES
+
+        return DTYPES[self.dtype]
+
+    def _smaller_batches(self, ask):
+        """`ask(batch_size)`, halving the batch while the GPU runs out of memory (long questions on a full
+        GPU), down to one question at a time. The smaller size is kept for the rest of the run."""
+        import gc
+
+        import torch
+
+        while True:
+            try:
+                return ask(self.batch_size)
+            except Exception as error:  # noqa: BLE001 -- only out-of-memory is retried
+                if "out of memory" not in str(error).lower() or self.batch_size == 1:
+                    raise
+                self.batch_size = max(1, self.batch_size // 2)
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     def preflight(self, model_id: str) -> str:
         """Before downloading anything but config.json: does the model fit this machine? Counts the
@@ -183,7 +222,7 @@ class TorchBackend:
         from src.quant.module_swap import SwapRegistry
         from src.quant.weight_source import CheckpointWeightSource
 
-        self.compressed, self.tokenizer = self.method.load(model_id, self.base_nbits, self.device, "fp16")
+        self.compressed, self.tokenizer = self.method.load(model_id, self.base_nbits, self.device, self.dtype)
         adapter = self._adapter or self.adapter(model_id)
         # GPT-2-style parts are stored (in, out) in the checkpoint; the 3-bit model holds them as nn.Linear.
         transposed_paths = {p for p in adapter.candidates() if adapter.is_transposed(p)}
@@ -192,14 +231,14 @@ class TorchBackend:
         gc.collect()
         torch.cuda.empty_cache()
         if self.method.name == "hqq":
-            return f"HQQ {self.base_nbits}-bit, group 64, fp16 compute"
-        return f"{self.method.label} {self.base_nbits}-bit, fp16 compute"
+            return f"HQQ {self.base_nbits}-bit, group 64, {self.dtype} compute"
+        return f"{self.method.label} {self.base_nbits}-bit, {self.dtype} compute"
 
     def _build_streamed(self) -> None:
         from src.quant.module_swap import SwapRegistry
         from src.quant.weight_source import CheckpointWeightSource
 
-        self.compressed, tokenizer = self.method.load(self._model_id, self.base_nbits, self.device, "fp16",
+        self.compressed, tokenizer = self.method.load(self._model_id, self.base_nbits, self.device, self.dtype,
                                                       streaming=True)
         self.tokenizer = self.tokenizer or tokenizer
         adapter = self._adapter or self.adapter(self._model_id)
@@ -215,12 +254,12 @@ class TorchBackend:
             from src.quant.streaming import load_streaming
 
             # The reference is HQQ 8-bit whatever method is being compared: it stands in for the 16-bit original.
-            self.original, self.tokenizer = load_streaming(model_id, 8, device=self.device)
+            self.original, self.tokenizer = load_streaming(model_id, 8, device=self.device, dtype=self._torch_dtype())
             return "8-bit reference, built layer by layer (the 16-bit original doesn't fit this GPU)"
 
-        self.original, _ = load_model("fp16", model_id=model_id,
+        self.original, _ = load_model(self.dtype, model_id=model_id,
                                       device_map="auto" if self.device == "cuda" else self.device)
-        return "original model loaded at fp16"
+        return f"original model loaded at {self.dtype}"
 
     def release_original(self) -> None:
         """The original is only asked once, before the scan: free its GPU memory (2 bytes a weight,
@@ -253,7 +292,8 @@ class TorchBackend:
         """Each choice's probability, question by question (`score` returns only the most likely one)."""
         model, out = self._model_for(view), []
         for start in range(0, len(items), CHUNK):
-            chunk = option_probs(model, self.tokenizer, items[start:start + CHUNK], self.device, self.batch_size)
+            part = items[start:start + CHUNK]
+            chunk = self._smaller_batches(lambda size: option_probs(model, self.tokenizer, part, self.device, size))
             self._check_precision(view, (p for row in chunk for p in row))
             out += chunk
             if on_progress:
@@ -266,8 +306,9 @@ class TorchBackend:
         model = self._model_for(view)
         picks = []
         for start in range(0, len(items), CHUNK):
-            chunk, confidence = score_items_with_confidence(model, self.tokenizer, items[start:start + CHUNK],
-                                                            self.device, batch_size=self.batch_size)
+            part = items[start:start + CHUNK]
+            chunk, confidence = self._smaller_batches(lambda size: score_items_with_confidence(
+                model, self.tokenizer, part, self.device, batch_size=size))
             self._check_precision(view, confidence)
             picks += chunk
             if on_progress:

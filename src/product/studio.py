@@ -1072,13 +1072,15 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
             # Built layer by layer, so a big model's repair needs no 16-bit copy in memory.
             keep = bits_of(patch)
+            dtype = {"bf16": torch.bfloat16}.get(patch["base"].get("compute_dtype"), torch.float16)
             local = cached_copy(patch["model_id"])
             try:
-                model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep)
+                model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep, dtype=dtype)
             except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
                 if local == patch["model_id"]:
                     raise
-                model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device, keep=keep)
+                model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device, keep=keep,
+                                                  dtype=dtype)
             held.update(model=model, tokenizer=tokenizer, device=device, job=str(job))
         return (held["model"], held["tokenizer"], held["device"], patch, report, default_repo_name(patch["model_id"]),
                 f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} parts restored "
@@ -1438,7 +1440,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     release_held()  # built only for the upload
             where = "private: only you (and people you add) can see it" if result["private"] else "public"
             return (f"✅ **Published:** [{result['repo_id']}]({result['url']}) ({where}). Load it anywhere with "
-                    "the code below.", gr.update(value=load_code(result["repo_id"]), visible=True), "")
+                    "the code below.", gr.update(value=load_code(result["repo_id"], method=patch["base"].get("method", "hqq"), dtype=patch["base"].get("compute_dtype", "fp16")),
+                                                  visible=True), "")
 
         def ship_switch(source):
             yours = source == SHIP_YOURS
