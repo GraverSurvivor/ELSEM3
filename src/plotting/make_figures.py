@@ -97,6 +97,14 @@ def _revised_plan_figures(capability_trials: Path | None, fairness_trials: Path 
     groups = stats_dir / "groups.json"
     if groups.exists():
         _save(plot_group_changes(json.loads(groups.read_text(encoding="utf-8"))), "groups_srs")
+    panel = Path("results/final/panel/panel.json")
+    if panel.exists():
+        from src.product.panel import plot_memory, plot_recovery
+
+        data = json.loads(panel.read_text(encoding="utf-8"))
+        if data.get("rows"):
+            _save(plot_recovery(data), "panel_recovery")
+            _save(plot_memory(data), "panel_memory")
     points = _prefix_points()
     if points:
         _save(plot_recovery_by_modules(points), "recovery_by_modules")

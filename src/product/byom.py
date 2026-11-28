@@ -370,7 +370,11 @@ def report_outcome(report: dict) -> tuple[str, str]:
 
 
 def format_bytes(n: float) -> str:
-    return f"{n / 1e9:.2f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+    if n >= 1e9:
+        return f"{n / 1e9:.2f} GB"
+    if n >= 1e6:
+        return f"{n / 1e6:.0f} MB"
+    return f"{n / 1e3:.0f} KB" if n >= 1e3 else f"{n:.0f} bytes"
 
 
 def size_html(report: dict, repaired: bool) -> str:
@@ -422,7 +426,9 @@ def results_html(report: dict) -> str:
     if checked.get("ambiguous"):
         facts.append(f"cards measured on {int(checked['ambiguous']) + int(checked.get('stated_answer', 0)):,} "
                      "questions the scan never saw")
-    if report.get("restore_budget"):
+    if report.get("restore_budget_bytes"):  # version 2 keeps its budget in memory
+        facts.append(f"repair budget +{format_bytes(float(report['restore_budget_bytes']))}")
+    elif report.get("restore_budget"):
         facts.append(f"repair budget {100 * float(report['restore_budget']):.0f}%")
     if report.get("restored_share"):
         facts.append(f"{100 * float(report['restored_share']):.1f}% of the model restored")
@@ -548,7 +554,9 @@ def llamacpp_lines(patch: dict, names: dict | None = None) -> list[str]:
     tensor name, from the report) covers models beyond the table here; a part with no known name gets
     a comment line instead, since the HQQ patch file still restores it."""
     nbits = int(patch.get("nbits", 8))
-    own = patch.get("module_bits", {})
+    from src.product.repair_kit import bits_of
+
+    own = bits_of({**patch, "nbits": nbits})
     for bits in {nbits, *own.values()}:
         if bits not in GGUF_TYPES:
             raise ValueError(f"no llama.cpp type for {bits}-bit")

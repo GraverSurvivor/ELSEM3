@@ -41,7 +41,6 @@ from pathlib import Path
 
 from src.attribution.patch import load_patch, save_patch
 from src.product.api_server import ApiService, latest_repaired_job, register_routes, snippets, try_it
-from src.product.repair_kit import bits_of
 from src.product.hub_publish import PublishError, default_repo_name, load_code, publish
 from src.product.byom import (
     BITS as BYOM_BITS,
@@ -672,6 +671,21 @@ def your_verdict_md(report: dict) -> str:
     return "\n\n".join(lines)
 
 
+def rebuild_repair(patch: dict, device: str):
+    """(model, tokenizer): step 5's repaired model, rebuilt from its patch with the patch's own compression method
+    (an RTN repair is rebuilt with RTN, never HQQ) and compute dtype, layer by layer so a big model's repair needs no
+    16-bit copy in memory. From the local cached copy when there is one, else from the Hub."""
+    from src.quant.repaired import load_repaired
+
+    local = cached_copy(patch["model_id"])
+    try:
+        return load_repaired(patch, device, streaming=True, model_id=local)
+    except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
+        if local == patch["model_id"]:
+            raise
+        return load_repaired(patch, device, streaming=True)
+
+
 def cached_copy(model_id: str) -> str:
     """The step-5 model's own download, when it is in the local cache: rebuilding it for the Ship screen then
     needs no network and no token (a gated model's token was given to the diagnosis only). Else the Hub id."""
@@ -1120,18 +1134,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
             make_room_for_job(backend)  # the 16-bit Phi-3.5 steps aside, as for a diagnosis
             import torch
 
-            from src.quant.streaming import load_streaming
-
             device = getattr(backend, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
-            # Built layer by layer, so a big model's repair needs no 16-bit copy in memory.
-            keep = bits_of(patch)
-            local = cached_copy(patch["model_id"])
-            try:
-                model, tokenizer = load_streaming(local, patch["base"]["nbits"], device=device, keep=keep)
-            except Exception:  # noqa: BLE001 -- an incomplete cached copy: from the Hub instead
-                if local == patch["model_id"]:
-                    raise
-                model, tokenizer = load_streaming(patch["model_id"], patch["base"]["nbits"], device=device, keep=keep)
+            model, tokenizer = rebuild_repair(patch, device)
             held.update(model=model, tokenizer=tokenizer, device=device, job=str(job))
         return (held["model"], held["tokenizer"], held["device"], patch, report, default_repo_name(patch["model_id"]),
                 f"{patch['model_id']}, {patch['base']['nbits']}-bit with {len(patch['modules'])} parts restored "
@@ -1546,7 +1550,8 @@ def build_app(backend, data: StudioData, byom: "ByomSetup | None" = None, api=No
                     release_held()  # built only for the upload
             where = "private: only you (and people you add) can see it" if result["private"] else "public"
             return (f"✅ **Published:** [{result['repo_id']}]({result['url']}) ({where}). Load it anywhere with "
-                    "the code below.", gr.update(value=load_code(result["repo_id"]), visible=True), "")
+                    "the code below.", gr.update(value=load_code(result["repo_id"], method=patch["base"].get("method", "hqq"), dtype=patch["base"].get("compute_dtype", "fp16")),
+                                                  visible=True), "")
 
         def ship_switch(source):
             yours = source == SHIP_YOURS

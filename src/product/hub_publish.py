@@ -49,19 +49,23 @@ def full_repo_id(user: str, name: str, model_id: str) -> str:
     return f"{owner}/{repo}"
 
 
-def load_code(repo_id: str, device: str = "cuda", method: str = "hqq") -> str:
+def load_code(repo_id: str, device: str = "cuda", method: str = "hqq", dtype: str = "fp16") -> str:
     """Ready-to-run Python (run as it is by the tests, on a local copy). HQQ-format models load with HQQ's
-    loader; a bitsandbytes model with the ordinary `from_pretrained`."""
+    loader, at the compute dtype the repair was measured at (bf16 for models whose numbers overflow fp16); a
+    bitsandbytes model with the ordinary `from_pretrained` (its saved config carries the dtype)."""
     if method.startswith("bnb"):
         head = (f"# pip install transformers accelerate bitsandbytes\n"
                 f"from transformers import AutoModelForCausalLM, AutoTokenizer\n\n"
                 f"model = AutoModelForCausalLM.from_pretrained(\"{repo_id}\", device_map={{\"\": \"{device}\"}})\n"
                 f"tokenizer = AutoTokenizer.from_pretrained(\"{repo_id}\")\n\n")
     else:
+        torch_dtype = "torch.bfloat16" if dtype == "bf16" else "torch.float16"
         head = (f"# pip install transformers hqq accelerate\n"
+                f"import torch\n"
                 f"from hqq.models.hf.base import AutoHQQHFModel\n"
                 f"from transformers import AutoTokenizer\n\n"
-                f"model = AutoHQQHFModel.from_quantized(\"{repo_id}\", cache_dir=None, device=\"{device}\")\n"
+                f"model = AutoHQQHFModel.from_quantized(\"{repo_id}\", cache_dir=None, device=\"{device}\",\n"
+                f"                                      compute_dtype={torch_dtype})\n"
                 f"tokenizer = AutoTokenizer.from_pretrained(\"{repo_id}\")\n\n")
     return (head +
             f"question = \"Who was late, the nurse or the mechanic?\"\n"
@@ -94,7 +98,8 @@ def model_card(patch: dict, summary: dict, repo_id: str) -> str:
         *(measured or ["Its fairness numbers weren't measured on the full benchmark (a repair put together by "
                        "hand in FairGate Studio).", ""]),
         "## Use it", "",
-        "```python", load_code(repo_id, method=name).rstrip(), "```", "",
+        "```python", load_code(repo_id, method=name, dtype=patch["base"].get("compute_dtype", "fp16")).rstrip(),
+        "```", "",
         "A private repo needs you to be logged in (`huggingface-cli login`) with access to it.", "",
         "## What's inside", "",
         (f"- Every linear layer (except the output head) HQQ-quantized to {patch['base']['nbits']}-bit, group "
