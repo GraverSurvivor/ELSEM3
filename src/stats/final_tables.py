@@ -8,7 +8,8 @@ read the same collection, so a number can't differ between them.
 
 Sections: main result, per category, recovery by number of modules, fairness controls, hedging,
 concentrated vs spread out, beyond BBQ multiple choice (4-bit, CrowS-Pairs, open-ended), the
-llama.cpp transfer test, label-free monitoring, robustness, per-group, headline windows.
+llama.cpp transfer test, label-free monitoring, robustness, per-group, headline windows, and the "Your model"
+accuracy panel (version 1 vs version 2).
 """
 
 from __future__ import annotations
@@ -302,6 +303,14 @@ def headline_section(ref: Path) -> dict:
     return _done(windows=windows, overlap=data.get("overlap"), skipped=data.get("skipped", {}))
 
 
+def panel_section(ref: Path) -> dict:
+    """"Your model", version 1 vs version 2 on several models (src/product/panel.py), from results/final/panel."""
+    data = _json(Path(ref).parent / "final" / "panel" / "panel.json")
+    if not data:
+        return _pending("the accuracy panel (the Colab panel cell, then `python -m src.product.panel DIR`)")
+    return _done(**{k: data[k] for k in ("rows", "models", "summary", "verdict", "targets")})
+
+
 SECTIONS = {
     "main": ("Main result", main_result, "ref"),
     "per_category": ("Per category", per_category, "ref"),
@@ -317,6 +326,7 @@ SECTIONS = {
     "robustness": ("Robustness of the recovery", robustness_section, "stats"),
     "groups": ("Per targeted group", groups_section, "stats"),
     "headline": ("Headline: three failure windows", headline_section, "ref"),
+    "panel": ("Your model: version 1 vs version 2", panel_section, "ref"),
 }
 
 
@@ -453,6 +463,10 @@ def _section_md(key: str, s: dict) -> list[str]:
         return out + _table(["Group", "Category", "SRS fp16", "3-bit", "Repaired"],
                             [[g["group"], g["category"], _p(g["srs"]["baseline"]), _p(g["srs"]["hqq_3bit"]),
                               _p(g["srs"]["repaired"])] for g in s["worse"]])
+    if key == "panel":
+        from src.product.panel import section_lines
+
+        return section_lines(s)
     if key == "headline":
         out = _table(["Window", "Modules kept", "USR recovered"],
                      [[n, ", ".join(m.replace("model.layers.", "L") for m in w["kept"]), _r(w["usr_recovery"])]

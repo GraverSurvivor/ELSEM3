@@ -185,6 +185,7 @@ REPORT_SECTIONS = {
     "monitoring": "Label-free monitoring",
     "robustness": "Robustness of the recovery",
     "headline": "Different symptoms, same fix?",
+    "panel": "Your model: version 1 vs version 2 on several models",
 }
 
 
